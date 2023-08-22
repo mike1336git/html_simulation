@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>js008_harmonicsSD1D</title>
+<script type="text/javascript">
+
+// %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%%
+
+'use strict';
+
+/* --------------------
+//
+//  js008_harmonicsSD1D
+//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2017.05.10 created, last updated on 2018.11.12
+//    ver 0.0.1  2019.01.11 v1, last updated on 2021.04.27
+//    ver 0.0.2  2021.10.28 v2, last updated on 2021.10.28
+//    ver 0.0.3  2023.02.18 v3, last updated on 2023.08.11
+//
+// --------------------  steepest descent method 1D
+//
+//  system Hamiltonian: H = -delta/2 + V(r) , delta r = div grad r
+//  eigen energy set { Ei }, eigen function set { |i> }
+//
+//  procedure : successive approximation
+//   (i) trial function set { |0>,|1>,..,|i>,.. }
+//   (2) energy of |i> : ei = <i|H|i>/<i|i>
+//   (3) steepest gradient direction (H-ei)|i>
+//   (4) next generation : |i(next)> = |i> - dampingFactor*(H-ei)|i>
+//   (5) orthogonalization { |0>,|1>,..,|i>,.. }  (Gram-Schmidt)
+//   (6) sort state (It is not always necessary)
+//   goto (2)
+//
+// --------------------
+*/
+
+const harmonicsSD1D = (function(){ // ====================  harmonicsSD1D Module  ====================
+	
+	// au: atomic unit hBar=1,e=1,me=1,a0=1
+	const g_auLength = 5.29177211e-11;		// (m) 1(au) = auLength (m)
+	const g_auTime = 2.418884326e-17;		// (s) 1(au) = auTime (s)
+	const g_auEnergy = 4.35974465e-18;		// (J) 1(au) = auEnergy (J)
+	const g_au2eV = 27.211386;				// (eV) 1(au) = 27.211386 (eV)
+	const g_nMax = 400;						// array max
+	
+	let g_iterCount = 0;					// sd iteration count
+	let g_NNx = 256;						// xMax = NNx*dx 
+	let g_dx = 1.0/16.0;					// (au) x-division
+	let g_dampingFactor = 0.003;			// steepest descent damping factor
+	
+	const g_sdEnergy = dim1( 20 );			// sdEnergy[20] electron state energy
+	const g_sdState =dim2( 20, g_nMax );	// sdState[20][NNx] electron state 0...19
+	const g_wrk = dim1( g_nMax );			// wrk[NNx] state work space in steepestDescent
+	const g_vv = dim1( g_nMax );			// vv[NNx] external potential
+	
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+	
+	function dim2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Float64Array( nj );
+		}
+		return a;
+	}
+	
+	
+	// --------------------  set initial condition  --------------------
+	
+	function setInitialCondition( stateMax, vIndex ) {
+		
+		g_iterCount = 0;
+		setInitialState(stateMax);
+		setPotential(vIndex);
+	}
+	
+	function setInitialState(stateMax) {
+		const nnx = g_NNx;
+		
+		for (let ist=0; ist<stateMax; ist++) {
+			for (let i=1; i<nnx-1; i++) {
+				g_sdState[ist][i] = Math.random()-0.5;
+			}
+			g_sdState[ist][0] = 0.0;
+			g_sdState[ist][nnx-1] = 0.0;
+			normalizeState(ist);
+		}
+	}
+	
+	function setPotential(vIndex) {
+		const nnx = g_NNx, x0 = 0.5*g_NNx*g_dx;
+		for (let i=0; i<nnx; i++) {
+			const x = i*g_dx;
+			if (vIndex==0) { // 0:hermonic
+				g_vv[i] = 0.5*(x-x0)*(x-x0);
+			} else if (vIndex==1) { // 1:well
+				g_vv[i] = (Math.abs(x-x0)<4.0) ? 0.0 : 18.0;
+			} else if (vIndex==2) { // 1:well2
+				g_vv[i] = (Math.abs(x-x0)<1.0) ? -1.0 : 0.0;
+			} else if (vIndex==3) { // 1:H-like
+				let r = Math.sqrt((x-x0)*(x-x0))
+				if (r<0.1) r = 0.1;
+				g_vv[i] = -1.0/r;
+			}
+		}
+	}
+	
+	
+	// --------------------  steepest descent iteration  --------------------
+	
+	function SDiteration( stateMax, iterMax ) {
+		
+		for (let i=0; i<iterMax; i++) {
+			for (let ist=0; ist<stateMax; ist++) {
+				g_sdEnergy[ist] = steepestDescent(ist, g_dampingFactor);
+			}
+			GramSchmidt(stateMax);
+			sortState(stateMax); // It is not always necessary
+			g_iterCount += 1;
+		}
+	}
+	
+	function steepestDescent(ist,damp) {
+		const nnx = g_NNx, h2 = 2*g_dx*g_dx;
+		const ei = energyOfState(ist);
+		for (let i=1; i<nnx-1; i++) {
+			g_wrk[i] = (2*g_sdState[ist][i]-g_sdState[ist][i+1]-g_sdState[ist][i-1])/h2
+						+(g_vv[i]-ei)*g_sdState[ist][i];
+		}
+		for (let i=1; i<nnx-1; i++) {
+			g_sdState[ist][i] = g_sdState[ist][i]-damp*g_wrk[i];
+		}
+		normalizeState(ist);
+		return ei;
+	}
+	
+	function energyOfState(ist) {
+		const nnx=g_NNx, h2 = 2*g_dx*g_dx;
+		let fai = g_sdState[ist];
+
+		let s = 0.0;
+		let sn = 0.0;
+		for (let i=1; i<nnx-1; i++) {
+			s = s+fai[i]*((2*fai[i]-fai[i+1]-fai[i-1])/h2+g_vv[i]*fai[i]);
+			sn = sn + fai[i]*fai[i];
+		}
+		return s/sn;
+	}
+	
+	function GramSchmidt(stateMax) {
+		const nnx=g_NNx;
+		
+		normalizeState(0);
+		for (let istate=1; istate<stateMax; istate++) {
+			for (let ist=0; ist<istate; ist++) {
+				const s = innerProduct(ist,istate);
+				for (let i=1; i<nnx-1; i++) {
+					g_sdState[istate][i] = g_sdState[istate][i] - s*g_sdState[ist][i];
+				}
+			}
+			normalizeState(istate);
+		}
+	}
+	
+	function sortState(stateMax) {
+		const nnx=g_NNx;
+		
+		for (let ist=stateMax-2; ist>=0; ist--) {
+			if (g_sdEnergy[ist]>g_sdEnergy[ist+1]+0.00001) {
+				for (let i=0; i<nnx; i++) {
+					let w = g_sdState[ist][i];
+					g_sdState[ist][i] = g_sdState[ist+1][i];
+					g_sdState[ist+1][i] = w;
+				}
+				let w = g_sdEnergy[ist];
+				g_sdEnergy[ist] = g_sdEnergy[ist+1];
+				g_sdEnergy[ist+1] = w;
+			}
+		}
+	}
+	
+	
+	// --------------------  utility  --------------------
+	
+	function innerProduct(ist,jst) {
+		const nnx=g_NNx;
+		let s = 0.0;
+		for (let i=1; i<nnx-1; i++) {
+			s = s + g_sdState[ist][i]*g_sdState[jst][i];
+		}
+		return s*g_dx;
+	}
+	
+	function normalizeState(ist) {
+		const nnx=g_NNx;
+		let s=0.0;
+		for (let i=1; i<nnx-1; i++) {
+			s = s + g_sdState[ist][i]*g_sdState[ist][i]*g_dx;
+		}
+		const a = Math.sqrt(1/s);
+		for (let i=1; i<nnx-1; i++) {
+			g_sdState[ist][i] = a*g_sdState[ist][i];
+		}
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		init:			setInitialCondition,	// setInitialCondition( stateMax, vIndex )
+		evolve:			SDiteration,			// SDiteration( stateMax, iterMax )
+		
+		getAUinSI:		function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:	function() { return [ g_NNx, g_dx ]; },
+		getNow:			function() { return g_iterCount; },
+		getStEnergy:	function(ist) { return g_sdEnergy[ist]; },
+		getStDensity:	function(ist,i) { return g_sdState[ist][i]*g_sdState[ist][i]; },
+		getState:		function(ist,i) { return g_sdState[ist][i]; },
+		getVext:		function(i) { return g_vv[i]; },
+	};
+	
+})(); // ====================  end of harmonicsSD1D  ====================
+
+
+const js008 = (function(){ // ====================  js Module  ====================
+	
+	const theModule = harmonicsSD1D;
+	const xCanvasSize = 480;	// in pixel
+	const yCanvasSize = 480;	// in pixel
+	let canvas;					// canvas2d
+	let ctx;
+	
+	let p_NNx, p_dx; // = theModule.getSysParam();
+	
+	let v_stateMax = 10;
+	let v_vIndex = 0;
+	let v_iterMax = 2;
+	
+	let resetFlag = true;
+	let pauseFlag = false;
+	let stepFlag = false;
+	
+	function main() {
+		resetFlag = true;
+		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
+		initDom();
+		
+		animate();
+		
+		function setCanvas( canvasID, width, height ) {
+			canvas = document.getElementById( canvasID );
+			canvas.width  = width;
+			canvas.height = height;
+			ctx = canvas.getContext('2d');
+			ctx.font = "16px 'sans-serif'";
+			ctx.textBaseline = "bottom";
+			ctx.textAlign = "left";
+			ctx.lineWidth = 1;
+		}
+	}
+	
+	
+	function animate() {
+		
+		if ( resetFlag ) {
+			resetFlag = false;
+			theModule.init( v_stateMax, v_vIndex );
+			[ p_NNx, p_dx ] = theModule.getSysParam();
+		}
+		
+		if ( !pauseFlag ) {
+			theModule.evolve( v_stateMax, v_iterMax );
+		} else if ( pauseFlag && stepFlag ) {
+			stepFlag = false;
+			theModule.evolve( v_stateMax, v_iterMax );
+		}
+		
+		draw( ctx );
+		
+		requestAnimationFrame(animate);
+	}
+	
+	
+	// --------------------  draw  --------------------
+
+	function draw( ctx ) {
+		let auLength, auTime, auEnergy, au2eV;
+		[ auLength, auTime, auEnergy, au2eV ] = theModule.getAUinSI();
+		const iterCount = theModule.getNow();
+		
+		const xBoxPos = 30, yBoxPos = 20, xBoxSize = p_NNx, yBoxSize = 440;
+		const xp = 30, yp = 300, xtabp = 320;
+		
+		// clear
+		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
+
+		ctx.strokeStyle = "#888800";
+		ctx.strokeRect( xBoxPos, yBoxPos, xBoxSize, yBoxSize );
+		
+		drawLine( ctx, xp-20, yp, xp+p_NNx-1+20, yp, "rgb(80,80,80)" ); // base line
+		
+		drawV( ctx, p_NNx, xp, yp, "rgb(0,120,0)"); // Vext(x)
+		
+		// state and energy table
+		ctx.fillStyle = "#888888";
+		ctx.fillText("state   energy(au)", xtabp, yp-v_stateMax*20);
+		for (let ist=v_stateMax-1; ist>=0; ist--) {
+			const col = `hsl(${ist*30},100%,50%)`;
+			drawState( ctx, ist, p_NNx, xp, yp, col ); // state
+			ctx.fillStyle = col;
+			ctx.fillText(`|${ist}>   ${(theModule.getStEnergy(ist)).toFixed(6)}`, xtabp, yp-ist*20); // energy
+		}
+		
+		ctx.fillStyle = "rgb(0,120,0)";
+		ctx.fillText("external potential:", xtabp, yCanvasSize-100);
+		ctx.fillText("Vext(x)", xtabp, yCanvasSize-80);
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`box size : ${(p_NNx*p_dx)} (au)`, xtabp, yCanvasSize-40);
+		ctx.fillText(`iteration = ${iterCount}`, xtabp, yCanvasSize-20);
+
+	}
+
+	function drawState( ctx, ist, nnx, xp, yp, color ) {
+		const pmag=100.0, emag=15.0;
+
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		for (let i=1; i<nnx-1; i++) {
+			ctx.lineTo(i+xp,yp-theModule.getState(ist,i)*pmag-theModule.getStEnergy(ist)*emag);
+		}
+		ctx.stroke();
+	}
+
+	function drawV( ctx, nnx, xp, yp, color ) {
+		const vmag = 15.0;
+
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		for (let i=1; i<nnx-1; i++) {
+			ctx.lineTo(i+xp,yp-theModule.getVext(i)*vmag);
+		}
+		ctx.stroke();
+	}
+
+	function drawLine( ctx, x1, y1, x2, y2, color ) {
+
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	}
+
+
+	// --------------------  control  --------------------
+	
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function reset() { resetFlag = true; }
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = ( pauseFlag==false ); 
+		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==true ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() { stepFlag = true; }
+	
+	function setTheme() {  // select theme
+		v_vIndex = 0 + document.getElementById("slct_theme").selectedIndex;
+		resetFlag = true;
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		reset:			reset,			// reset()
+		pause:			pause,			// pause()
+		step:			step,			// step()
+		
+		setTheme:		setTheme,		// setTheme()
+	};
+	
+})(); // ====================  js008 module end  ====================
+
+
+// event
+const js = js008;
+window.addEventListener('load', js.main );
+
+
+// %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%%
+
+</script>
+
+<style type="text/css">
+    body { text-align:left; color:#000000; background-color:#fff8dd; }
+</style>
+
+</head>
+
+<body>
+<p>[ht008] electron harmonics - steepest descent method 1D</p>
+<canvas ID="canvas_box" style="background-color: #000000;" WIDTH="480" HEIGHT="480"></canvas>
+<br>
+
+<label>theme:</label>
+<select id="slct_theme" onChange="js.setTheme()">
+<option selected>in parabollic V(x)=0.5 x^2</option>
+<option>well V(x) = 0(|x|<4), = 18.0(else)</option>
+<option>well2 V(x) = -1.0(|x|<1), = 0.0(else)</option>
+<option>V(x) = -1/x (|x|>0.1), = -1/0.1 (else)</option>
+</select>
+    <span style="margin-right: 20px;"></span>
+<button onClick="js.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="js.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="js.step()">step</button>
+<br>
+
+ time independent Schroedinger equation solver
+<p id="text_caption" ></p>
+<hr width="480" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+</body>
+</html>
+
