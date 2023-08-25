@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>js050_currentFDTD2D</title>
+<script type="text/javascript">
+  
+// %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%%
+
+'use strict';
+
+/* --------------------
+//
+//  js050_currentFDTD2D
+//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2017.07.11 created, last updated on 2018.11.21
+//    ver 0.0.1  2019.01.18 v1, last updated on 2021.06.10
+//    ver 0.0.2  2021.11.01 v2, last updated on 2021.11.01
+//    ver 0.0.3  2023.03.30 v3, last updated on 2023.08.26
+//
+// --------------------  FDTD2D: finite-difference time-domain method 2D
+//
+// - electro-magnetic field : Maxwell's equations
+//     rot H = eps dE/dt + sgm E
+//     rot E = -mue dH/dt
+//
+//   in 2D system: Ez,Hx,Hy - TMz system
+//     dEz/dt = (1/eps) (dHy/dx-dHx/dy) - (sgm/eps) Ez
+//     dHx/dt = -(1/mue) (dEz/dy-dEy/dz)
+//     dHy/dt = -(1/mue) (dEx/dz-dEz/dx)
+//
+//     dEz = dt(1/eps) (dHy/dx - dHx/dy - sgm Ez)
+//     dHx = -dt(1/mue) dEz/dy
+//     dHy = dt(1/mue) dEz/dx
+//
+// - FDTD (Finite Difference Time Domain method)
+//     finite difference dA/dx ~> {A(x+h)-A(x)}/h, dA/dt -> {A(t+dt)-A(t)}/dt
+//
+//     Ez(i,j,t+dt) = Ez(i,j) + dt(1/eps){(Hy(i+1,j)-Hy(i,j))/dx-(Hx(i,j+1)-Hx(i,j))/dy - sgm Ez(i,j)}
+//     Hx(i,j,t+dt) = Hx(i,j) - dt(1/mue)(Ez(i,j)-Ez(i,j-1))/dy
+//     Hy(i,j,t+dt) = Hy(i,j) + dt(1/mue)(Ez(i,j)-Ez(i-1,j))/dx
+//
+// - boundary : no-reflect (in vacuum) condition case
+//     MUR Hx(n+1,i,0) = Hx(n,i,1)-(dx-dt)/(dx+dt){Hx(n+1,i,1)-Hx(n,i,0)}
+//
+//     Hx(n)[i][0] = c*Hx(n)[i][0] + Hx(n)[i][1]; c=(dx-dt)/(dx+dt)
+//       ...
+//     (time evolution : Hx(n)[i][0] no change, Hx(n)[i][1] -> Hx(n+1)[i][1])
+//       ...
+// 	   Hx(n+1)[i][0] = Hx(n)[i][0] - c*Hx(n+1)[i][1]
+//                   = c*Hx(n)[i][0] + Hx(n)[i][1] - c*Hx(n+1)[i][1]
+//                   = Hx(n)[i][1] -c*(Hx(n+1)[i][1] - Hx(n)[i][0])
+//
+//
+// --------------------
+*/
+
+const currentFDTD2D = (function(){ // ====================  currentFDTD2D Module  ====================
+	
+	const g_nMax = 400;						// array max
+	
+	let g_NNx = 320;						// number of space division (NNx*dx = x-length)
+	let g_NNy = 320;						// number of space division (NNy*dx = y-length)
+	let g_sysTime = 0.0;					// system time
+	let g_dt = 1.0;							// time step
+	let g_dx = 1.0;							// space division dx
+	let g_dy = 1.0;							// space division dy (no use)
+	let g_omega = Math.PI/16.0;				// generator wave angular velocity: phase angle += omega*dt
+	let g_theta = 0.0;						// generator phase angle
+	let g_jz0 =1.0;							// generator amplitude Jz
+	
+	const g_Ez = dim2( g_nMax, g_nMax );	// z-component of electric field
+	const g_Hx = dim2( g_nMax, g_nMax );	// x-component of magnetic field
+	const g_Hy = dim2( g_nMax, g_nMax );	// y-component of magnetic field
+	const g_Jz = dim2( g_nMax, g_nMax );	// z-component of current density
+	const g_ep = dim2( g_nMax, g_nMax );	// dielectric constant
+	const g_mu = dim2( g_nMax, g_nMax );	// magnetic permeability
+	const g_sg = dim2( g_nMax, g_nMax );	// Electrical conductivity
+	
+	function dim2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Float64Array( nj );
+		}
+		return a;
+	}
+	
+	
+	// --------------------  set initial condition  --------------------
+	
+	function setInitialCondition( theme ) {
+		g_sysTime = 0.0;
+		g_theta = 0.0;
+		clearField();
+		if (theme==0) {
+			; // free space
+		} else if (theme==1) {
+			; // free space
+		} else if (theme==2) {
+			setMagneticBar();
+		} else if (theme==3) {
+			; // free space
+		}
+	}
+	
+	function clearField() {
+		const nnx=g_NNx,nny=g_NNy;
+		for (let i=0; i<nnx+1; i++) {
+			for (let j=0; j<nny+1; j++) {
+				g_Ez[i][j] = 0.0;
+				g_Hx[i][j] = 0.0;
+				g_Hy[i][j] = 0.0;
+				g_Jz[i][j] = 0.0;
+				g_ep[i][j] = 1.0;
+				g_mu[i][j] = 1.0;
+				g_sg[i][j] = 0.0;
+			}
+		}
+	}
+	
+	function setMagneticBar() {
+		const xPos=g_NNx/2, yPos=g_NNy/2, d=20, a=50;
+		for (let i=xPos-d; i<=xPos+d; i++) {
+			for (let j=yPos-a; j<yPos+a; j++) {
+				g_ep[i][j] = 1.01;
+				g_mu[i][j] = 10.0;
+				g_sg[i][j] = 0.0;
+			}
+		}
+	}
+	
+	
+	// --------------------  evolve Field Ez,Hx,Hy  --------------------
+	
+	function evolveField( theme, nTimes, sw, jz ) {
+		const n=2*nTimes;
+		g_jz0 = jz;
+		for (let i=0; i<n; i++) {
+			g_sysTime += g_dt;
+			evolveEz();
+			generateJz(theme,sw,jz);
+			evolveHxHy();
+		}
+	}
+	
+	function generateJz(theme,sw,jz) { // Jz current
+		const xPos=g_NNx/2, yPos=g_NNy/2, r=6;
+		g_theta = g_theta + g_omega*0.5*g_dt;
+		let a;
+		if (sw==0) { // dc current
+			a = jz;
+		} else if (sw==1) { // ac current
+			a = jz*Math.sin(g_theta);
+		}
+		if (theme==0) { // 0:current segment Jz
+			for (let i=xPos-r; i<=xPos+r; i++) {
+				for (let j=yPos-r; j<=yPos+r; j++) {
+					if ( (i-xPos)*(i-xPos) + (j-yPos)*(j-yPos) < r*r ) {
+						g_Jz[i][j] = a;
+					}
+				}
+			}
+		} else if (theme==1 || theme==2) { // 1:1-turn coil, 2:coil+magnetic bar
+			const d = 30;
+			for (let i=xPos-r; i<=xPos+r; i++) {
+				for (let j=yPos-r; j<=yPos+r; j++) {
+					if ( (i-xPos)*(i-xPos) + (j-yPos)*(j-yPos) < r*r ) {
+						g_Jz[i-d][j] = a;
+						g_Jz[i+d][j] = -a;
+					}
+				}
+			}
+		}
+	}
+	
+	function evolveEz() {  // dD/dt=rotH + J ,D=eps*E
+		const nnx=g_NNx, nny=g_NNy, dtv2=0.5*g_dt;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				if (g_ep[i][j]<1000.0) { // non-metal
+					g_Ez[i][j] += (dtv2/g_ep[i][j])*( (g_Hy[i+1][j]-g_Hy[i][j]) - (g_Hx[i][j+1]-g_Hx[i][j]) 
+														- g_sg[i][j]*g_Ez[i][j] - g_Jz[i][j] );
+				}
+			}
+		}
+	}
+	
+	function evolveHxHy() {  // dB/dt=-rotE ,B=mue*H
+		const nnx=g_NNx, nny=g_NNy,dtv2=0.5*g_dt;
+		// boundary : no-reflect (in vacuum) condition MUR
+		// Hx(n+1,i,0) = Hx(n,i,1)-(dx-dt)/(dx+dt){Hx(n+1,i,1)-Hx(n,i,0)}
+		const c = (g_dx-dtv2)/(g_dx+dtv2);
+		for (let i=0; i<nnx; i++) {
+			g_Hx[i][0] = c*g_Hx[i][0] + g_Hx[i][1];
+		}
+		for (let i=0; i<nnx; i++) {
+			g_Hx[i][nny] = c*g_Hx[i][nny] + g_Hx[i][nny-1];
+		}
+		for (let j=0; j<nny; j++) {
+			g_Hy[0][j] = c*g_Hy[0][j] + g_Hy[1][j];
+		}
+		for (let j=0; j<nny; j++) {
+			g_Hy[nnx][j] = c*g_Hy[nnx][j] + g_Hy[nnx-1][j];
+		}
+		// Hx(i,j) - dt(1/mue)(Ez(i,j)-Ez(i,j-1))/dy
+		for (let i=0; i<nnx; i++) {
+			for (let j=1; j<nny; j++) {
+				g_Hx[i][j] -= dtv2/g_mu[i][j]*(g_Ez[i][j]-g_Ez[i][j-1]);
+			}
+		}
+		// Hy(i,j,t+dt) = Hy(i,j) + dt(1/g_mue)(Ez(i,j)-Ez(i-1,j))/dx
+		for (let i=1; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				g_Hy[i][j] += dtv2/g_mu[i][j]*(g_Ez[i][j]-g_Ez[i-1][j]);
+			}
+		}
+		// boundary : no-reflect (in vacuum) condition
+		for (let i=0; i<nnx; i++) {
+			g_Hx[i][0] -= c*g_Hx[i][1];
+		}
+		for (let i=0; i<nnx; i++) {
+			g_Hx[i][nny] -= c*g_Hx[i][nny-1];
+		}
+		for (let j=0; j<nny; j++) {
+			g_Hy[0][j] -= c*g_Hy[1][j];
+		}
+		for (let j=0; j<nny; j++) {
+			g_Hy[nnx][j] -= c*g_Hy[nnx-1][j];
+		}
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		init:			setInitialCondition,	// setInitialCondition( theme )
+		evolve:			evolveField,			// evolveField( theme, nCalc, sw, jz )
+		
+		getSysParam:	function() { return [ g_NNx, g_NNy, g_dx, g_dt ]; },
+		getSysTime:		function() { return g_sysTime; },
+		getEps:			function(i,j) { return g_ep[i][j]; },
+		getMue:			function(i,j) { return g_mu[i][j]; },
+		getSgm:			function(i,j) { return g_sg[i][j]; },
+		getEz:			function(i,j) { return g_Ez[i][j]; },
+		getHxy:			function(i,j) { return [ g_Hx[i][j], g_Hy[i][j] ]; },
+	};
+	
+})(); // ====================  currentFDTD2D end  ====================
+
+
+const js050 = (function(){ // ====================  js Module  ====================
+
+	const theModule = currentFDTD2D;
+	const xCanvasSize = 480;	// in pixel
+	const yCanvasSize = 480;	// in pixel
+	let canvas;					// canvas2d
+	let ctx;					// = canvas.getContext('2d');
+	let imageEz = null;
+	let imageEps = null;
+	
+	let v_theme = 0;
+	let v_nCalc = 1;
+	let v_generatorSW  = 1; // generatorSW  0:dc  1:ac
+	let v_generatorJz = 1.0; // generatorJz = 1.0; // -2.0 ... +2.0
+	
+	let p_NNx, p_NNy, p_dx, p_dt; // = theModule.getSysParam();
+				
+	let dispMode = 0;
+	let resetFlag = true;
+	let pauseFlag = false;
+	let stepFlag = false;
+	
+	function main() {
+		resetFlag = true;
+		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
+		initDom();
+		viewHome();
+		
+		animate();
+
+		function setCanvas( canvasID, width, height ) {
+			canvas = document.getElementById( canvasID );
+			canvas.width  = width;
+			canvas.height = height;
+			ctx = canvas.getContext('2d');
+			ctx.font = "16px 'sans-serif'";
+			ctx.textBaseline = "bottom";
+			ctx.textAlign = "left";
+			ctx.lineWidth = 1;
+			g3d.setMouseOnCanvas( canvas ); // 3D graphics
+		}
+	}
+	
+	
+	function animate() {
+		
+		if ( resetFlag ) {
+			resetFlag = false;
+			theModule.init( v_theme ); // ( nn, BoxSizeInNM, contTemp )
+			imageEz = null;
+			imageEps = null;
+			[ p_NNx, p_NNy, p_dx, p_dt ] = theModule.getSysParam();
+			// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
+			g3d.init( p_NNx, p_NNy, p_NNy/2, p_dx, xCanvasSize, yCanvasSize, 320, 20 );
+			g3d.drawGrid2D.threshold = 0.01;
+			
+			
+		}
+		
+		if ( !pauseFlag ) {
+			theModule.evolve( v_theme, v_nCalc, v_generatorSW, v_generatorJz );
+		} else if ( pauseFlag && stepFlag ) {
+			stepFlag = false;
+			theModule.evolve( v_theme, v_nCalc, v_generatorSW, v_generatorJz );
+		}
+		
+		draw( ctx, dispMode );
+		
+		requestAnimationFrame(animate);
+	}
+	
+	
+	// --------------------  draw  --------------------
+	
+	function draw( ctx, dispMode ) {
+		const epsFunc = function(i,j) { return ( (theModule.getEps(i,j)==1.0) ? 0 : 10 ); };
+		
+		let sysTime = theModule.getSysTime();
+		
+		const xp = 80, yp = 60, xBoxSize = 320, yBoxSize = 320;
+		
+		if ( imageEps == null ) {
+			imageEz = ctx.getImageData(xp, yp, p_NNx, p_NNy);
+			imageEps = ctx.getImageData(xp, yp, p_NNx, p_NNy);
+			setImageEps( p_NNx, p_NNy );
+		}
+
+		ctx.clearRect( 0, 0, xCanvasSize, yCanvasSize );
+		
+		if (dispMode<=1) {
+			ctx.strokeStyle = "#888800";
+			ctx.strokeRect( xp, yp, xBoxSize, yBoxSize );
+		}
+		
+		if ( dispMode==0 ) {
+			text("Ez field");
+			drawEzField( ctx, p_NNx, p_NNy, xp, yp );
+		} else if ( dispMode==1 ) {
+			text(":Hxy vector field");
+			drawHxyField( ctx, p_NNx, p_NNy, xp, yp );
+		} else if ( dispMode==2 ) {
+			text("grid2d: Ez field");
+			const zFunc = function(i,j) { return epsFunc(i,j) + 40.0*theModule.getEz(i,j); };
+			const colorFunc = function(i,j) {
+				const zc = 40.0*theModule.getEz(i,j);
+				const th = (18120 - Math.floor(180.0*zc/g3d.cz0))%360;
+				return ( Math.abs(zc/g3d.cz0)>0.02 ) ? `hsl(${th},100%,50%)` : "#444444";
+			}
+			// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawGrid2D( ctx, 0.0, zFunc, colorFunc, 5 );
+		}  else if ( dispMode==3 ) {
+			text("grid2d Hxy z:|Hxy|, color:direction");
+			const pi = Math.PI, degree = 180.0/Math.PI;
+			const zFunc = function(i,j) {
+				let hx, hy; [ hx,hy ] = theModule.getHxy(i,j);
+				return epsFunc(i,j) + 40.0*Math.sqrt(hx*hx+hy*hy); 
+			};
+			const colorFunc = function(i,j) {
+				let hx, hy; [ hx,hy ] = theModule.getHxy(i,j); 
+				const zc = 30.0*Math.sqrt(hx*hx+hy*hy);
+				const th = ((Math.atan2(hy,hx) + pi)*degree)%360;
+				return ( Math.abs(zc/g3d.cz0)>0.02 ) ? `hsl(${th},100%,50%)` : "#444444";
+			}
+			// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawGrid2D( ctx, 0.0, zFunc, colorFunc, 5 );
+			
+		}
+
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`time = ${sysTime}`, 40, yCanvasSize-20 );
+		
+		function text( msg ) {
+			ctx.fillStyle = "#888888";
+			ctx.fillText( msg, 40, yCanvasSize-40 );
+		}
+	}
+	
+	function setImageEps( nnx, nny ) {;
+
+		const data = imageEps.data;
+		for (let j=0; j<nny; j++) {
+			const jj = nny - j - 1;
+			for (let i = 0; i<nnx; i++) {
+				let idx = (jj*nnx+i)*4;
+				const epsij = theModule.getEps(i,j);
+				const g = (epsij!=1.0) ? 80 : 0;
+				data[idx] = 0;
+				data[++idx] = g;
+				data[++idx] = 0;
+				data[++idx] = 255;
+			}
+		}
+	}
+
+	function drawEzField( ctx, nnx, nny, xp, yp ) {
+		const mag = 250.0;
+
+		const data = imageEz.data;
+		for (let j=0; j<nny; j++) {
+			const jj = nny - j - 1;
+			for (let i = 0; i<nnx; i++) {
+				let r = 0, g = 0, b = 0;
+				let idx = (jj*nnx+i)*4;
+				const ezij = theModule.getEz(i,j);
+				const epsij = theModule.getEps(i,j);
+				if (epsij!=1.0) g = 80;
+				const aez = Math.min(Math.floor(Math.abs(ezij*mag)),255);
+				if (ezij>=0) {
+					r = aez; b = 0;
+				} else {
+					r = 0; b = aez;
+ 				}
+				data[idx] = r;
+				data[++idx] = g;
+				data[++idx] = b;
+				data[++idx] = 255;
+			}
+		}
+		ctx.putImageData(imageEz, xp, yp);
+	}
+
+	function drawHxyField( ctx, nnx, nny, xp, yp ) {
+		const mag = 10.0;
+
+		ctx.putImageData(imageEps, xp, yp); // draw optical object
+		for (let i=2; i<nnx; i+=4) {
+			for (let j=2; j<nny; j+=4) {
+				const jj = nny - j - 1;
+				let hxij, hyij;
+				[ hxij, hyij ] = theModule.getHxy(i,j);
+				const x1 = xp+i;
+				const y1 = yp+jj;
+				const x2 = x1+hxij*mag;
+				const y2 = y1-hyij*mag;
+				let col = (hyij>=0) ? "rgb(250,250,0)" : "rgb(0,250,250)";
+				if ((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1)>0.3) drawLine( ctx, x1, y1, x2, y2, col );
+			}
+		}
+	}
+
+	function drawLine( ctx, x1, y1, x2, y2, color ) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	}
+	
+	
+	// --------------------  graphics 3D (field) module  --------------------
+	//
+	// ver 0.0.1  2018.12.16  last updated on 2023.03.01
+	// ver 0.0.2  2023.03.03  last updated on 2023.06.01
+	
+	let g_NNx, g_NNy, g_NNz, g_dx, g_dy, g_dz, g_xCanvasSize, g_yCanvasSize, g_xBoxSize, g_yShift;
+	
+	const g3d = {};				// namespace of graphic 3D module
+	
+	g3d.mouseDownFlag = 0;		// 1:on mouse down, 0:else
+	g3d.x_mouse = 0;			// x-position of mouse
+	g3d.y_mouse = 0;			// y-position of mouse
+	g3d.x0_mouse = 0;			// drag-started x-position of mouse
+	g3d.y0_mouse = 0;			// drag-started y-position of mouse
+	g3d.zoom = 1.0;
+	
+	g3d.xMax = 0.0;				// x-length of box
+	g3d.yMax = 0.0;				// y-length of box
+	g3d.zMax = 0.0;				// z-length of box
+	g3d.cx0 = 0.0;				// x-component of rotate center
+	g3d.cy0 = 0.0;				// y-component of rotate center
+	g3d.cz0 = 0.0;				// z-component of rotate center
+	g3d.Ax = -Math.PI/15.0;		// rotate angle around x-axis
+	g3d.Ay = -Math.PI/15.0;		// rotate angle around y-axis
+	g3d.ddAy = 0.0;				// Ay change rate for auto-rotate: eg. dday=0.5*Math.PI/180
+	g3d.cosAx = 0.0;			// cosAx=Math.cos(Ax)
+	g3d.sinAx = 0.0;			// sinAx=Math.sin(Ax)
+	g3d.cosAy = 0.0;			// cosAy=Math.cos(Ay)
+	g3d.sinAy = 0.0;			// sinAy=Math.sin(Ay)
+	
+	g3d.xApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.yApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.zApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.pxApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.pyApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.pzApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.boxApex = [[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1], [1,0,1], [0,1,1], [1,1,1] ];
+	g3d.boxEdge = [[0,1,9], [0,2,9], [0,4,9], [1,3,9], [1,5,9], [2,3,9], 
+					[2,6,9], [3,7,9], [4,5,9], [4,6,9], [5,7,9], [6,7,9] ];
+	
+	//--- set mouse on canvas
+	
+	// g3d.setMouseOnCanvas( canvas );
+	g3d.setMouseOnCanvas = function( canvas ) {
+		canvas.addEventListener('mousemove', g3d.mouse_move);
+		canvas.addEventListener('mousedown', g3d.mouse_down);
+		canvas.addEventListener('mouseup', g3d.mouse_up);
+		canvas.addEventListener("mousewheel", g3d.mouseWheel);
+	};
+	
+	g3d.mouse_move = function(e) {
+		const pi = Math.PI;
+
+		if (g3d.mouseDownFlag==1) {
+			g3d.x_mouse = e.clientX;
+			g3d.y_mouse = e.clientY;
+			g3d.Ay = g3d.Ay + 0.5*(g3d.x_mouse-g3d.x0_mouse)*pi/180;
+			if (g3d.Ay<-pi) g3d.Ay += 2*pi;
+			if (g3d.Ay>pi) g3d.Ay += -2*pi;
+			//g3d.Ax = g3d.Ax + 0.5*(g3d.y_mouse-g3d.y0_mouse)*pi/180;
+			g3d.Ax = g3d.Ax - 0.5*(g3d.y_mouse-g3d.y0_mouse)*pi/180;
+			if (g3d.Ax<-0.5*pi) g3d.Ax = -0.5*pi;
+			if (g3d.Ax>0.5*pi) g3d.Ax = 0.5*pi;
+			g3d.x0_mouse = g3d.x_mouse;
+			g3d.y0_mouse = g3d.y_mouse;
+		}
+	};
+	
+	g3d.mouse_down = function(e) {
+		if (g3d.mouseDownFlag==0) {
+			g3d.x0_mouse = e.clientX;
+			g3d.y0_mouse = e.clientY;
+			g3d.x_mouse = g3d.x0_mouse;
+			g3d.y_mouse = g3d.y0_mouse;
+			g3d.mouseDownFlag = 1;
+		}
+	};
+	
+	g3d.mouse_up = function(e) {
+		if (g3d.mouseDownFlag==1) {
+			g3d.mouseDownFlag = 0;
+		}
+	};
+	
+	g3d.mouseWheel = function(e) {
+		g3d.deltaY = e.deltaY;
+		if ( g3d.deltaY > 0 ) g3d.zoom *= 0.95;
+		else if ( g3d.deltaY < 0 ) g3d.zoom *= 1.05;
+		if ( g3d.zoom<0.5 ) g3d.zoom = 0.5;
+		if ( g3d.zoom>2.0 ) g3d.zoom = 2.0;
+	};
+	
+	//--- 3D graphics aid
+	
+	// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
+	g3d.init = function( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift ) {
+		g_NNx = NNx; g_NNy = NNy; g_NNz = NNz;
+		g_dx = dx; g_dy = dx; g_dz = dx;
+		g_xCanvasSize = xCanvasSize; g_yCanvasSize = yCanvasSize;
+		g_xBoxSize = (xBoxSize==undefined) ? 300 : xBoxSize;
+		g_yShift = (yShift==undefined) ? 20 : yShift;
+		g3d.setSize();
+	}
+	
+	g3d.setSize = function() {
+		g3d.xMax = g_NNx*g_dx;		// x-length of box
+		g3d.yMax = g_NNy*g_dy;		// y-length of box
+		g3d.zMax = g_NNz*g_dz;		// z-length of box
+		g3d.cx0 = 0.5*g3d.xMax;		// x-component of rotate center
+		g3d.cy0 = 0.5*g3d.yMax;		// y-component of rotate center
+		g3d.cz0 = 0.5*g3d.zMax;		// z-component of rotate center
+	};
+	
+	// g3d.setRotateAngle( AxInDegree, AyInDegree );
+	g3d.setRotateAngle = function( AxInDegree, AyInDegree ) {
+		g3d.Ax = AxInDegree*Math.PI/180.0;
+		g3d.Ay = AyInDegree*Math.PI/180.0;
+	};
+	
+	// g3d.scxpypFunc();
+	g3d.scxpypFunc = function() {
+		const xBoxSize = g_xBoxSize;
+		const xCenter = g_xCanvasSize/2, yCenter = g_yCanvasSize/2-g_yShift, yBoxSize = (xBoxSize/g_NNx)*g_NNy;
+		const xp = xCenter - (xBoxSize/2)*g3d.zoom, yp = yCenter - (yBoxSize/2)*g3d.zoom; // g3d param
+		const sc = xBoxSize/(g_NNx*g_dx)*g3d.zoom;
+		return [ sc, xp, yp ];
+	}
+	
+	g3d.set3DRotateXY = function(rotateRateOfAyInDegree) {
+		g3d.ddAy = rotateRateOfAyInDegree*Math.PI/180.0;
+		g3d.Ay= g3d.Ay + g3d.ddAy; // auto-rotate : if (ddAy==0.0), stop
+		if (g3d.Ay>Math.PI) g3d.Ay = g3d.Ay - 2.0*Math.PI;
+		if (g3d.Ay<-Math.PI) g3d.Ay = g3d.Ay + 2.0*Math.PI;
+		g3d.setBox();           // set box apex
+		g3d.setRotateXY(g3d.Ax,g3d.Ay); // set rotate param
+		g3d.rotateApexXY();     // box Apex rotate--> pxApex[i],pyApex[i],pzApex[i]
+		g3d.markFarEdge();      // boxEdge[iEdge][2]=1:far side edge or 0:near side edge
+	};
+	
+	g3d.setBox = function() {
+		for (let i=0; i<8; i++) {
+			g3d.xApex[i] = g3d.boxApex[i][0]*g3d.xMax;
+			g3d.yApex[i] = g3d.boxApex[i][1]*g3d.yMax;
+			g3d.zApex[i] = g3d.boxApex[i][2]*g3d.zMax;
+		}
+	};
+	
+	g3d.setRotateXY = function(angleX,angleY) {
+		g3d.cosAx = Math.cos(angleX);
+		g3d.sinAx = Math.sin(angleX);
+		g3d.cosAy = Math.cos(angleY);
+		g3d.sinAy = Math.sin(angleY);
+		g3d.cx0 = 0.5*g3d.xMax;
+		g3d.cy0 = 0.5*g3d.yMax;
+		g3d.cz0 = 0.5*g3d.zMax;
+	};
+	
+	g3d.rotateApexXY = function() { // rotate box apex
+		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
+		
+		for (let i=0; i<8; i++) {
+			g3d.pxApex[i] = cosAy*(g3d.xApex[i]-cx0)+sinAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cx0;
+			g3d.pyApex[i] = cosAx*(g3d.yApex[i]-cy0)-sinAx*(g3d.zApex[i]-cz0) + cy0;
+			g3d.pzApex[i] =-sinAy*(g3d.xApex[i]-cx0)+cosAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cz0;
+		}
+	};
+	
+	g3d.markFarEdge = function() {
+		//seek far apex --> iMin
+		let zMin = g3d.pzApex[0];
+		let iMin = 0;
+		for (let i=1; i<8; i++) {
+			if (zMin>g3d.pzApex[i]) {
+				zMin = g3d.pzApex[i];
+				iMin = i;
+			}
+		}
+		//mark far edge
+		for (let iEdge=0; iEdge<12; iEdge++) {
+			g3d.boxEdge[iEdge][2] = 0;
+			if (g3d.boxEdge[iEdge][0]==iMin || g3d.boxEdge[iEdge][1]==iMin) g3d.boxEdge[iEdge][2] = 1;
+		}
+	};
+	
+	g3d.drawRotatedDisc = function(ctx, x,y,z,r,color,sc,xp,yp) {
+		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
+		
+		const x1 = cosAy*(x-cx0)+sinAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cx0
+		const y1 = cosAx*(y-cy0)-sinAx*(z-cz0) + cy0
+		//z1 =-sinAy*(x-cx0)+cosAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cz0
+		g3d.drawDisc(ctx, x1*sc+xp,y1*sc+yp,r,color);
+	};
+	
+	g3d.drawRotatedLine = function(ctx, x1,y1,z1,x2,y2,z2,color,sc,xp,yp) {
+		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
+		
+		const x1p = cosAy*(x1-cx0)+sinAy*(sinAx*(y1-cy0)+cosAx*(z1-cz0)) + cx0
+		const y1p = cosAx*(y1-cy0)-sinAx*(z1-cz0) + cy0
+		const x2p = cosAy*(x2-cx0)+sinAy*(sinAx*(y2-cy0)+cosAx*(z2-cz0)) + cx0
+		const y2p = cosAx*(y2-cy0)-sinAx*(z2-cz0) + cy0
+		g3d.drawLine(ctx, x1p*sc+xp,y1p*sc+yp,x2p*sc+xp,y2p*sc+yp,color);
+	};
+	
+	g3d.plotNearEdge = function(ctx, sc,xp,yp,color) {
+		for (let iEdge=0; iEdge<12; iEdge++) {
+			if (g3d.boxEdge[iEdge][2]==0) { //far edge mark = 1
+				g3d.plotEdge(ctx, iEdge,sc,xp,yp,color);
+			}
+		}
+	};
+	
+	g3d.plotFarEdge = function(ctx, sc,xp,yp,color) {
+		for (let iEdge=0; iEdge<12; iEdge++) {
+			if (g3d.boxEdge[iEdge][2]==1) { //far edge mark = 1
+				g3d.plotEdge(ctx, iEdge,sc,xp,yp,color);
+			}
+		}
+	};
+	
+	g3d.plotEdge = function(ctx, iEdge,sc,xp,yp,color) {
+		let iApex = g3d.boxEdge[iEdge][0];
+		const x1=g3d.pxApex[iApex]*sc+xp, y1=g3d.pyApex[iApex]*sc+yp;
+		iApex = g3d.boxEdge[iEdge][1];
+		const x2=g3d.pxApex[iApex]*sc+xp, y2=g3d.pyApex[iApex]*sc+yp;
+		g3d.drawLine(ctx, x1, y1, x2, y2, color);
+	};
+	
+	g3d.drawLine = function(ctx, x1, y1, x2, y2, color) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	};
+	
+	g3d.drawDisc = function(ctx, x, y, r, color) {
+		ctx.fillStyle = color;
+		ctx.beginPath();
+		ctx.arc(x, y, r, 0, 2*Math.PI, false);
+		ctx.fill();
+	};
+	
+	// --------------------  end of graphics 3D (field) module  --------------------
+	
+	// g3d_extension grid2d  created 2023.06.01, last updated 2023.06.04
+	// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
+	g3d.drawGrid2D = function ( ctx, rotAngle, zFunc, colorFactor, inc, showBox ) {
+		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
+		const nnx = g_NNx, nny = g_NNy, threshold = g3d.drawGrid2D.threshold;
+		
+		g3d.set3DRotateXY(rotAngle);
+		if ( (showBox & 1)>0 || showBox==undefined ) g3d.plotFarEdge(ctx, sc,xp,yp,"#444400"); // dark yellow
+		for (let jj=0; jj<nny; jj+=inc) {
+			let j=jj;if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
+			for (let ii=0; ii<nnx; ii++) {
+				let i=ii;if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
+				if (i<0 || i+1>nnx-1) continue;
+				const f = zFunc(i,nny-j-1);
+				const x = i*g_dx, y = j*g_dy, z = f + g3d.cz0;
+				const f1 = zFunc(i+1,nny-j-1);
+				const x1 = (i+1)*g_dx, y1 = j*g_dy, z1 = f1 + g3d.cz0;
+				let colr;
+				if ( typeof(colorFactor)=='number' ) {
+					const th = (18120 - Math.floor(colorFactor*180.0*(f+f1)/g3d.cz0))%360;
+					const a = Math.abs((f+f1)/g3d.cz0);
+					colr = (a>threshold) ? `hsl(${th},100%,50%)` : "#444444" ;
+				} else if ( typeof(colorFactor)=='string' ) {
+					colr = colorFactor;
+				} else if ( typeof(colorFactor)=='function' ) {
+					colr = colorFactor(i,nny-j-1);
+				}
+				g3d.drawRotatedLine(ctx, x,y,z,x1,y1,z1,colr,sc,xp,yp);
+			}
+		}
+		for (let ii=0; ii<nnx; ii+=inc) {
+			let i=ii;if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
+			for (let jj=0; jj<nny; jj++) {
+				let j=jj;if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
+				if (j<0 || j+1>nny-1) continue;
+				const f = zFunc(i,nny-j-1);
+				const x = i*g_dx, y = j*g_dy, z = f + g3d.cz0;
+				const f1 = zFunc(i,nny-j-2);
+				const x1 = i*g_dx, y1 = (j+1)*g_dy, z1 = f1 + g3d.cz0;
+				let colr;
+				if ( typeof(colorFactor)=='number' ) {
+					const th = (18120 - Math.floor(colorFactor*180.0*(f+f1)/g3d.cz0))%360;
+					const a = Math.abs((f+f1)/g3d.cz0);
+					colr = (a>threshold) ? `hsl(${th},100%,50%)` : "#444444" ;
+				} else if ( typeof(colorFactor)=='string' ) {
+					colr = colorFactor;
+				} else if ( typeof(colorFactor)=='function' ) {
+					colr = colorFactor(i,nny-j-1);
+				}
+				g3d.drawRotatedLine(ctx, x,y,z,x1,y1,z1,colr,sc,xp,yp);
+			}
+		}
+		if ( (showBox & 2)>0 || showBox==undefined ) g3d.plotNearEdge(ctx, sc,xp,yp,"#999900"); //yellow
+		
+		ctx.font = "12px 'sans-serif'";
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`Ax=${(g3d.Ax*180/Math.PI).toFixed(1)}, Ay=${(g3d.Ay*180/Math.PI).toFixed(1)}`, 10, 15);
+		ctx.font = "16px 'sans-serif'";
+	};
+	g3d.drawGrid2D.threshold = 0.005;
+	
+	
+	// ----------  dom control
+
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function reset() { resetFlag = true; }
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = ( pauseFlag==false ); 
+		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==true ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() { stepFlag = true; }
+	
+	function setTheme() {  // select theme
+		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
+		resetFlag = true;
+	}
+
+	function setGeneratorSW() {  // select generatorSW dc/ac
+		v_generatorSW = 0 + document.getElementById("slct_generatorSW").selectedIndex;
+	}
+	
+	function setGeneratorJz() {  // select generatorJz
+		v_generatorJz = Number(document.getElementById("range_Jz").value);
+		document.getElementById("jz").innerHTML = "jz ="+(v_generatorJz).toFixed(1);
+		
+	}
+	
+	function setDispMode() {
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+	}
+	
+	function viewHome() {
+		g3d.setRotateAngle(30,-15);	
+		g3d.zoom = 1.0;
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		// dom control
+		reset:			reset,			// reset()
+		pause:			pause,			// pause()
+		step:			step,			// step()
+		
+		setTheme:		setTheme,		// setTheme()
+		setGeneratorSW:	setGeneratorSW,	// setGeneratorSW()
+		setGeneratorJz:	setGeneratorJz,	// setGeneratorJz
+		setDispMode:	setDispMode,	// setDispMode()
+		viewHome:		viewHome,		// viewHome()
+	};
+
+})(); // ====================  js050 module end  ====================
+
+
+// event
+const js = js050;
+window.addEventListener('load', js.main );
+
+
+// %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%%
+
+</script>
+
+  <style type="text/css">
+    body { color:#000000; background-color:#fff8dd;}
+  </style>
+
+</head>
+
+<body>
+<p>[ht050] current - Finite-Difference Time-Domain method 2D</p>
+
+<canvas ID="canvas_box" style="background-color: #000000;" width="480" height="480"></canvas>
+<br>
+
+<label>theme:</label>
+<select id="slct_theme" onChange="js.setTheme()">
+<option>Jz-segment</option>
+<option>1turn-coil</option>
+<option>1turn-coil + Magnetic material(mue=9)</option>
+</select>
+    <span style="margin-right: 60px;"></span>
+<label>current:</label>
+<select id="slct_generatorSW" onChange="js.setGeneratorSW()">
+<option>dc</option><option selected>ac</option>
+</select>
+<br>
+
+<label>-2.0</label>
+<input type="range" id="range_Jz" min="-2.0" max="2.0" value="1.0" step="0.1" style="width:200px"
+list="tickmarks_br" oninput="js.setGeneratorJz()"><label>+2.0</label>
+<span style="margin-right: 90px;"></span>
+<span id="jz">jz =1.0</span>
+<br>
+
+    <span style="margin-right: 290px;"></span>
+<button onClick="js.reset()">once more</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="js.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="js.step()">step</button>
+<br>
+
+<label>disp. mode:</label>
+<select id="slct_dispMode" onChange="js.setDispMode()">
+<option>Ez field</option>
+<option>Hx-Hy field</option>
+<option>grid2d: Ez field</option>
+<option>grid2d: Hxy field</option>
+</select>
+<br>
+
+<button onClick="js.viewHome()">return to initial view</button>
+<br>
+
+<p id="text_caption" ></p>
+<hr width="480" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
