@@ -7,3 +7,7 @@
 - This repository is a collection of such files.
 
 - The field of these files is the visualization of physics simulations
+
+- The field of physical simulation includes:<br>
+    Molecular Dynamics, Quantum Mechanics, Fluid Dynamics,<br>
+    and others (FDTD method, Kinetic Monte-Carlo Method, Classical Mechanics, Infection Model )
