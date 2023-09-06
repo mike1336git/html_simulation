@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>js084_adatomFastKMC2D</title>
+<script type="text/javascript">
+
+// %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%%
+
+'use strict';
+
+/* --------------------
+//
+//  js084_adatomFastKMC2D
+//    Copyright(C) 2018-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2018.01.17 created, last updated on 2018.11.30
+//    ver 0.0.1  2019.01.23 v1, last updated on 2021.08.13
+//    ver 0.0.2  2021.11.05 v2, last updated on 2021.11.05
+//    ver 0.0.3  2023.04.26 v3, last updated on 2023.09.04
+//
+// -------------------- kinetic Monte-Carlo algorithm KMC2D
+//
+//  - Bortz-Kalos-Liebowitz (BKL) algorithm
+//
+//    i-th transition rate in the system : ri
+//    total transition rate : RN = sum(ri, {i=1,2,...,N})
+//
+//  procedure
+//
+//    (1) t = 0
+//
+//    (2) select i : randomly (proportional to ri/RN)
+//      calculate R(i) = sum(rj, {j=1,2,...,i})
+//      get a uniform random number u in [0,1]
+//      find i  R(i-1) < u RN <= R(i)
+//
+//    (3) execute i-th transition
+//
+//    (4) update the time
+//      get a uniform random numner u in (0,1]
+//      dt = -log(u)/R
+//      t = t + dt
+//
+//    goto (2)
+//
+//  transion rate k = nue0*exp(-dE/kT)
+//      nue0 = kT/h , h: Plank's constant
+//
+//  periocic condition
+//
+//  fast:
+//      in calculation of total transition rate,
+//      calculate transition[] only around moved adatom instead of all adatoms.
+//
+// --------------------
+*/
+
+const adatomFastKMC2D = (function(){ // ====================  adatomFastKMC2D Module  ====================
+	
+	const g_hPlank = 6.62607015e-34;		// (Js) Plank's constant
+	const g_EE = 1.602176634e-19;			// (C) electron charge, energy : 1(eV) = EE(J)
+	const g_nMax = 10000;					// array max
+	const g_nxMax = 200;					// NNx max
+	const g_nyMax = 200;					// NNy max
+	
+	let g_NNa = 600;						// number of adatom
+	let g_NNx = 40;							// x-division of the field
+	let g_NNy = 40;							// y-division of the field
+	let g_sysTime = 0.0;					// (s) system time
+	let g_qqHopping = 0.2;					// (eV) hopping energy
+	let g_qqNeighbor = 0.3;					// (eV) adsorption energy to neighbor adatom 
+	let g_kT = 0.1;							// (eV) thermal energy to random walk
+	let g_changeFlag = 1;					// if (changeFlag = 1) setAllTransition()
+	
+	const g_lattice = dimInt2( g_nxMax, g_nyMax ); // g_lattice[ix][iy]  0...NNa: adatom, -1:free space
+	const g_ixAdatom = dimInt1(g_nMax);		// g_ixAdatom[i] x-position of i-th adatom
+	const g_iyAdatom = dimInt1(g_nMax);		// g_iyAdatom[i] y-position of i-th adatom
+	const g_transition = dim1(4*g_nMax);	// transition rate of direction E/N/W/S adatom
+	const g_rate = dim1(5);					// g_rate[] = transition rate ( see setRate() )
+	
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+	
+	function dimInt1( n ) {
+		return new Int32Array( n );
+	}
+	
+	function dimInt2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Int32Array( nj );
+		}
+		return a;
+	}
+	
+	
+	// --------------------  set initial condition  --------------------
+	
+	function setInitialCondition( theme ) {
+		if (theme==0) {
+			g_NNx = 40; g_NNy = 40;
+		} else if (theme==1) {
+			g_NNx = 60; g_NNy = 60;
+		} else if (theme==2) {
+			g_NNx = 80; g_NNy = 80;
+		}
+		g_NNa = Math.floor(g_NNx*g_NNy*0.37);
+
+		g_sysTime = 0.0;
+		clearField();
+		setParticles();
+	}
+	
+	function clearField() {
+		const nnx=g_NNx, nny=g_NNy;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				g_lattice[i][j] = -1;
+			}
+		}
+	}
+	
+	function setParticles() {
+		const nna=g_NNa, nnx=g_NNx, nny=g_NNy;
+		for (let ia=0; ia<nna; ia++) {
+			let x, y;
+			do {
+				x = Math.floor(nnx*Math.random());
+				y = Math.floor(nny*Math.random());
+			} while (g_lattice[x][y]!=-1); // g_lattice[][] >=0: particle, -1:free space
+			g_lattice[x][y] = ia;
+			g_ixAdatom[ia] = x;
+			g_iyAdatom[ia] = y;
+		}
+	}
+	
+	
+	// --------------------  time evolution  --------------------
+	
+	function timeEvolution( speed, qqHop, qqNbr, TEnergy, isChange ) {
+		if (isChange) {
+			g_qqHopping = qqHop;
+			g_qqNeighbor = qqNbr;
+			g_kT = TEnergy;
+			g_changeFlag = 1;
+		}
+		const nn = speed*Math.min(200,g_NNa/10 + 1);
+		for (let i=0; i<nn; i++) {
+			const deltat = kmcStep();
+			g_sysTime += deltat;
+		}
+	}
+	
+	function kmcStep() {
+		const nna=g_NNa;
+		let rsum;
+		if (g_changeFlag==1) {
+			rsum = setAllTransition();
+			g_changeFlag = 0;
+		} else {
+			rsum = 0.0;
+			for (let i=0; i<nna*4; i++) {
+				rsum += g_transition[i];
+			}
+		}
+		const ipp = selectTransion(rsum);
+		move(ipp);
+		const r = 1.0-Math.random(); // r=(0,1], Math.random()= [0,1)
+		return(-Math.log(r)/rsum);
+	}
+	
+	function setAllTransition() {
+		const nna=g_NNa;
+		let rsum;
+		setRate();
+		rsum = 0.0;
+		for (let ia=0; ia<nna; ia++) {
+			rsum += setTransition(ia);
+		}
+		return rsum;
+	}
+	
+	function setRate() {
+		g_rate[0] = transitionRate(g_qqHopping);
+		g_rate[1] = transitionRate(g_qqHopping + g_qqNeighbor);
+		g_rate[2] = transitionRate(g_qqHopping + 2.0*g_qqNeighbor);
+		g_rate[3] = transitionRate(g_qqHopping + 3.0*g_qqNeighbor);
+		g_rate[4] = transitionRate(g_qqHopping + 4.0*g_qqNeighbor);
+	}
+	
+	function transitionRate(energy) {
+		const nue0 = g_kT*g_EE/g_hPlank;
+		return nue0*Math.exp(-energy/g_kT);
+	}
+	
+	function setTransition(ia) {
+		const i = g_ixAdatom[ia], j = g_iyAdatom[ia];
+		const nb = numberOfNeighbor(i,j);
+		g_transition[ia*4  ] = dirRate((i+1)%g_NNx, j, nb);
+		g_transition[ia*4+1] = dirRate((i-1+g_NNx)%g_NNx, j, nb);
+		g_transition[ia*4+2] = dirRate(i, (j+1)%g_NNy, nb);
+		g_transition[ia*4+3] = dirRate(i, (j-1+g_NNy)%g_NNy, nb);
+		return (g_transition[ia*4+0]+g_transition[ia*4+1]+g_transition[ia*4+2]+g_transition[ia*4+3]);
+	}
+	
+	function dirRate(ii, jj, nb) {
+		let rt=0.0;
+		if (g_lattice[ii][jj]>=0) {
+			rt = 0.0;
+		} else {
+			const nb1 = numberOfNeighbor(ii,jj)-1;
+			rt = (nb<=nb1) ? g_rate[0] : g_rate[nb-nb1];
+		}
+		return rt;
+	}
+	
+	function numberOfNeighbor(i,j) {
+		let nb=0;
+		if (g_lattice[(i+1)%g_NNx][j]>=0) nb += 1;
+		if (g_lattice[(i-1+g_NNx)%g_NNx][j]>=0) nb += 1;
+		if (g_lattice[i][(j+1)%g_NNy]>=0) nb += 1;
+		if (g_lattice[i][(j-1+g_NNy)%g_NNy]>=0) nb += 1;
+		return nb;
+	}
+	
+	function selectTransion(rsum) { /* find i  R(i-1) < u RN <= R(i) */
+		const ipmax=4*g_NNa;
+
+		let rnd = rsum*Math.random();
+		for (let ipp=0; ipp<ipmax; ipp++) {
+			rnd -= g_transition[ipp];
+			if (rnd<0.0) return(ipp);
+		}
+		return (ipmax-1);
+	}
+	
+	function move(ipp) { // update g_ixAdatom[], g_iyAdatom[], g_lattice[][], g_transition[]
+		const ia = Math.floor(ipp/4);
+		const id = ipp%4;
+		let i = g_ixAdatom[ia], j = g_iyAdatom[ia];
+		g_lattice[i][j] = -1;
+		if (id==0) i = (i+1)%g_NNx;
+		if (id==1) i = (i-1+g_NNx)%g_NNx;
+		if (id==2) j = (j+1)%g_NNy;
+		if (id==3) j = (j-1+g_NNy)%g_NNy;
+		g_ixAdatom[ia] = i; g_iyAdatom[ia] = j;
+		g_lattice[i][j] = ia;
+		setRateAround(i,j);
+	}
+	
+	function setRateAround(i0, j0) {
+		const nnx=g_NNx, nny=g_NNy;
+		let srate=0.0;
+		for (let i=i0-2; i<=i0+2; i++) {
+			const ii = (i+nnx)%nnx;
+			for (let j=j0-2; j<=j0+2; j++) {
+				const jj =  (j+nny)%nny;
+				if (g_lattice[ii][jj]>=0) {
+					srate += setTransition(g_lattice[ii][jj]);
+				}
+			}
+		}
+		return srate;
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		init:			setInitialCondition,	// setInitialCondition( theme )
+		evolve:			timeEvolution,			// timeEvolution( speed, qqHop, qqNbr, TEnergy, isChange )
+		
+		getSysParam:	function() { return [ g_NNa, g_NNx, g_NNy ]; },
+		getNow:			function() { return [ g_sysTime, g_qqHopping, g_qqNeighbor, g_kT ]; },
+		getWalker:		function(i) { return [ g_ixAdatom[i], g_iyAdatom[i] ]; },
+		getLattice:		function(ix,iy) { return g_lattice[ix][iy]; },
+	};
+	
+})(); //==============  adatomFastKMC2D end  =======================================================================
+
+
+const js084 = (function(){ // ====================  js Module  ====================
+	
+	const theModule = adatomFastKMC2D;
+	const xCanvasSize = 500;	// in pixel
+	const yCanvasSize = 480;	// in pixel
+	let canvas;					// canvas2d
+	let ctx;					// = canvas.getContext('2d');
+	
+	let v_theme = 0;			// lattice 0:40x40, 1:60x60, 2:80x80
+	let v_nCalc = 1;			// 1 (calc/frame)
+	let v_qqHop = 0.20;			// (eV) hopping energy
+	let v_qqNbr = 0.30;			// (eV) adsorption energy to neighbor adatom
+	let v_TEnergy = 0.100;		// (eV) thermal energy
+	let v_isCange = true;
+	
+	let p_NNa, p_NNx, p_NNy; 	// <-- theModule.getSysParam()
+	
+	let dispMode = 0; // no use
+	let resetFlag = true;
+	let pauseFlag = false;
+	let stepFlag = false;
+	//let inStepFlag = false;
+	
+	function main() {
+		resetFlag = true;
+		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
+		initDom();
+		
+		animate();
+		
+		function setCanvas( canvasID, width, height ) {
+			canvas = document.getElementById( canvasID );
+			canvas.width  = width;
+			canvas.height = height;
+			ctx = canvas.getContext('2d', { willReadFrequently:true } );
+			ctx.font = "16px 'sans-serif'";
+			ctx.textBaseline = "bottom";
+			ctx.textAlign = "left";
+			ctx.lineWidth = 1;
+		}
+	}
+	
+	
+	function animate() {
+		
+		if ( resetFlag ) {
+			resetFlag = false;
+			theModule.init( v_theme );
+			[ p_NNa, p_NNx, p_NNy ] = theModule.getSysParam();
+			v_isCange = true;
+		}
+		
+		if ( !pauseFlag ) {
+			theModule.evolve( v_nCalc, v_qqHop, v_qqNbr, v_TEnergy, v_isCange );
+			v_isCange = false;
+		} else if ( pauseFlag && stepFlag ) {
+			stepFlag = false;
+			theModule.evolve( v_nCalc, v_qqHop, v_qqNbr, v_TEnergy, v_isCange  );
+			v_isCange = false;
+			//inStepFlag = true;
+		}
+		
+		draw( ctx, dispMode );
+		
+		requestAnimationFrame(animate);
+	}
+	
+	
+	// --------------------  draw  --------------------
+	
+	function draw( ctx, dispMode ) {
+		const xp = 60, yp = 40, xBoxSize = 360, yBoxSize = Math.floor(xBoxSize/p_NNx*p_NNy), sc = xBoxSize/p_NNx;
+		let sysTime, qqHopping, qqNeighbor, kT;
+		[ sysTime, qqHopping, qqNeighbor, kT ] = theModule.getNow()
+		
+		// clear
+		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
+		
+		// box
+		ctx.strokeStyle = "#888888";
+		ctx.strokeRect( xp-1, yp-1, xBoxSize+2, yBoxSize+2 );
+		
+		drawLattice( ctx, p_NNx, p_NNy, xp, yp, sc );
+		
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`periodic field = ${p_NNx} x ${p_NNy},`, 40, yCanvasSize-50);
+		ctx.fillText(`number of adatom N = ${p_NNa}`, 250, yCanvasSize-50);
+		ctx.fillText(`temp = ${kT} (eV) ~ ${(11602.8*kT).toFixed(1)} (K)`, 40, yCanvasSize-30);
+		ctx.fillText(`time = ${(sysTime*1.0e12).toFixed(1)} (ps)`, 40, yCanvasSize-10);
+	}
+	
+	function drawLattice( ctx, nnx, nny, xp, yp, sc ) {
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				const fij = theModule.getLattice(i,j);
+				if (fij>=0) {
+					drawDisc(ctx, xp+(i+0.5)*sc,yp+((nny-j-1)+0.5)*sc,0.4*sc,"#00ff00");
+				}
+			}
+		}
+	}
+	
+	function drawDisc( ctx, x, y, r, color ) {
+		ctx.fillStyle = color;
+		ctx.beginPath();
+		ctx.arc(x, y, r, 0, 2*Math.PI, false);
+		ctx.fill();
+	}
+	
+	
+	// --------------------  control  --------------------
+	
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function reset() { resetFlag = true; }
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = ( pauseFlag==false ); 
+		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==true ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() { stepFlag = true; }
+	
+	function setTheme() {
+		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
+		resetFlag = true;
+	}
+	
+	function setqqHop() {
+		v_qqHop = Number(document.getElementById("range_qqHop").value);
+		document.getElementById("text_qqHop").innerHTML = " " + v_qqHop.toFixed(2);
+		v_isCange = true;
+	}
+	
+	function setqqNbr() {
+		v_qqNbr = Number(document.getElementById("range_qqNbr").value);
+		document.getElementById("text_qqNbr").innerHTML = " " + v_qqNbr.toFixed(2);
+		v_isCange = true;
+	}
+	
+	function setTEnergy() {
+		v_TEnergy = Number(document.getElementById("range_TEnergy").value);
+		document.getElementById("text_TEnergy").innerHTML = " " + v_TEnergy.toFixed(3);
+		v_isCange = true;
+	}
+	
+	function setDispMode() {  // select dispMode
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+	}
+	
+	function setSpeed() {
+		v_nCalc = 1 + document.getElementById("slct_speed").selectedIndex;
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		reset:			reset,			// reset()
+		pause:			pause,			// pause()
+		step:			step,			// step()
+		
+		setTheme:		setTheme,		// setTheme()
+		setqqHop:		setqqHop,		// setqqHop()
+		setqqNbr:		setqqNbr,		// setqqNbr()
+		setTEnergy:		setTEnergy,		// setTEnergy()
+		setDispMode:	setDispMode,	// setDispMode()
+		setSpeed:		setSpeed,		// setSpeed()
+	};
+	
+})(); // ====================  js084 module end  ====================
+
+
+// event
+const js = js084;
+window.addEventListener('load', js.main );
+
+
+// %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%%
+
+</script>
+
+<style type="text/css">
+    body { text-align:left; color:#000000; background-color:#fff8dd; }
+</style>
+
+</head>
+
+<body>
+<p>[ht084] adatom - fast kinetic Monte-Carlo simulation 2D</p>
+<canvas ID="canvas_box" style="background-color: #000000;" WIDTH="500" HEIGHT="480"></canvas>
+<br>
+
+<label>theme:</label>
+<select id="slct_theme" onChange="js.setTheme()">
+<option>lattice 40x40</option><option>lattice 60x60</option>
+<option>lattice 80x80</option>
+</select>
+    <span style="margin-right: 180px;"></span>
+<button onClick="js.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="js.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="js.step()">step</button>
+<br>
+
+<label>Q hopping =</label>
+<input type="range" id="range_qqHop" min="0.05" max="0.25" value="0.2" step="0.01" 
+style="width:300px" list="tick_qqHop" oninput="js.setqqHop()">
+<datalist id="tick_qqHop"><option value="0.05"><option value="0.1">
+<option value="0.15"><option value="0.20"><option value="0.25"></datalist>
+<label id="text_qqHop"> 0.20</label> (eV)
+<br>
+
+<label>Q neighbor =</label>
+<input type="range" id="range_qqNbr" min="0.1" max="0.5" value="0.3" step="0.01" 
+style="width:300px" list="tick_qqNbr" oninput="js.setqqNbr()">
+<datalist id="tick_qqNbr"><option value="0.1"><option value="0.2">
+<option value="0.3"><option value="0.4"><option value="0.5"></datalist>
+<label id="text_qqNbr"> 0.30</label> (eV)
+<br>
+
+<label>kT(Temp) =</label>
+<input type="range" id="range_TEnergy" min="0.025" max="0.2" value="0.1" step="0.005" 
+style="width:300px" list="tick_TEnergy" oninput="js.setTEnergy()">
+<datalist id="tick_TEnergy"><option value="0.05"><option value="0.10"><option value="0.15">
+<option value="0.20"><option value="0.25"></datalist>
+<label id="text_TEnergy"> 0.100</label> (eV)
+<br>
+
+<label>nCalc/frame:</label>
+<select id="slct_speed" onChange="js.setSpeed()">
+<option selected>1</option><option>2</option><option>3</option><option>4</option>
+<option>5</option><option>6</option><option>7</option><option>8</option>
+</select>
+<br>
+
+<p id="text_caption" ></p>
+<hr width="480" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
