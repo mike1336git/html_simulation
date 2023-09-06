@@ -11,3 +11,8 @@
 - The field of physical simulation includes:<br>
     Molecular Dynamics, Quantum Mechanics, Fluid Dynamics,<br>
     and others (FDTD method, Kinetic Monte-Carlo Method, Classical Mechanics, Infection Model )
+
+<br>
+snapshot<br>
+
+<img src="https://github.com/mike1336git/html_simulation/blob/main/GALLERY/ht076_airFlowsLB2D9V.png" alt="ht076_png" title="ht076">
