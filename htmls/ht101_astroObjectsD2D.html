@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>js101_astroObjectsD2D</title>
+<script type="text/javascript">
+
+// %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%%
+
+'use strict';
+
+/* --------------------
+//
+//  js101_astroObjectsD2D
+//    Copyright(C) 2018-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT )
+//
+//    ver 0.0.0  2018.05.05 created, last updated on 2018.12.07
+//    ver 0.0.1  2019.01.27 v1, last updated on 2021.09.23
+//    ver 0.0.2  2021.11.07 v2, last updated on 2021.11.07
+//    ver 0.0.3  2023.05.12 v3, last updated on 2023.09.10
+//
+// --------------------  gravity  - classical dynamics 2D
+//
+//  astro objects - dynamics 2D
+//
+//    method: velocity Verlet Algorithm
+//      (1) vi = vi + (Fi/mi)*(0.5dt)
+//      (2) ri = ri + vi*dt
+//      (3) calculation Fi <- {r1,r2,...,rn} Fi=sum(Fij,j=1 to n),Fij=F(ri-rj)
+//      (4) vi = vi + (Fi/mi)*(0.5dt)
+//      goto (1)
+//
+//    force: F(r) = -G*mi*mj/r^2                     (r>r0) gravity
+//                = -20.0*G*mi*mj*(r-0.95*r0)/r0^3   (r<=r0) spring
+//                     spring: F(r) = -k(r-0.95*r0), 
+//                     continuty: F(r0) = -G*mi*mj/r0^2  --> k = 20*G*mi*mj/r0^3
+//
+// --------------------
+*/
+
+const astroObjectsD2D = (function(){ // ====================  astroObjectsD2D Module  ====================
+	
+	const g_gg = 6.67408e-11;			// (m^3 kg^-1 s^-2) gravitational constant
+	const g_AA = 1.0e5;					// (m) length unit g_AA = 100 (km)
+	const g_nMax = 1000;				// array max
+	
+	let g_Nmt = 1000;					// number of ao
+	let g_sysTime = 0.0;				// (s) system time
+	let g_timeStep = 10.0;				// (s) time step dt
+	let g_potentialEnergy = 0.0;		// (J) total potential energy
+	let g_kineticEnergy = 0.0;			// (J) total kinrtic energy 
+	
+	const g_xx = dim1( g_nMax );		// (m) position x-component
+	const g_yy = dim1( g_nMax );		// (m) position y-component
+	const g_vx = dim1( g_nMax );		// (m/s) velocity x-component
+	const g_vy = dim1( g_nMax );		// (m/s) velocity y-component
+	const g_ffx = dim1( g_nMax );		// (N) x-component of total force
+	const g_ffy = dim1( g_nMax );		// (N) y-component of total force
+	const g_mas = dim1( g_nMax );		// (kg) mass of astro object
+	const g_rc =  dim1( g_nMax );		// (m) radius of astro object
+	const g_damp = dim1( g_nMax );		// daming force between i-th and j*th object
+										// = -0.5*(g_damp[i]+g_damp[j])*vij^2
+	
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+	
+	
+	// --------------------  astro objects data  --------------------
+	
+	const aObject = [
+		// 0:mas(kg) 1:rc(m) 2:damp 3:hue color
+		[  1.0e18, 0.8*g_AA, 1.0e8, 0.85 ],
+		[  1.0e18, 0.8*g_AA, 5.0e8, 0.01 ],
+		[  5.0e18, 0.8*g_AA, 2.0e8, 0.10 ],
+		[ 10.0e18, 0.8*g_AA, 5.0e8, 0.20 ] ];
+	
+	
+	// --------------------  set initial condition  --------------------
+	
+	function setInitialCondition( theme ) {
+		g_sysTime = 0.0;
+		setAOs( theme );
+	}
+	
+	function setAOs(theme) {
+		const knd = 1;
+		const rcOfKind = aObject[knd][1];
+		
+		if (theme==0) { // 2-body
+			let i = 0;
+			//setAOdisc(ii, knd, aa, x0, y0, r0, th, vx0, vy0)
+			i = setAOdisc(i,knd, 0.6*rcOfKind,-15.0*g_AA, 0.0 *g_AA, rcOfKind*3.0, 0.0,   0.0,  0.0);
+			i = setAOdisc(i,knd, 0.6*rcOfKind, 30.0*g_AA, 0.0 *g_AA, rcOfKind*2.0, 0.0,   0.0, 20.0);
+			g_Nmt = i;
+		} else if (theme==1) { // 3-body
+			let i = 0;
+			i = setAOdisc(i,knd, 0.6*rcOfKind,-15.0*g_AA,  0.0 *g_AA, rcOfKind*3.0, 0.0,   0.0,  0.0);
+			i = setAOdisc(i,knd, 0.6*rcOfKind, 30.0*g_AA,  0.0 *g_AA, rcOfKind*1.5, 0.0,   0.0, 30.0);
+			i = setAOdisc(i,knd, 0.6*rcOfKind,-10.0*g_AA,-20.0 *g_AA, rcOfKind*1.5, 0.0, -50.0,  0.0);
+			g_Nmt = i;
+		} else if (theme==2) { // disk
+			let i = 0;
+			i = setAOdisc(i,knd, 4.0*rcOfKind, 0.0*g_AA,  0.0*g_AA, rcOfKind*30.0, 0.0,   0.0,  0.0);
+			g_Nmt = i;
+			const v0 = 50.0;
+			for (let ii=0; ii<g_Nmt; ii++) {
+				const r = Math.sqrt(g_xx[ii]*g_xx[ii]+g_yy[ii]*g_yy[ii]);
+				g_vx[ii] = -v0*g_yy[ii]/(rcOfKind*30);
+				g_vy[ii] = v0*g_xx[ii]/(rcOfKind*30);
+			}
+
+		} 
+		
+		removeTranslationalMotion();
+	}
+	
+	function setAOdisc(ii, knd, aa, x0, y0, r0, th, vx0, vy0) {
+		let ip = ii;
+		const a = aa;
+		const b = (Math.sqrt(3.0)/2.0)*a;
+		const nx = Math.floor(2.0*r0/b) + 1;
+		const ny = Math.floor(2.0*r0/a) + 1;
+		const sth = Math.sin(th);
+		const cth = Math.cos(th);
+		
+		for (let i=0; i<nx; i++) {
+			const x = b*i;
+			for (let j=0; j<ny; j++) {
+				let y = a*j; if (i%2==1) y += 0.5*a;
+				if ((x-r0)*(x-r0)+(y-r0)*(y-r0)<=r0*r0) {
+					const xp = x-r0, yp = y-r0;
+					g_xx[ip] = x0 + cth*xp - sth*yp;
+					g_yy[ip] = y0 + sth*xp + cth*yp;
+					g_vx[ip] = vx0;
+					g_vy[ip] = vy0;
+					g_ffy[ip] = 0.0;
+					g_ffy[ip] = 0.0;
+					g_mas[ip] = aObject[knd][0];
+					g_rc[ip] = aObject[knd][1];
+					g_damp[ip] = aObject[knd][2];
+					ip += 1;
+				}
+			}
+		}
+		return ip;
+	}
+	
+	function removeTranslationalMotion() {
+		const nmt=g_Nmt;
+		
+		let m=0.0, mvx=0.0, mvy=0.0;
+		for (let i=0; i<nmt; i++) {
+			m += g_mas[i];
+			mvx += g_mas[i]*g_vx[i];
+			mvy += g_mas[i]*g_vy[i];
+		}
+		const vtx = mvx/m, vty = mvy/m;
+		for (let i=0; i<nmt; i++) {
+			g_vx[i] -= vtx;
+			g_vy[i] -= vty;
+		}
+	}
+	
+	
+	// --------------------  time evolution  --------------------
+	
+	function timeEvolution( nCalc ) {
+		
+		for (let i=0; i<nCalc; i++) {
+			g_sysTime += g_timeStep;
+			moveAOs(g_timeStep);
+		}
+	}
+	
+	function moveAOs(dt) {
+		const nmt=g_Nmt;
+		
+		for (let i=0; i<nmt; i++) {
+			const a = 0.5*dt/g_mas[i];
+			g_vx[i] += a*g_ffx[i];
+			g_vy[i] += a*g_ffy[i];
+			g_xx[i] += g_vx[i]*dt;
+			g_yy[i] += g_vy[i]*dt;
+		}
+		calcForce();
+		for (let i=0; i<nmt; i++) {
+			const a = 0.5*dt/g_mas[i];
+			g_vx[i] += a*g_ffx[i];
+			g_vy[i] += a*g_ffy[i];
+		}
+		g_kineticEnergy = totalKineticEnergy();
+	}
+	
+	function calcForce() {
+		const nmt=g_Nmt;
+		
+		for (let i=0; i<nmt; i++) {
+			g_ffx[i] = 0.0;
+			g_ffy[i] = 0.0;
+		}
+		g_potentialEnergy = 0.0;
+
+		for (let i=0; i<nmt; i++) {
+			for (let j=i+1; j<nmt; j++) {
+				const xij = g_xx[i]-g_xx[j], yij = g_yy[i]-g_yy[j];
+				const rij = Math.sqrt(xij*xij+yij*yij);
+				const f = force(rij,i,j);
+				g_potentialEnergy += -g_gg*g_mas[i]*g_mas[j]/rij;
+				const fxij = f*xij/rij, fyij = f*yij/rij;
+				g_ffx[i] +=  fxij;
+				g_ffy[i] +=  fyij;
+				g_ffx[j] += -fxij;
+				g_ffy[j] += -fyij;
+			}
+		}
+	}
+	
+	function force(r, i, j) {
+		const r0 = 0.5*(g_rc[i]+g_rc[j]);
+		const gmm = g_gg*g_mas[i]*g_mas[j];
+		
+		let f;
+		if (r>r0) {
+			f = -gmm/(r*r);
+		} else {
+			f = -20.0*gmm*(r-0.95*r0)/(r0*r0*r0);
+			f += -0.5*(g_damp[i]+g_damp[j])*((g_xx[i]-g_xx[j])*(g_vx[i]-g_vx[j])
+							+(g_yy[i]-g_yy[j])*(g_vy[i]-g_vy[j]));
+		}
+		return f;
+	}
+	
+	
+	// --- utility
+	
+	function totalKineticEnergy() {
+		const nmt=g_Nmt;
+		
+		let s=0.0;
+		for (let i=0; i<nmt; i++) {
+			s += 0.5*g_mas[i]*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
+		}
+		return s;
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		init:			setInitialCondition,	// setInitialCondition( theme )
+		evolve:			timeEvolution,			// timeEvolution( nCalc )
+		
+		getSysParam:	function() { return [ g_Nmt, 100.0*g_AA, g_timeStep ]; },
+		getSysTime:		function() { return g_sysTime; },
+		getRc:			function(i) { return g_rc[i]; },
+		getPosition:	function(i) { return [ g_xx[i], g_yy[i] ]; },
+		getVelocity:	function(i) { return [ g_vx[i], g_vy[i] ]; },
+	};
+	
+})(); // ====================  astroObjectsD2D end  ====================
+
+
+const js101 = (function(){ // ====================  js Module  ====================
+
+	const theModule = astroObjectsD2D;
+	const xCanvasSize = 480;	// in pixel
+	const yCanvasSize = 480;	// in pixel
+	let canvas;
+	let ctx;
+	
+	let v_theme = 0;		// 0:2-body  1:3-body  2:disk
+	let v_nCalc = 20;
+	
+	let p_Nmt, p_xLen, p_timeStep;	// <-- theModule.getSysParam();
+	
+	let dispMode = 0;
+	let resetFlag = true;
+	let pauseFlag = false;
+	let stepFlag = false;
+	
+	
+	// mouse wheel for zoom in/out
+	const g2d = {};
+	g2d.zoom = 1.0;
+	
+	g2d.mouseWheel = function(e) {
+		g2d.deltaY = e.deltaY;
+		if ( g2d.deltaY > 0 ) g2d.zoom *= 0.95;
+		else if ( g2d.deltaY < 0 ) g2d.zoom *= 1.05;
+		if ( g2d.zoom<0.25 ) g2d.zoom = 0.25;
+		if ( g2d.zoom>2.0 ) g2d.zoom = 2.0;
+	};
+
+
+	function main() {
+		resetFlag = true;
+		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
+		initDom();
+		
+		animate();
+	
+		function setCanvas( canvasID, width, height ) {
+			canvas = document.getElementById( canvasID );
+			canvas.width  = width;
+			canvas.height = height;
+			ctx = canvas.getContext('2d');
+			ctx.font = "16px 'sans-serif'";
+			ctx.textBaseline = "bottom";
+			ctx.textAlign = "left";
+			ctx.lineWidth = 1;
+			
+			canvas.addEventListener("mousewheel", g2d.mouseWheel);
+		}
+	}
+
+
+	function animate() {
+		
+		if ( resetFlag ) {
+			resetFlag = false;
+			theModule.init( v_theme );
+			[ p_Nmt, p_xLen, p_timeStep ] = theModule.getSysParam();
+		}
+		
+		if ( !pauseFlag ) {
+			theModule.evolve( v_nCalc );
+		} else if ( pauseFlag && stepFlag ) {
+			stepFlag = false;
+			theModule.evolve( v_nCalc );
+		}
+		
+		draw( ctx, dispMode );
+		
+		requestAnimationFrame(animate);
+	}
+	
+	
+	// --------------------  draw  --------------------
+	
+	function draw( ctx, dispMode ) {
+		const boxSize = 400;
+		const cx0 = xCanvasSize/2, cy0 = yCanvasSize/2-20, sc = boxSize/p_xLen*g2d.zoom;
+		
+		
+		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
+		
+		// draw box
+		const bSize = boxSize*g2d.zoom;
+		ctx.strokeStyle = "#444444";
+		ctx.strokeRect( cx0-bSize/2, cy0-bSize/2, bSize, bSize );
+		
+		if ( dispMode==0 ) {
+			drawAOs( ctx, 0, cx0, cy0, sc );
+		} else if ( dispMode==1 ) {
+			drawAOs( ctx, 1, cx0, cy0, sc );
+		}
+		
+		// caption
+		const time = theModule.getSysTime();
+		ctx.fillStyle = "#888888";
+		ctx.fillText( `box = 10000 x 10000 (km)`, 20, yCanvasSize-30 );
+		ctx.fillText( `N = "${p_Nmt}`, 20, yCanvasSize-10 );
+		ctx.fillText( `time = ${time.toFixed(1)} (s) = ${(time/3600/24).toFixed(3)}(days)`, 100, yCanvasSize-10 );
+		//document.getElementById("text_caption").innerHTML = "minimum molecular dynamics code"
+		
+	}
+	
+	function drawAOs( ctx, drawMode, cx0, cy0, sc ) {
+		const nn = p_Nmt, twoPi = 2.0*Math.PI, ts = 2000*p_timeStep;
+		
+		ctx.fillStyle = "rgb(180, 80, 0)";
+		for (let i=0; i<nn; i++) {
+			let x, y; 
+			[ x, y ] = theModule.getPosition(i);
+			const rc = theModule.getRc(i);
+			let r = rc*sc*0.5;
+			if (r<1.0) r = 1;
+			ctx.beginPath();
+			ctx.arc( x*sc + cx0, -y*sc + cy0, r, 0, twoPi, false);
+			ctx.fill();
+			if ( drawMode==1 ) {
+				let vx, vy;
+				[ vx, vy ] = theModule.getVelocity(i);
+				const x2 = x + vx*ts, y2 = y + vy*ts;
+				drawLine( ctx, x*sc + cx0, -y*sc + cy0, x2*sc + cx0, -y2*sc + cy0, "#aa8866" );
+			}
+		}
+	}
+	
+	function drawLine(ctx, x1, y1, x2, y2, color) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	}
+	
+	
+	// --------------------  control  --------------------
+
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function reset() { resetFlag = true; }
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = ( pauseFlag==false ); 
+		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==true ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() { stepFlag = true; }
+	
+	function setTheme() {
+		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
+		resetFlag = true;
+	}
+	
+	function setDispMode() {
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+	}
+	
+	function viewHome() {
+		g2d.zoom = 1.0;
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		// dom control
+		reset:			reset,			// reset()
+		pause:			pause,			// pause()
+		step:			step,			// step()
+		
+		setTheme:		setTheme,		// setTheme()
+		
+		setDispMode:	setDispMode,	// setDispMode()
+		viewHome:		viewHome,		// viewHome()
+	};
+	
+})(); // ====================  js101 module end  ====================
+
+
+// event
+const js = js101;
+window.addEventListener('load', js.main );
+
+
+// %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%%
+
+</script>
+
+<style type="text/css">
+    body { text-align:left; color:#000000; background-color:#fff8dd; }
+</style>
+
+</head>
+
+<body>
+<p>[ht101] Astro Objects - dynamics under gravity 2D</p>
+<canvas ID="canvas_box" style="background-color: #000000;" width="480" height="480"></canvas>
+<br>
+
+<label>theme:</label>
+<select id="slct_theme" onChange="js.setTheme()">
+<option>2-body</option><option>3-body</option><option>disk</option>
+</select>
+    <span style="margin-right: 200px;"></span>
+<button onClick="js.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="js.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="js.step()">step</button>
+<br>
+
+<label>disp mode:</label>
+<select id="slct_dispMode" onChange="js.setDispMode()">
+<option selected>ball</option><option>ball + velocity</option>
+</select>
+<br>
+
+mouse-wheel to zoom in/out
+    <span style="margin-right: 20px;"></span>
+<button onClick="js.viewHome()">return to initial zoom</button>
+<br>
+
+<p id="text_caption" ></p>
+<hr width="480" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+

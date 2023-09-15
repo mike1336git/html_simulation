@@ -1,0 +1,1310 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>js102_birdsEyeViewMAC2D</title>
+<script type="text/javascript">
+
+// %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%%
+
+'use strict';
+
+/* --------------------
+//
+//  js102_birdsEyeViewMAC2D  ... modified js089_channelMAC2D
+//    Copyright(C) 2018-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2018.06.03 created, last updated on 2020.12.15
+//    ver 0.0.1  2021.09.24 v1, last updated on 2021.09.27
+//    ver 0.0.2  2021.11.07 v2, last updated on 2021.11.07
+//    ver 0.0.3  2023.05.13 v3, last updated on 2023.09.10
+//
+// -------------------- MAC2d (Marker And Cell method)  --- fluid dynamics
+//
+// Marker And Cell method 2D
+//
+//  - equation of continuity ( imcompressible fluid  )
+//      div(v)=0                                           (I)
+//  - conservation of momentum (Navier-Stokes)
+//      dv/dt + (v.nabra)v = -grad(p)+(1/Re)div(grad(v))   (II)
+//
+//  - finite difference approximation
+//      dv/dt --> {v(t+dt) - v(t)}/dt
+//      dvx/dx --> {vx[i+1][j] - vx[i-1][j]}/(2dx),
+//      dvx/dy --> {vx[i][j+1] - vx[i][j-1]}/(2dy),
+//       ...
+//      dvx2/dx2 --> {vx[i+1][j] + vx[i-1][j] - 2vx[i][j]}/(dx^2),
+//
+//  - Kawamura-Kuwahara scheme alpha = 3,
+//      u df/dx --> u[i][j]*dr + alpha*|u[i][j]|*ds,
+//      dr = {-f[i+2][j]+8f[i+1][j]-8f[i-1][j]+f[i-2][j]}/(12dx),
+//      ds = {f[i+2][j]-4f[i+1][j]+6f[i][j]-4f[i-1][j]+f[i-2][j]}/(12dx),
+//   pressure <-- (I),(II)
+//   div(grad(p)) = dD/dt -{(dvx/dx)^2+(dvx/dy)(dvy/dx)+(dvy/dy)^2}
+//                  (D = div(v) = dvx/dx+dvy/dy)
+//
+// - procedure : evolve flow (vx,vy,p)
+//    (1) vx,vy,p -> next vx,vy
+//        v(t+dt) = v + dt(-v(v.nabra)v -grad(p)+(1/Re)div(grad(v)))
+//    (2) next vx,vy -> p(next)
+//        div(grad(p)) = -s,
+//          s = -dD/dt +((dvx/dx)^2+(dvx/dy)(dvy/dx)+(dvy/dy)^2),
+//          D = div(v).
+//        solve Poissons equation
+//    goto (1)
+// 
+//
+// --------------------
+*/
+
+const waterFlowMAC2D = (function(){ // ====================  waterFlowMAC2D Module  ====================
+	
+	const g_nxMax = 200;					// field array x-max
+	const g_nyMax = 100;					// field array y-max
+	
+	let g_themeNum = 0;						// 0:shear flow 1:vortex 2:Couette flow 3:cavity flow 4:water channel
+	let g_themeStr = "water channel";		// theme string
+	let g_NNx = 80;							// array x-size of field
+	let g_NNy = 80;							// array y-size of field
+	let g_sysTime = 0.0;					// system time
+	let g_dt = 0.01;						// time step // = 0.008; the smaller dt,the system is more stable
+	let g_dx = 1.0/20.0;					// x-division
+	let g_dy = 1.0/20.0;					// y-division
+	let g_ReynoldsNumber = 400.0;			// Re for Representative length 1
+	let g_alphaKK = 3.0;					// Kawamura-Kuwahara scheme alpha
+	let g_vx0 = 1.0;						// initial flow velosity
+	let g_referencePressure = 1.0;			// reference pressure
+	let g_omega = 1.75;						// Poisson SOR omega
+	let g_nIter = 0;						// number of Poisson iteration
+	let g_pError = 0.99;					// error in Poisson iteration
+	let g_errorMax = 0.001;					// Maximum Poisson iteration error
+	let g_status = 'stable';				// system status 'stable' or 'unstable'
+	let g_imageScale = 4;					// image scale
+	let g_fanSW = 0;						// if (g_fanSW==1) setFan(g_vx0);
+	let g_nLen = 10;						// typical length L=g_nLen*dx
+	
+	const g_cellKind = dimInt2( g_nxMax, g_nyMax );	// kind of cell 0:free space, 1:wall
+	const g_vx = dim2( g_nxMax, g_nyMax );			// velocity(t) x-component
+	const g_vy = dim2( g_nxMax, g_nyMax );			// velocity(t) y-component
+	const g_nvx = dim2( g_nxMax, g_nyMax );			// next velosity(t+dt) x-component
+	const g_nvy = dim2( g_nxMax, g_nyMax );			// next velosity(t+dt) y-component
+	const g_source = dim2( g_nxMax, g_nyMax );		// source term
+	const g_pressure = dim2( g_nxMax, g_nyMax );	// pressure
+	
+	
+	function dim2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Float64Array( nj );
+		}
+		return a;
+	}
+	
+	function dimInt2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Int32Array( nj );
+		}
+		return a;
+	}
+	
+	
+	// --------------------  set theme param.  --------------------
+	
+	const themeParam = [
+		// 0:themeStr       1:NNx 2:NNy 3:sc 4:Re/L 5:fanSW 6:vx0 7:nLen, 8:errorMax
+		["shear flow",       80,   80,  5,   400,   0,      1.0,  80,      0.0001 ], // 0
+		["vortex",           80,   80,  5,   400,   0,      1.0,  80,      0.0001 ], // 1
+		["Couette flow",    100,   40,  4,   100,   1,      1.0,  40,      0.0001 ], // 2
+		["cavity flow",      80,   80,  5,   200,   1,      1.0,  80,      0.001  ], // 3
+		["water channel",   150,   80,  3,   200,   1,      1.0,  10,      0.001  ], // 4
+		["water channel",   150,   60,  3,   200,   1,      1.0,   8,      0.001  ]  // 5
+	];
+	
+	function setThemeParam(theme) {
+		g_themeNum = theme;
+		g_themeStr = themeParam[theme][0];
+		g_NNx = themeParam[theme][1];
+		g_NNy = themeParam[theme][2];
+		g_imageScale = themeParam[theme][3];
+		g_fanSW = themeParam[theme][5];
+		g_vx0 = themeParam[theme][6];
+		g_nLen = themeParam[theme][7];
+		g_errorMax = themeParam[theme][8];
+	}
+	
+	
+	// --------------------  set initial condition  --------------------
+	
+	function setInitialCondition( theme, RevL ) {
+		setThemeParam(theme);
+		g_ReynoldsNumber = RevL;
+		g_sysTime = 0.0;
+		g_status = 'stable';
+		setField(theme); // set g_cellKind[][],g_vx[][],g_vy[][],g_pressure[][]
+		powder.setInitialPosition(); // powder
+	}
+	
+	function setField(theme) {
+		const nnx=g_NNx, nny=g_NNy;
+		
+		setBoundary(theme);
+		for (let i=0; i<nnx; i++) {  
+			for (let j=0; j<nny; j++) {
+				if (g_cellKind[i][j]==1) continue;
+				g_pressure[i][j] = g_referencePressure;
+				g_vx[i][j] = 0.0;
+				g_vy[i][j] = 0.0;
+			}
+		}
+		
+		for (let i=0; i<nnx; i++) {  
+			for (let j=0; j<nny; j++) {
+				if (g_cellKind[i][j]==1) continue;
+				if (theme==0) { // 0:shear flow
+					if (j>10 && j<nny/2-2) {
+						g_vx[i][j] = g_vx0;
+						g_vy[i][j] = 0.0+0.1*(Math.random()-0.5);
+					} else if (j>nny/2+2 && j<nny-10) {
+						g_vx[i][j] = -g_vx0;
+						g_vy[i][j] = 0.0+0.1*(Math.random()-0.5);
+					}
+				} else if (theme==1) { // 1:vortex
+					const x = i-40, y = j-40;
+					const r = Math.sqrt(x*x+y*y);
+					if (r*r<900) {
+						g_vx[i][j] = -2.0*g_vx0*y/30;
+						g_vy[i][j] = 2.0*g_vx0*x/30;
+					}
+				} else if (theme==2) { // 2:Couette flow
+					g_vx[i][j] = g_vx0;
+					g_vy[i][j] = 0.0+0.1*(Math.random()-0.5);
+				} else if (theme==3) { // 3:cavity flow
+					if (j==0) {
+						g_vx[i][j] = g_vx0;
+						g_vy[i][j] = 0.0;
+					}
+				} else if (theme==4) { // 4:water channel
+					g_vx[i][j] = g_vx0;
+					g_vy[i][j] = 0.0+0.1*(Math.random()-0.5);
+				} else if (theme==5) { // 5:water channel
+					g_vx[i][j] = g_vx0;
+					g_vy[i][j] = 0.0+0.1*(Math.random()-0.5);
+				}
+			}
+		}
+	}
+	
+	function setBoundary(theme) {
+		// theme 0:shear flow 1:vortex 2:Couette flow 3:cavity flow  4:water channel 5:water channel
+		const nnx=g_NNx, nny=g_NNy;
+		
+		for (let i=0; i<nnx; i++) {  
+			for (let j=0; j<nny; j++) {
+				g_cellKind[i][j] = 0; // free space
+				if (theme==2) { // Couette flow
+					if (j==0 || j==nny-1) {
+						setWall(i,j);
+					}
+				} else if (theme==3) { // cavity flow
+					if (((i==0 || i==nnx-1) && j>0) || j>=nny-2) {
+						setWall(i,j);
+					}
+				} else if (theme==4) { // water channel
+					if ( j==0 || j==nny-1 || ((i==36 || i==37) && j>=nny/2-5 && j<=nny/2+5) ) {
+						setWall(i,j);
+					}
+				} else if (theme==5) { // water channel
+					if ( ((i==30 || i==31) && j>=nny/2-4 && j<=nny/2+4) ) {
+						setWall(i,j);
+					}
+				}
+			}
+		}
+	}
+	
+	function setWall(i,j) {
+		g_cellKind[i][j] = 1; // non-fluid object
+		g_pressure[i][j] = g_referencePressure;
+		g_vx[i][j] = 0.0;
+		g_vy[i][j] = 0.0;
+	}
+	
+	
+	// --------------------  time evolution  --------------------
+	
+	function evolveFlow( nCalc, revL ) {
+		if (g_status!='stable') return g_status;
+		
+		g_ReynoldsNumber = revL;
+		for (let i=0; i<nCalc; i++) {
+			g_sysTime += g_dt;
+			setNextVelocity();
+			if (g_fanSW==1) setFan(g_themeNum,g_vx0);
+			g_pError = setNextPressure(200);
+			if (g_pError>0.01) {
+				g_status = 'unstable';
+				return g_status;
+			}
+			if (powder.flag==1) powder.move(); // powder
+		}
+		return g_status;
+	}
+	
+	function setNextVelocity() {
+		const nnx=g_NNx,nny=g_NNy, dt=g_dt, dx=g_dx, dy=g_dy, ReynoldsNumber=g_ReynoldsNumber, alphaKK=g_alphaKK;
+		const cellKind=g_cellKind, vx=g_vx, vy=g_vy, nvx=g_nvx, nvy=g_nvy, pressure=g_pressure;
+		
+		for (let i=0; i<nnx; i++) {
+			let ip = i+1; if (ip>=nnx) ip = 0;
+			let ipp = ip+1; if (ipp>=nnx) ipp = 0;
+			let im = i-1; if (im<0) im = nnx-1;
+			let imm = im-1; if (imm<0) imm = nnx-1;	  
+			for (let j=0; j<nny; j++) {
+				if (cellKind[i][j]==1) continue;
+				let jp = j+1; if (jp>=nny) jp = 0;
+				let jpp = jp+1; if (jpp>=nny) jpp = 0;
+				let jm = j-1; if (jm<0) jm = nny-1;
+				let jmm = jm-1; if (jmm<0) jmm = nny-1;
+				
+				let absui = vx[i][j]; if (absui<0.0) absui = -absui;
+				let absvi = vy[i][j]; if (absvi<0.0) absvi = -absvi;
+				
+				const dpx = (pressure[ip][j]-pressure[im][j])/(2.0*dx);
+				const d2ux = (vx[ip][j]+vx[im][j]-2.0*vx[i][j])/(dx*dx);
+				const d2uy = (vx[i][jp]+vx[i][jm]-2.0*vx[i][j])/(dy*dy);
+				
+				const udux = vx[i][j]*(-vx[ipp][j]+8.0*vx[ip][j]-8.0*vx[im][j]+vx[imm][j])/(12.0*dx) +
+					alphaKK*absui*(vx[ipp][j]-4.0*vx[ip][j]+6*vx[i][j]-4.0*vx[im][j]+vx[imm][j])/(12.0*dx);
+				const vduy = vy[i][j]*(-vx[i][jpp]+8.0*vx[i][jp]-8.0*vx[i][jm]+vx[i][jmm])/(12.0*dy) +
+					alphaKK*absvi*(vx[i][jpp]-4.0*vx[i][jp]+6*vx[i][j]-4.0*vx[i][jm]+vx[i][jmm])/(12.0*dy);
+				nvx[i][j] = vx[i][j]+dt*(-udux-vduy-dpx+(d2ux+d2uy)/ReynoldsNumber);
+				
+				const dpy = (pressure[i][jp]-pressure[i][jm])/(2.0*dy);
+				const d2vx = (vy[ip][j]+vy[im][j]-2.0*vy[i][j])/(dx*dx);
+				const d2vy = (vy[i][jp]+vy[i][jm]-2.0*vy[i][j])/(dy*dy);
+				
+				const udvx = vx[i][j]*(-vy[ipp][j]+8.0*vy[ip][j]-8.0*vy[im][j]+vy[imm][j])/(12.0*dx) +
+					alphaKK*absui*(vy[ipp][j]-4.0*vy[ip][j]+6*vy[i][j]-4.0*vy[im][j]+vy[imm][j])/(12.0*dx);
+				const vdvy = vy[i][j]*(-vy[i][jpp]+8.0*vy[i][jp]-8.0*vy[i][jm]+vy[i][jmm])/(12.0*dy) +
+					alphaKK*absvi*(vy[i][jpp]-4.0*vy[i][jp]+6*vy[i][j]-4.0*vy[i][jm]+vy[i][jmm])/(12.0*dy);
+				nvy[i][j] = vy[i][j]+dt*(-udvx-vdvy-dpy+(d2vx+d2vy)/ReynoldsNumber);
+			}
+		}
+		
+		for (let i=0; i<nnx; i++) {  
+			for (let j=0; j<nny; j++) {
+				if (cellKind[i][j]==1) continue;
+				vx[i][j] = nvx[i][j];
+				vy[i][j] = nvy[i][j];
+			}
+		}
+	}
+	
+	function setFan(theme,v0) {
+		// theme 0:shear flow 1:vortex 2:Couette flow 3:cavity flow  4:water channel
+		const nnx=g_NNx, nny=g_NNy;
+		const vx=g_vx, vy=g_vy;
+		
+		if ( theme==2 || theme==4 || theme==5 ) {
+			for (let j=2; j<nny-2; j++) {
+				vx[0][j] = v0;
+				vy[0][j] = 0.0;
+				vx[1][j] = v0;
+				vy[1][j] = 0.0;
+			}
+		} else if (theme==3) {
+			for (let i=0; i<nnx; i++) {
+				vx[i][0] = v0;
+				vy[i][0] = 0.0;
+			}
+		}
+	}
+	
+	function setNextPressure(iter) {
+		const nnx=g_NNx, nny=g_NNy;
+		
+		setSource();
+		let pErr;
+		g_nIter = iter;
+		for (let ir=0; ir<iter; ir++) {
+			pErr = poisson(g_omega);
+			if (pErr<g_errorMax) {
+				g_nIter = ir;
+				break;
+			}
+		}
+		const pMean = meanPressure(); //correction to avoid accumrated pressure error
+		for (let i=0; i<nnx; i++) {  
+			for (let j=0; j<nny; j++) {
+				g_pressure[i][j] += -pMean + g_referencePressure;
+			}
+		}
+		return pErr;
+	}
+	
+	function setSource() {
+		const nnx=g_NNx, nny=g_NNy, dt=g_dt, dx=g_dx, dy=g_dy;
+		const cellKind=g_cellKind, vx=g_vx, vy=g_vy;
+		
+		for (let i=0; i<nnx; i++) {
+			const ip = (i+1)%nnx;
+			const im = (i-1+nnx)%nnx;	  
+			for (let j=0; j<nny; j++) {
+				if (cellKind[i][j]==1) continue;
+				const jp = (j+1)%nny;
+				const jm = (j-1+nny)%nny;
+				const dux = (vx[ip][j]-vx[im][j])/(2.0*dx);
+				const dvx = (vy[ip][j]-vy[im][j])/(2.0*dx);
+				const duy = (vx[i][jp]-vx[i][jm])/(2.0*dy);
+				const dvy = (vy[i][jp]-vy[i][jm])/(2.0*dy);
+				g_source[i][j] = -(dux+dvy)/dt +(dux*dux+2.0*dvx*duy+dvy*dvy);
+			}
+		}
+	}
+	
+	function poisson(omega) {
+		const nnx=g_NNx, nny=g_NNy, dx=g_dx;
+		const cellKind=g_cellKind, pressure=g_pressure;
+		
+		let dpmax = 0.0;
+		for (let i=0; i<nnx; i++) {
+			const ip = (i+1)%nnx;
+			const im = (i-1+nnx)%nnx;	  
+			for (let j=0; j<nny; j++) {
+				const jp = (j+1)%nny;
+				const jm = (j-1+nny)%nny;
+				if (cellKind[i][j]==0) {
+					const dp = 0.25*(pressure[ip][j]+pressure[im][j]+pressure[i][jp]+pressure[i][jm]
+							-4.0*pressure[i][j]+(dx*dx)*g_source[i][j]);
+					pressure[i][j] += omega*dp;
+					let absdp = dp; if (absdp<0) absdp = -absdp;
+					if (absdp>dpmax) dpmax = absdp;
+				} else {
+					let p = 0.0, np = 0;
+					if (cellKind[ip][j]==0) { p += pressure[ip][j]; np++; };
+					if (cellKind[im][j]==0) { p += pressure[im][j]; np++; };
+					if (cellKind[i][jp]==0) { p += pressure[i][jp]; np++; };
+					if (cellKind[i][jm]==0) { p += pressure[i][jm]; np++; };
+					if (np>0) {
+						pressure[i][j] = p/np;
+					} else {
+						pressure[i][j] = g_referencePressure;
+					}
+				}
+			}
+		}
+		return dpmax;
+	}
+	
+	
+	// --------------------  utility  --------------------
+	
+	function meanPressure() {
+		const nnx=g_NNx, nny=g_NNy;
+		const cellKind=g_cellKind, pressure=g_pressure;
+		
+		let s = 0.0, n = 0;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				if (cellKind[i][j]==0) {
+					s += pressure[i][j];
+					n += 1;
+				}
+			}
+		}
+		return s/n;
+	}
+	
+	function vorticity(i, j) {
+		if (i==0 || i==g_NNx-1 || j==0 || j==g_NNy-1) return 0.0;
+		return (g_vy[i+1][j]-g_vy[i-1][j])/(2*g_dx)-(g_vx[i][j+1]-g_vx[i][j-1])/(2*g_dy);
+	}
+	
+	function speed(i,j) {
+		const vxij= g_vx[i][j], vyij= g_vy[i][j];
+		return Math.sqrt( vxij*vxij+vyij*vyij );
+	}
+	
+	
+	// --------------------  powder (MAC2D)  --------------------
+	
+	// external var g_NNx,g_NNy,g_dx,g_dy,g_dt,g_vx[][],g_vy[][],g_cellKind[][]
+	
+	const powder = {};   // namespace of powder module
+	powder.flag = 1;   // powder flag 1:work powder 0:no work
+	powder.n = 300;    // n: number of powder
+	powder.x = [];     // x-position of i-th powder
+	powder.y = [];     // y-position of i-th powder
+	
+	powder.setInitialPosition = function() {
+		const nnx=g_NNx, nny=g_NNy, nn=powder.n, px=powder.x, py=powder.y;
+		
+		for (let i=0; i<nn; i++) {
+			px[i] = (nnx-2)*Math.random()+1;
+			py[i] = (nny-2)*Math.random()+1;
+		}
+	};
+	
+	powder.move = function() {
+		const nnx=g_NNx, nny=g_NNy, nn=powder.n, ta=g_dt*(1.0/g_dx), px=powder.x, py=powder.y;
+		
+		for (let i=0; i<nn; i++) {
+			const ix = Math.floor(px[i]);
+			const iy = Math.floor(py[i]);
+			px[i] += g_vx[ix][iy]*ta;
+			py[i] += g_vy[ix][iy]*ta;
+			if (px[i]>=nnx) px[i] -= nnx;
+			if (px[i]<0) px[i] += nnx;
+			if (py[i]>=nny) py[i] -= nny;
+			if (py[i]<0) py[i] += nny;
+			if (g_cellKind[ix][iy]==1) {
+				px[i] = (nny-2)*Math.random()+1;
+				py[i] = (nny-2)*Math.random()+1;
+			}
+		}
+	};
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		init:			setInitialCondition,	// setInitialCondition( theme, RevL )
+		evolve:			evolveFlow,				// evolveFlow( nCalc, RevL )
+		
+		getSysParam:	function() { return [ g_NNx, g_NNy, g_dx, g_dt, powder.n ]; },
+		getParam:		function() { return [ g_imageScale, g_vx0, g_nLen, g_errorMax ]; },
+		getNow:			function() { return [ g_sysTime, g_status, g_nIter, g_pError ]; },
+		getCellKind:	function(i,j) { return g_cellKind[i][j]; },
+		getFlow:		function(i,j) { return [ g_vx[i][j], g_vy[i][j] ]; },
+		getPressure:	function(i,j) { return g_pressure[i][j]; },	
+		getVorticity:	vorticity,				// vorticity(i,j)
+		getSpeed:		speed,					// speed(i,j)
+		getPowderPos:	function(ipow) { return [ powder.x[ipow], powder.y[ipow] ]; },
+	};
+	
+})(); // ====================  waterFlowMAC2D end  ====================
+
+
+const js089 = (function(){ // ====================  js Module  ====================
+	
+	/*
+		// 0:themeStr       1:NNx 2:NNy 3:sc 4:Re/L 5:fanSW 6:vx0 7:nLen, 8:errorMax
+		["shear flow",       80,   80,  5,   400,   0,      1.0,  80,      0.0001 ], // 0
+		["vortex",           80,   80,  5,   400,   0,      1.0,  80,      0.0001 ], // 1
+		["Couette flow",    100,   40,  4,   100,   1,      1.0,  40,      0.0001 ], // 2
+		["cavity flow",      80,   80,  5,   200,   1,      1.0,  80,      0.001  ], // 3
+		["water channel",   150,   80,  3,   200,   1,      1.0,  10,      0.001  ], // 4
+		["water channel",   120,   60,  3,   200,   1,      1.0,   8,      0.001  ]  // 5
+	*/
+	
+	const theModule = waterFlowMAC2D;
+	const xCanvasSize = 500;	// in pixel
+	const yCanvasSize = 480;	// in pixel
+	let canvas;					// canvas2d
+	let ctx;					// = canvas.getContext('2d');
+	
+	let v_theme = 5;			// 5:water channel 120x60
+	let v_RevL = 200;			// = Re/L, Re:Reynolds number, L:Representative length
+	let v_nCalc = 2;			// 2 calc/frame
+	
+	let p_NNx, p_NNy, p_dx, p_dt, p_nPowder; // <-- theModule.getSysParam()
+	let p_imageScale, p_vx0, p_nLen, p_errorMax; // <-- theModule.getParam()
+	
+	let xBoxSize = 480;
+	let dispMode = 7; // 7: grid2D pressure + powder
+	let resetFlag = true;
+	let pauseFlag = false;
+	let stepFlag = false;
+	//let inStepFlag = false;
+	
+	function main() {
+		resetFlag = true;
+		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
+		initDom();
+		viewHome();
+		
+		animate();
+		
+		function setCanvas( canvasID, width, height ) {
+			canvas = document.getElementById( canvasID );
+			canvas.width  = width;
+			canvas.height = height;
+			ctx = canvas.getContext('2d');
+			ctx.font = "16px 'sans-serif'";
+			ctx.textBaseline = "bottom";
+			ctx.textAlign = "left";
+			ctx.lineWidth = 1;
+			g3d.setMouseOnCanvas( canvas ); // 3D graphics
+		}
+	}
+	
+	
+	function animate() {
+		
+		if ( resetFlag ) {
+			resetFlag = false;
+			theModule.init( v_theme, v_RevL );
+			[ p_NNx, p_NNy, p_dx, p_dt, p_nPowder ] = theModule.getSysParam();
+			[ p_imageScale, p_vx0, p_nLen, p_errorMax ] = theModule.getParam();
+			imgField = null;
+			xBoxSize = ( p_NNx == p_NNy ) ? 360 : 480;
+			// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
+			g3d.init( p_NNx, p_NNy, p_NNy/2, p_dx, xCanvasSize, yCanvasSize, xBoxSize, 20 );
+			g3d.drawWallGrid2D.threshold = 0.0;
+			g3d.drawWallVectorField2D.threshold = 0.0;
+		}
+		
+		if ( !pauseFlag ) {
+			theModule.evolve( v_nCalc, v_RevL );
+		} else if ( pauseFlag && stepFlag ) {
+			stepFlag = false;
+			theModule.evolve( v_nCalc, v_RevL );
+			//inStepFlag = true;
+		}
+		
+		draw( ctx, dispMode );
+		
+		requestAnimationFrame(animate);
+	}
+	
+	
+	// --------------------  draw  --------------------
+	
+	function draw( ctx, dispMode ) {
+		
+		const xImgSize = p_NNx*p_imageScale, yImgSize = p_NNy*p_imageScale;
+		const xCenter = xCanvasSize/2, yCenter = yCanvasSize/2-g_yShift
+		const xp = Math.floor(xCenter - xImgSize/2), yp = Math.floor(yCenter - yImgSize/2), sc = p_imageScale;
+		
+		const pressMag = 0.5;
+		const pressureFunc = function(i,j) { return pressMag*(theModule.getPressure(i,j)-1.0); };
+		const wallFunc = function(i,j) { return (theModule.getCellKind(i,j)==1); };
+		const vorticityColorFunc = function(i,j) {
+			const hue = Math.floor(36120.0 - 30.0*theModule.getVorticity(i,j)) % 360;
+			return `hsl(${hue},100%,50%)`;
+		}
+		
+		// clear
+		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
+		
+		if ( imgField == null ) {
+			g_imgScale = p_imageScale; // image field modue initialize
+			const xSize = p_NNx*p_imageScale, ySize = p_NNy*p_imageScale;
+			imgField = ctx.getImageData( xp, yp, xSize, ySize );
+		}
+		
+		if (dispMode==0) {
+			//dispText( "density(x,y) + flow" );
+			drawImgField( ctx, 0, 1, xp, yp, sc );
+		} else if (dispMode==1) {
+			//dispText( "density(x,y) + powder" );
+			drawImgField( ctx, 0, 2, xp, yp, sc );
+		} else if (dispMode==2) { // vorticity + powder
+			//dispText( "vorticity(x,y) + powder" );
+			drawImgField( ctx, 1, 2, xp, yp, sc );
+		} else if (dispMode==3) { // speed + flow
+			//dispText( "(speed(x,y)-vx0) + powder" );
+			drawImgField( ctx, 2, 2, xp, yp, sc );
+			
+		} else if (dispMode==4) {
+			//dispText( "grid: pressure(x,y)" );
+			// g3d.drawWallGrid2D( ctx, rotAngle, wallFunc, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawWallGrid2D( ctx, 0.0, wallFunc, pressureFunc, 0.5, 2 );
+		} else if (dispMode==5) {
+			dispText( "grid: vorticity(x,y)" );
+			// g3d.drawWallGrid2D( ctx, rotAngle, wallFunc, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawWallGrid2D( ctx, 0.0, wallFunc, pressureFunc, vorticityColorFunc, 2 );
+		} else if (dispMode==6) {
+			//dispText( "vector grid: flow(x,y) + z:pressure" );
+			const vFunc = function(i,j) {
+				let vx, vy, mag=0.3;
+				[ vx, vy ] = theModule.getFlow(i,j);
+				return [ vx*mag, vy*mag ];
+			}
+			// g3d.drawWallVectorField2D(ctx, rotAngle, wallFunc, zFunc, vFunc, colorMode, inc [, showBox] )
+			g3d.drawWallVectorField2D(ctx, 0.0, wallFunc, pressureFunc, vFunc, 0, 2 );
+		} else if (dispMode==7) {
+			//dispText( "grid: pressure(x,y) + powder" );
+			// g3d.drawWallGrid2D( ctx, rotAngle, wallFunc, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawWallGrid2D( ctx, 0.0, wallFunc, pressureFunc, 0.5, 2 );
+			//drawPowder3D( ctx, nPowder, pressMag );
+			drawPowder3D( ctx, p_nPowder, pressMag );
+			let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
+			g3d.plotNearEdge(ctx, sc, xp, yp, "#999900" ); // override near edge of the box
+		} else if (dispMode==8) {
+			//dispText( "grid: z:density(x,y), color:vorticity(x,y) + powder" );
+			// g3d.drawWallGrid2D( ctx, rotAngle, wallFunc, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawWallGrid2D( ctx, 0.0, wallFunc, pressureFunc, vorticityColorFunc, 2 );
+			//drawPowder3D( ctx, nPowder, pressMag );
+			drawPowder3D( ctx, p_nPowder, pressMag );
+			let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
+			g3d.plotNearEdge(ctx, sc, xp, yp, "#999900" ); // override near edge of the box
+		}
+		
+		let sysTime, status, nIter, pError ;
+		[ sysTime, status, nIter, pError ] = theModule.getNow();
+		const xBox = p_NNx*p_dx, yBox = p_NNy*p_dx, Len = p_nLen*p_dx; // typical length
+		const Re = Math.floor(v_RevL*Len+0.5);
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`periodic box = ${xBox} x ${yBox},  time = ${sysTime.toFixed(1)}`, 20, yCanvasSize-30);
+		let infoStr = `Re=${Re} (L=${Len}), p-error=${pError.toFixed(6)}, Poison iteration=${nIter}`;
+		ctx.fillText( infoStr, 20, yCanvasSize-10 );
+		// Re = (vxFlow/nue)*objectLength
+
+		let msg = "the system is "+status+".";
+		if ( status!='stable' ) {
+			msg = msg+"<br> !!! please select lower Re/L, and press reset button.";
+		}
+		document.getElementById("text_caption").innerHTML =	msg;
+			
+		function dispText( str ) {
+			ctx.fillStyle = "#888888";
+			ctx.fillText( str, 20, yCanvasSize-50 );
+		}
+	}
+	
+	// --- draw image field
+	
+	function drawImgField( ctx, FieldMode, addon, xp, yp, sc ) {
+		const nnx=p_NNx, nny=p_NNy;
+
+		ctx.strokeStyle = "rgb(80, 80, 80)"; // box
+		ctx.strokeRect(xp-1,yp-1,p_NNx*sc+2,p_NNy*sc+2);
+
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				if (theModule.getCellKind(i,j)==1) continue;
+				let hue;
+				if (FieldMode==0) { // pressure
+					hue = Math.floor(18120.0 - 120.0*(theModule.getPressure(i,j)-1.0)) % 360;
+				} else if (FieldMode==1) { // vorticity
+					hue = Math.floor(18120.0 - 20.0*theModule.getVorticity(i,j)) % 360;
+				} else if (FieldMode==2) { // speed
+					let vx, vy;
+					[ vx, vy ] = theModule.getFlow(i,j);
+					hue = Math.floor(36120.0 - 120.0*(Math.sqrt(vx*vx+vy*vy)-p_vx0)) % 360;
+				}
+				//ctx.fillStyle = `hsl(${hue},100%,50%)`;
+				//ctx.fillRect(i*sc+xp,(nny-j-1)*sc+yp,sc,sc);
+				setSquare(i*sc,(nny-j-1)*sc,sc,hue);
+			}
+		}
+		ctx.putImageData( imgField, xp, yp );
+		if (addon==1) drawFlow( ctx, 20.0, xp, yp, sc );
+		if (addon==2) drawPowder( ctx, p_nPowder, xp, yp, sc );
+	}
+	
+	function drawFlow( ctx, mag, xp, yp, sc ) {
+		const nnx=p_NNx, nny=p_NNy;
+
+		ctx.lineWidth = 1;
+		for (let i=0; i<nnx; i+=2) {
+			for (let j=0; j<nny; j+=2) {
+				if ( theModule.getCellKind(i,j)==0 ) { // 0:free space, 1:wall
+					let vx, vy;
+					[ vx, vy ] = theModule.getFlow(i,j);
+					const color = (vx>=0) ? "#6666ff" : "#ff4488";
+					const x = (i+0.5)*sc, y = (nny-j-0.5)*sc;
+					g3d.drawLine( ctx, xp+x, yp+y, xp+x+vx*mag, yp+y-vy*mag, color );
+				}
+			}
+		}
+	}
+	
+	function drawPowder(ctx, nPowder, xp, yp, sc ) {
+		const nny=p_NNy;
+
+		ctx.fillStyle = "#ff80ff";
+		for (let i=0; i<nPowder; i++) {
+			let x, y;
+			[ x, y ] = theModule.getPowderPos(i);
+			ctx.fillRect( xp+x*sc, yp+(nny-y)*sc, 2, 2 );
+		}
+	}
+	
+	
+	// -------------------- image field modue  --------------------
+	// ver 0.0.0  2023.04.20
+	
+	let imgField = null;		// image in draw()
+	let g_imgScale = 3;
+	const g_hue = dimInt2(3,361); // red:hue[0][deg]  green:hue[1][deg]  blue:hue[2][deg]
+	const g_hueColor = [];
+	setHueColor();
+	
+	function dimInt2(ni,nj) {
+		let a=[];
+		for (let i=0; i<ni; i++) {
+			a[i] = [];
+			for (let j=0; j<nj; j++) {
+				a[i][j] = 0;
+			}
+		}
+		return a;
+	}
+
+	function setHueColor() {
+		if (setHueColor.ok==true) return;
+		let x,r,g,b;
+		for (let deg=0; deg<361; deg++) {
+			if (deg<60) {
+				x = deg;
+				g_hue[0][deg] = 255;
+				g_hue[1][deg] = Math.floor(255.0*x/60.0);
+				g_hue[2][deg] = 0;
+			} else if (deg<120) {
+				x = deg-60;
+				g_hue[0][deg] = Math.floor(255.0*(60.0-x)/60.0);
+				g_hue[1][deg] = 255;
+				g_hue[2][deg] = 0;
+			} else if (deg<180) {
+				x = deg-120;
+				g_hue[0][deg] = 0;
+				g_hue[1][deg] = 255;
+				g_hue[2][deg] = Math.floor(255.0*x/60.0);
+			} else if (deg<240) {
+				x = deg-180;
+				g_hue[0][deg] = 0;
+				g_hue[1][deg] = Math.floor(255.0*(60.0-x)/60.0);
+				g_hue[2][deg] = 255;
+			} else if (deg<360) {
+				x = deg-240;
+				g_hue[0][deg] = Math.floor(255.0*x/120.0);
+				g_hue[1][deg] = 0;
+				g_hue[2][deg] = Math.floor(255.0*(120.0-x)/120.0);
+			} else {
+				g_hue[0][deg] = 0; g_hue[1][deg] = 0; g_hue[2][deg] = 0;
+			}
+			g_hueColor[deg] = 'rgb('+g_hue[0][deg]+','+g_hue[1][deg]+','+g_hue[2][deg]+')';
+		}
+		setHueColor.ok = true;
+	}
+	setHueColor.ok = false;
+	
+	function setSquare( ix, iy, aSize, colIndex ) {
+		const xSize = p_NNx*g_imgScale, data = imgField.data;
+
+		for (let j=iy; j<iy+aSize; j++) {
+			for (let i=ix; i<ix+aSize; i++) {
+				const idx = (j*xSize+i)*4;
+				data[idx] = g_hue[0][colIndex];
+				data[idx+1] = g_hue[1][colIndex];
+				data[idx+2] = g_hue[2][colIndex];
+				data[idx+3] = 255;
+			}
+		}
+	}
+	
+	
+	function drawPowder3D(ctx, nPowder, pressMag ) {
+		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
+		const nny=p_NNy, hh = p_dx;
+
+		const r = 2*g3d.zoom, color = "#ff80ff";
+		for (let i=0; i<nPowder; i++) {
+			let x, y; [ x, y ] = theModule.getPowderPos(i);
+			const ii = Math.floor(x), jj = Math.floor(y)
+			const xx = x*hh, yy = (nny - y)*hh
+			const z = pressMag*(theModule.getPressure(ii,jj)-1.0) + g3d.cz0;
+			g3d.drawRotatedDisc( ctx, xx, yy, z, r, color, sc, xp, yp );
+		}
+	}
+	
+	
+	// --------------------  graphics 3D (field) module  --------------------
+	//
+	// ver 0.0.1  2018.12.16  last updated on 2023.03.01
+	// ver 0.0.2  2023.03.03  last updated on 2023.06.01
+	
+	let g_NNx, g_NNy, g_NNz, g_dx, g_dy, g_dz, g_xCanvasSize, g_yCanvasSize, g_xBoxSize, g_yShift;
+	
+	const g3d = {};				// namespace of graphic 3D module
+	
+	g3d.mouseDownFlag = 0;		// 1:on mouse down, 0:else
+	g3d.x_mouse = 0;			// x-position of mouse
+	g3d.y_mouse = 0;			// y-position of mouse
+	g3d.x0_mouse = 0;			// drag-started x-position of mouse
+	g3d.y0_mouse = 0;			// drag-started y-position of mouse
+	g3d.zoom = 1.0;
+	
+	g3d.xMax = 0.0;				// x-length of box
+	g3d.yMax = 0.0;				// y-length of box
+	g3d.zMax = 0.0;				// z-length of box
+	g3d.cx0 = 0.0;				// x-component of rotate center
+	g3d.cy0 = 0.0;				// y-component of rotate center
+	g3d.cz0 = 0.0;				// z-component of rotate center
+	g3d.Ax = -Math.PI/15.0;		// rotate angle around x-axis
+	g3d.Ay = -Math.PI/15.0;		// rotate angle around y-axis
+	g3d.ddAy = 0.0;				// Ay change rate for auto-rotate: eg. dday=0.5*Math.PI/180
+	g3d.cosAx = 0.0;			// cosAx=Math.cos(Ax)
+	g3d.sinAx = 0.0;			// sinAx=Math.sin(Ax)
+	g3d.cosAy = 0.0;			// cosAy=Math.cos(Ay)
+	g3d.sinAy = 0.0;			// sinAy=Math.sin(Ay)
+	
+	g3d.xApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.yApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.zApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.pxApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.pyApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.pzApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.boxApex = [[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1], [1,0,1], [0,1,1], [1,1,1] ];
+	g3d.boxEdge = [[0,1,9], [0,2,9], [0,4,9], [1,3,9], [1,5,9], [2,3,9], 
+					[2,6,9], [3,7,9], [4,5,9], [4,6,9], [5,7,9], [6,7,9] ];
+	
+	//--- set mouse on canvas
+	
+	// g3d.setMouseOnCanvas( canvas );
+	g3d.setMouseOnCanvas = function( canvas ) {
+		canvas.addEventListener('mousemove', g3d.mouse_move);
+		canvas.addEventListener('mousedown', g3d.mouse_down);
+		canvas.addEventListener('mouseup', g3d.mouse_up);
+		canvas.addEventListener("mousewheel", g3d.mouseWheel);
+	};
+	
+	g3d.mouse_move = function(e) {
+		const pi = Math.PI;
+
+		if (g3d.mouseDownFlag==1) {
+			g3d.x_mouse = e.clientX;
+			g3d.y_mouse = e.clientY;
+			g3d.Ay = g3d.Ay + 0.5*(g3d.x_mouse-g3d.x0_mouse)*pi/180;
+			if (g3d.Ay<-pi) g3d.Ay += 2*pi;
+			if (g3d.Ay>pi) g3d.Ay += -2*pi;
+			//g3d.Ax = g3d.Ax + 0.5*(g3d.y_mouse-g3d.y0_mouse)*pi/180;
+			g3d.Ax = g3d.Ax - 0.5*(g3d.y_mouse-g3d.y0_mouse)*pi/180;
+			if (g3d.Ax<-0.5*pi) g3d.Ax = -0.5*pi;
+			if (g3d.Ax>0.5*pi) g3d.Ax = 0.5*pi;
+			g3d.x0_mouse = g3d.x_mouse;
+			g3d.y0_mouse = g3d.y_mouse;
+		}
+	};
+	
+	g3d.mouse_down = function(e) {
+		if (g3d.mouseDownFlag==0) {
+			g3d.x0_mouse = e.clientX;
+			g3d.y0_mouse = e.clientY;
+			g3d.x_mouse = g3d.x0_mouse;
+			g3d.y_mouse = g3d.y0_mouse;
+			g3d.mouseDownFlag = 1;
+		}
+	};
+	
+	g3d.mouse_up = function(e) {
+		if (g3d.mouseDownFlag==1) {
+			g3d.mouseDownFlag = 0;
+		}
+	};
+	
+	g3d.mouseWheel = function(e) {
+		g3d.deltaY = e.deltaY;
+		if ( g3d.deltaY > 0 ) g3d.zoom *= 0.95;
+		else if ( g3d.deltaY < 0 ) g3d.zoom *= 1.05;
+		if ( g3d.zoom<0.5 ) g3d.zoom = 0.5;
+		if ( g3d.zoom>2.0 ) g3d.zoom = 2.0;
+	};
+	
+	//--- 3D graphics aid
+	
+	// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
+	g3d.init = function( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift ) {
+		g_NNx = NNx; g_NNy = NNy; g_NNz = NNz;
+		g_dx = dx; g_dy = dx; g_dz = dx;
+		g_xCanvasSize = xCanvasSize; g_yCanvasSize = yCanvasSize;
+		g_xBoxSize = (xBoxSize==undefined) ? 300 : xBoxSize;
+		g_yShift = (yShift==undefined) ? 20 : yShift;
+		g3d.setSize();
+	}
+	
+	g3d.setSize = function() {
+		g3d.xMax = g_NNx*g_dx;		// x-length of box
+		g3d.yMax = g_NNy*g_dy;		// y-length of box
+		g3d.zMax = g_NNz*g_dz;		// z-length of box
+		g3d.cx0 = 0.5*g3d.xMax;		// x-component of rotate center
+		g3d.cy0 = 0.5*g3d.yMax;		// y-component of rotate center
+		g3d.cz0 = 0.5*g3d.zMax;		// z-component of rotate center
+	};
+	
+	// g3d.setRotateAngle( AxInDegree, AyInDegree );
+	g3d.setRotateAngle = function( AxInDegree, AyInDegree ) {
+		g3d.Ax = AxInDegree*Math.PI/180.0;
+		g3d.Ay = AyInDegree*Math.PI/180.0;
+	};
+	
+	// g3d.scxpypFunc();
+	g3d.scxpypFunc = function() {
+		const xBoxSize = g_xBoxSize;
+		const xCenter = g_xCanvasSize/2, yCenter = g_yCanvasSize/2-g_yShift, yBoxSize = (xBoxSize/g_NNx)*g_NNy;
+		const xp = xCenter - (xBoxSize/2)*g3d.zoom, yp = yCenter - (yBoxSize/2)*g3d.zoom; // g3d param
+		const sc = xBoxSize/(g_NNx*g_dx)*g3d.zoom;
+		return [ sc, xp, yp ];
+	}
+	
+	g3d.set3DRotateXY = function(rotateRateOfAyInDegree) {
+		g3d.ddAy = rotateRateOfAyInDegree*Math.PI/180.0;
+		g3d.Ay= g3d.Ay + g3d.ddAy; // auto-rotate : if (ddAy==0.0), stop
+		if (g3d.Ay>Math.PI) g3d.Ay = g3d.Ay - 2.0*Math.PI;
+		if (g3d.Ay<-Math.PI) g3d.Ay = g3d.Ay + 2.0*Math.PI;
+		g3d.setBox();           // set box apex
+		g3d.setRotateXY(g3d.Ax,g3d.Ay); // set rotate param
+		g3d.rotateApexXY();     // box Apex rotate--> pxApex[i],pyApex[i],pzApex[i]
+		g3d.markFarEdge();      // boxEdge[iEdge][2]=1:far side edge or 0:near side edge
+	};
+	
+	g3d.setBox = function() {
+		for (let i=0; i<8; i++) {
+			g3d.xApex[i] = g3d.boxApex[i][0]*g3d.xMax;
+			g3d.yApex[i] = g3d.boxApex[i][1]*g3d.yMax;
+			g3d.zApex[i] = g3d.boxApex[i][2]*g3d.zMax;
+		}
+	};
+	
+	g3d.setRotateXY = function(angleX,angleY) {
+		g3d.cosAx = Math.cos(angleX);
+		g3d.sinAx = Math.sin(angleX);
+		g3d.cosAy = Math.cos(angleY);
+		g3d.sinAy = Math.sin(angleY);
+		g3d.cx0 = 0.5*g3d.xMax;
+		g3d.cy0 = 0.5*g3d.yMax;
+		g3d.cz0 = 0.5*g3d.zMax;
+	};
+	
+	g3d.rotateApexXY = function() { // rotate box apex
+		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
+		
+		for (let i=0; i<8; i++) {
+			g3d.pxApex[i] = cosAy*(g3d.xApex[i]-cx0)+sinAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cx0;
+			g3d.pyApex[i] = cosAx*(g3d.yApex[i]-cy0)-sinAx*(g3d.zApex[i]-cz0) + cy0;
+			g3d.pzApex[i] =-sinAy*(g3d.xApex[i]-cx0)+cosAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cz0;
+		}
+	};
+	
+	g3d.markFarEdge = function() {
+		//seek far apex --> iMin
+		let zMin = g3d.pzApex[0];
+		let iMin = 0;
+		for (let i=1; i<8; i++) {
+			if (zMin>g3d.pzApex[i]) {
+				zMin = g3d.pzApex[i];
+				iMin = i;
+			}
+		}
+		//mark far edge
+		for (let iEdge=0; iEdge<12; iEdge++) {
+			g3d.boxEdge[iEdge][2] = 0;
+			if (g3d.boxEdge[iEdge][0]==iMin || g3d.boxEdge[iEdge][1]==iMin) g3d.boxEdge[iEdge][2] = 1;
+		}
+	};
+	
+	g3d.drawRotatedDisc = function(ctx, x,y,z,r,color,sc,xp,yp) {
+		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
+		
+		const x1 = cosAy*(x-cx0)+sinAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cx0
+		const y1 = cosAx*(y-cy0)-sinAx*(z-cz0) + cy0
+		//z1 =-sinAy*(x-cx0)+cosAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cz0
+		g3d.drawDisc(ctx, x1*sc+xp,y1*sc+yp,r,color);
+	};
+	
+	g3d.drawRotatedLine = function(ctx, x1,y1,z1,x2,y2,z2,color,sc,xp,yp) {
+		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
+		
+		const x1p = cosAy*(x1-cx0)+sinAy*(sinAx*(y1-cy0)+cosAx*(z1-cz0)) + cx0
+		const y1p = cosAx*(y1-cy0)-sinAx*(z1-cz0) + cy0
+		const x2p = cosAy*(x2-cx0)+sinAy*(sinAx*(y2-cy0)+cosAx*(z2-cz0)) + cx0
+		const y2p = cosAx*(y2-cy0)-sinAx*(z2-cz0) + cy0
+		g3d.drawLine(ctx, x1p*sc+xp,y1p*sc+yp,x2p*sc+xp,y2p*sc+yp,color);
+	};
+	
+	g3d.plotNearEdge = function(ctx, sc,xp,yp,color) {
+		for (let iEdge=0; iEdge<12; iEdge++) {
+			if (g3d.boxEdge[iEdge][2]==0) { //far edge mark = 1
+				g3d.plotEdge(ctx, iEdge,sc,xp,yp,color);
+			}
+		}
+	};
+	
+	g3d.plotFarEdge = function(ctx, sc,xp,yp,color) {
+		for (let iEdge=0; iEdge<12; iEdge++) {
+			if (g3d.boxEdge[iEdge][2]==1) { //far edge mark = 1
+				g3d.plotEdge(ctx, iEdge,sc,xp,yp,color);
+			}
+		}
+	};
+	
+	g3d.plotEdge = function(ctx, iEdge,sc,xp,yp,color) {
+		let iApex = g3d.boxEdge[iEdge][0];
+		const x1=g3d.pxApex[iApex]*sc+xp, y1=g3d.pyApex[iApex]*sc+yp;
+		iApex = g3d.boxEdge[iEdge][1];
+		const x2=g3d.pxApex[iApex]*sc+xp, y2=g3d.pyApex[iApex]*sc+yp;
+		g3d.drawLine(ctx, x1, y1, x2, y2, color);
+	};
+	
+	g3d.drawLine = function(ctx, x1, y1, x2, y2, color) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	};
+	
+	g3d.drawDisc = function(ctx, x, y, r, color) {
+		ctx.fillStyle = color;
+		ctx.beginPath();
+		ctx.arc(x, y, r, 0, 2*Math.PI, false);
+		ctx.fill();
+	};
+	
+	// --------------------  end of graphics 3D (field) module  --------------------
+	
+	// g3d_extension grid2d  created 2023.06.17, last updated 2023.06.17
+	// g3d.drawWallGrid2D( ctx, rotAngle, wallFunc, zFunc, colorFactor, inc [, showBox] )
+	g3d.drawWallGrid2D = function ( ctx, rotAngle, wallFunc, zFunc, colorFactor, inc, showBox ) {
+		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
+		const nnx = g_NNx, nny = g_NNy, threshold = g3d.drawWallGrid2D.threshold;
+		
+		g3d.set3DRotateXY(rotAngle);
+		if ( (showBox & 1)>0 || showBox==undefined ) g3d.plotFarEdge(ctx, sc,xp,yp,"#444400"); // dark yellow
+		for (let jj=0; jj<nny; jj+=inc) {
+			let j=jj;if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
+			for (let ii=0; ii<nnx; ii++) {
+				let i=ii;if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
+				if (i<0 || i+1>nnx-1) continue;
+							
+				if ( wallFunc(i,nny-j-1) ) {
+					const  x = i*g_dx, y = j*g_dx, z = 0, z1 = 2*g3d.cz0;
+					g3d.drawRotatedLine(ctx, x,y,z,x,y,z1,'#888888',sc,xp,yp);
+					continue;
+				}
+				
+				const f = zFunc(i,nny-j-1);
+				const x = i*g_dx, y = j*g_dy, z = f + g3d.cz0;
+				const f1 = zFunc(i+1,nny-j-1);
+				const x1 = (i+1)*g_dx, y1 = j*g_dy, z1 = f1 + g3d.cz0;
+				let colr;
+				if ( typeof(colorFactor)=='number' ) {
+					const th = (18120 - Math.floor(colorFactor*180.0*(f+f1)/g3d.cz0))%360;
+					const a = Math.abs((f+f1)/g3d.cz0);
+					colr = (a>threshold) ? `hsl(${th},100%,50%)` : "#444444" ;
+				} else if ( typeof(colorFactor)=='string' ) {
+					colr = colorFactor;
+				} else if ( typeof(colorFactor)=='function' ) {
+					colr = colorFactor(i,nny-j-1);
+				}
+				g3d.drawRotatedLine(ctx, x,y,z,x1,y1,z1,colr,sc,xp,yp);
+			}
+		}
+		for (let ii=0; ii<nnx; ii+=inc) {
+			let i=ii;if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
+			for (let jj=0; jj<nny; jj++) {
+				let j=jj;if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
+				if (j<0 || j+1>nny-1) continue;
+				
+				if ( wallFunc(i,nny-j-1) ) {
+					continue;
+				}
+				
+				const f = zFunc(i,nny-j-1);
+				const x = i*g_dx, y = j*g_dy, z = f + g3d.cz0;
+				const f1 = zFunc(i,nny-j-2);
+				const x1 = i*g_dx, y1 = (j+1)*g_dy, z1 = f1 + g3d.cz0;
+				let colr;
+				if ( typeof(colorFactor)=='number' ) {
+					const th = (18120 - Math.floor(colorFactor*180.0*(f+f1)/g3d.cz0))%360;
+					const a = Math.abs((f+f1)/g3d.cz0);
+					colr = (a>threshold) ? `hsl(${th},100%,50%)` : "#444444" ;
+				} else if ( typeof(colorFactor)=='string' ) {
+					colr = colorFactor;
+				} else if ( typeof(colorFactor)=='function' ) {
+					colr = colorFactor(i,nny-j-1);
+				}
+				g3d.drawRotatedLine(ctx, x,y,z,x1,y1,z1,colr,sc,xp,yp);
+			}
+		}
+		if ( (showBox & 2)>0 || showBox==undefined ) g3d.plotNearEdge(ctx, sc,xp,yp,"#999900"); //yellow
+		
+		ctx.font = "12px 'sans-serif'";
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`Ax=${(g3d.Ax*180/Math.PI).toFixed(1)}, Ay=${(g3d.Ay*180/Math.PI).toFixed(1)}`, 10, 15);
+		ctx.font = "16px 'sans-serif'";
+	};
+	g3d.drawWallGrid2D.threshold = 0.005;
+	
+	// g3d_extension gvextor field  created 2023.06.17, last updated 2023.06.17
+	// g3d.drawWallVectorField2D(ctx, rotAngle, wallFunc, zFunc, vFunc, colorMode, inc [, showBox] )
+	g3d.drawWallVectorField2D = function(ctx, rotAngle, wallFunc, zFunc, vFunc, colorMode, inc, showBox ) {
+		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, dx=g_dx, threshold = g3d.drawWallVectorField2D.threshold;
+	
+		g3d.set3DRotateXY(rotAngle);
+		if ( (showBox & 1)>0 || showBox==undefined ) g3d.plotFarEdge(ctx, sc,xp,yp,"#444400"); // dark yellow
+		for (let ii=0; ii<nnx; ii+=inc) {
+			let i=ii; if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
+			for (let jj=0; jj<nny; jj+=inc) {
+				let j=jj; if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
+				
+				if ( wallFunc(i,nny-j-1) ) {
+					const  x = i*dx, y = j*dx, z = 0, z1 = 2*g3d.cz0;
+					g3d.drawRotatedLine(ctx, x,y,z,x,y,z1,'#888888',sc,xp,yp);
+					continue;
+				}
+				
+				const f = zFunc(i,nny-j-1);
+				const x = i*dx, y = j*dx, z = f + g3d.cz0;
+				let vx, vy;
+				[ vx, vy ] = vFunc(i,nny-j-1);
+				if ( vx*vx+vy*vy < threshold ) continue;
+				const x1 = x + vx, y1 = y -vy, z1 = z;
+				let colr;
+				if ( colorMode==0 ) {
+					const hue = Math.floor((Math.atan2(vy,vx))*180.0/Math.PI+180.0);
+					colr = `hsl(${hue},100%,50%)`;
+				} else if ( colorMode==1 ) {
+					colr = (vx>0) ? "#3333ff" : "#ff3333";
+				}
+				g3d.drawRotatedLine(ctx, x,y,z,x1,y1,z1,colr,sc,xp,yp);
+			}
+		}
+		if ( (showBox & 2)>0 || showBox==undefined ) g3d.plotNearEdge(ctx, sc,xp,yp,"#999900"); //yellow
+		
+		ctx.font = "12px 'sans-serif'";
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`Ax=${(g3d.Ax*180/Math.PI).toFixed(1)}, Ay=${(g3d.Ay*180/Math.PI).toFixed(1)}`, 10, 15);
+		ctx.font = "16px 'sans-serif'";
+	};
+	g3d.drawWallVectorField2D.threshold = 0.5;
+	
+	
+	// --------------------  control  --------------------
+	
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function reset() { resetFlag = true; }
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = ( pauseFlag==false ); 
+		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==true ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() { stepFlag = true; }
+	
+	function setTheme() {  // select theme
+		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
+		resetFlag = true;
+	}
+	
+	function setRevL() {
+		const sr = 0 + document.getElementById("slct_RevL").selectedIndex;
+		v_RevL = 50.0*Math.pow(2,sr);
+		resetFlag = true;
+	}
+	
+	function setDispMode() {  // select dispMode
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+	}
+	
+	function setSpeed() {
+		v_nCalc = 1 + document.getElementById("slct_speed").selectedIndex;
+	}
+	
+	function viewHome() {
+		g3d.setRotateAngle(30,-15);	
+		g3d.zoom = 1.0;
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		reset:			reset,			// reset()
+		pause:			pause,			// pause()
+		step:			step,			// step()
+		
+		setTheme:		setTheme,		// setTheme()
+		setRevL:		setRevL,		// setRevL()
+		setDispMode:	setDispMode,	// setDispMode()
+		setSpeed:		setSpeed,		// setSpeed()
+		viewHome:		viewHome,		// viewHome()
+	};
+	
+})(); // ====================  js089 module end  ====================
+
+
+// event
+const js = js089;
+window.addEventListener('load', js.main );
+
+
+// %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%%
+
+</script>
+
+<style type="text/css">
+    body { text-align:left; color:#000000; background-color:#fff8dd; }
+</style>
+
+</head>
+
+<body>
+<p>[ht102] birdseye-view - Marker and Cell Method 2D (MAC2D)</p>
+<canvas ID="canvas_box" style="background-color: #000000;" WIDTH="500" HEIGHT="480"></canvas>
+<br>
+
+<label>theme:</label>
+<select id="slct_theme" onChange="js.setTheme()">
+<option>shear flow</option><option>vortex</option><option>Couette flow</option>
+<option>cavity flow</option><option>water channel(150x80)</option>
+<option selected>water channel(150x60)</option>
+</select>
+    <span style="margin-right: 20px;"></span>
+<label>Re/L =</label>
+<select id="slct_RevL" onChange="js.setRevL()">
+<option>50</option><option>100</option><option selected>200</option>
+<option>400</option><option>800</option><option>1600</option>
+</select>
+    <span style="margin-right: 20px;"></span>
+<button onClick="js.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="js.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="js.step()">step</button>
+<br>
+
+<label>disp mode:</label>
+<select id="slct_dispMode" onChange="js.setDispMode()">
+<option>pressure(x,y) + flow</option><option>pressure(x,y) + powder</option>
+<option>volticity(x,y) + powder</option><option>(speed(x,y)-vx0) + powder</option>
+<option>grid: density(x,y)</option><option>grid: color:vorticity(x,y) z:pressure(x,y)</option>
+<option>flow(x,y) z:pressure(x,y)</option>
+<option selected>grid: pressure(x,y) + powder</option><option>grid: vorticity(x,y) z:pressure + powder</option>
+</select>
+    <span style="margin-right: 20px;"></span>
+<label>nCalc/frame:</label>
+<select id="slct_speed" onChange="js.setSpeed()">
+<option>1</option><option selected>2</option><option>3</option><option>4</option>
+</select>
+<br>
+
+<button onClick="js.viewHome()">return to initial view</button>
+<br>
+
+<p id="text_caption" ></p>
+<hr width="480" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
