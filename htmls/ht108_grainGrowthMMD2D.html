@@ -1,0 +1,1268 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>js108_grainGrowthMMD2D</title>
+<script type="text/javascript">
+
+// %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%%
+
+'use strict';
+
+/* --------------------
+//
+//  js108_grainGrowthMMD2D
+//    Copyright(C) 2019-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2019.02.02 created, last updated on 2020.12.15
+//    ver 0.0.1  2021.10.10 v1, last updated on 2021.10.10
+//    ver 0.0.2  2021.11.07 v2, last updated on 2021.11.07
+//    ver 0.0.3  2023.05.16 v3, last updated on 2023.09.11
+//
+// --------------------  molecular dynamics 2D - grain growth
+//
+//  faster molecular dynamics 2D - Morse potential
+//
+//    method: velocity Verlet Algorithm
+//      (1) vi = vi + (Fi/mi)*(0.5dt)
+//      (2) ri = ri + vi*dt
+//      (3) calculation Fi <- {r1,r2,...,rn} Fi=sum(Fij,j=1 to n),Fij=F(ri-rj)
+//      (4) vi = vi + (Fi/mi)*(0.5dt)
+//      goto (1)
+//
+//    potential: Morse V(r) = D*((1-EXP(-A*(r-r0)))^2-1)
+//                        = D*(EXP(-2*A*(r-r0))-2*EXP(-A*(r-r0)))
+//      (D:dissociation energy, r0:bond length, A:width parameter { A=SQR(k/(2*D)) }
+//             force F(r) = -dV(r)/dr
+//                        = 2*D*A*y*(y-1), y=EXP(-A*(r-r0))
+//
+//    for faster calculation: O(N) // fast calculation (without pre-registration): O(N^2)
+//      ignore F(r) r>rCutoff 
+//      force F(r) <- force table + linear interpolation (see setForceTable() and cutoff(r))
+//      registration with pre-registration
+//        pre-registration O(N), see preRegistration()
+//          particles pre-regist into lattice section[i][j],
+//          and register into reg[ni][k] every particle ni
+//        registration reg[][] (see registration()), 'near' means r<rCutoff+20*2000*dt 
+//          reg[][] use 20 times, assuming particle max speed < 2000m/s
+//      force calculation: sum up force(r) (r<rCutoff)
+//
+//
+//  a simulation of 'grain growth'
+//
+// quoted from WIKIPEDIA(2019.02.08): term 'grain growth'
+//   In materials science, grain growth is the increase in size of grains (crystallites) in a material 
+//   at high temperature. This occurs when recovery and recrystallisation are complete and further reduction 
+//   in the internal energy can only be achieved by reducing the total area of grain boundary.
+//   The term is commonly used in metallurgy but is also used in reference to ceramics and minerals.
+//
+// --------------------
+*/
+
+const grainGrowthMMD2D = (function(){ // =====================  grainGrowthMMD2D Module  =====================
+
+	const g_AMU = 1.66053904e-27;			// (kg) atomic mass unit
+	const g_kB = 1.380649e-23;				// (J/K) Boltzmann's constant
+	const g_EE = 1.602176634e-19;			// (C) electron charge, energy : 1(eV) = EE(J)
+	const g_nMax = 20000;					// array max
+
+	let g_molecKind1 = 3;					// 3:Fe
+	let g_molecKind2 = 5;					// 5:Al
+	let g_nKind1 = 500;						// number of kind-1 particles
+	let g_nKind2 = 500;						// number of kind-2 particles
+	let g_nParticles = 1000;				// number of particles
+	let g_sysTime = 0.0;					// (s) system time
+	let g_timeStep =  5.0*1.0e-15;			// (s) time step dt
+	let g_initxMax = 6.0E-9;				// (m) initial x-Box size
+	let g_inityMax = 6.0E-9;				// (m) initial y-Box size
+	let g_xMax = g_initxMax;				// (m) x-Box size
+	let g_yMax = g_inityMax;				// (m) y-Box size
+	let g_Nsx = 50;							// use pre-registration section(0 to Nsx,0 to Nsx)
+	let g_Nsy = 50;							// use pre-registration section(0 to Nsx,0 to Nsy)
+	let g_rCutoff = 1.0e-9;					// (m) force cutoff length
+	let g_hh = 1.0e-12;						// (m) forceTable r-division
+	let g_periodicSW = 0;					// 0:non-periodic 1:periodic
+
+	let g_kineticEnergy = 0.0;				// (J) total kinetic energy
+	let g_potentialEnergy = 0.0;			// (J) toal potential energy
+	let g_sysTemp = 0.0;					// (K) system temperature
+	let g_meanTemp = 300.0;					// (K) mean temperature
+	let g_meanPress = 0.0;					// (N/m) mean pressure (in 2D)
+	let g_controledTemperatue = 300.0;		// (K) controled temperatue of the system
+	let g_controledPressure = 2.0e-2;		// (N/m) controled pressure of the system
+	let g_xVirial = 0.0;					// for pressure calc. sum(fxij*xij,{i,j})
+	let g_yVirial = 0.0;					// for pressure calc. sum(fyij*yij,{i,j})
+	let g_xyVirial = 0.0;					// for pressure calc. sum(fxij*yij,{i,j})
+
+	const g_xx = dim1( g_nMax );				// (m) x-component of i-th particle position
+	const g_yy = dim1( g_nMax );				// (m) y-component of i-th particle position
+	const g_vx = dim1( g_nMax );				// (m/s) x-component of i-th particle velocity
+	const g_vy = dim1( g_nMax );				// (m/s) y-component of i-th particle velocity
+	const g_ffx = dim1( g_nMax );				// (N) x-component of total force applied i-th particle
+	const g_ffy = dim1( g_nMax );				// (N) y-component of total force applied i-th particle
+	const g_mas = dim1( g_nMax );				// (kg) mass of i-th particle
+	const g_kind = dimInt1( g_nMax );			// kind of i-th particle
+	const g_potentialTable = dim3( 21, 21, 1002 ); // potential table [V[0], V[hh], V[2hh],..., V[rCutoff]]
+	const g_forceTable = dim3( 21, 21, 1002 );	// force table(ki,kj) [F[0], F[hh], F[2hh],..., F[rCutoff]]
+	const g_reg = dimInt2( g_nMax, 100 );		// reg[i][0]: total number of particles near i-th particle
+												// reg[i][j]: particle number near i-th particle, (j>0)
+	const g_section = dimInt3( 100, 100, 20 );	// section[i][j][0]: total number of particles in section[i][j]
+												// section[i][j][k]: k-th particle number in section[i][j]
+	
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+	
+	function dimInt1( n ) {
+		return new Int32Array( n );
+	}
+	
+	function dimInt2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Int32Array( nj );
+		}
+		return a;
+	}
+	
+	function dim3( ni, nj, nk ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = [];
+			for (let j=0; j<nj; j++) {
+				a[i][j] = new Float64Array( nk );
+			}
+		}
+		return a;
+	}
+	
+	function dimInt3( ni, nj, nk ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = [];
+			for (let j=0; j<nj; j++) {
+				a[i][j] = new Int32Array( nk );
+			}
+		}
+		return a;
+	}
+	
+	
+	//--------------------  Morse potential data  --------------------
+	
+	const g_Morse = [
+		[ 183.85 *g_AMU, 0.9906*g_EE, 1.4116e10, 3.032e-10, "#0000ff", "W"  ], //  0
+		[  95.94 *g_AMU, 0.8032*g_EE, 1.5079e10, 2.976e-10, "#0040ff", "Mo" ], //  1
+		[  51.996*g_AMU, 0.4414*g_EE, 1.5721e10, 2.754e-10, "#0080ff", "Cr" ], //  2
+		[  55.847*g_AMU, 0.4174*g_EE, 1.3885e10, 2.845e-10, "#00c0ff", "Fe" ], //  3
+		[  58.71 *g_AMU, 0.4205*g_EE, 1.4199e10, 2.780e-10, "#00ffff", "Ni" ], //  4
+		[  26.98 *g_AMU, 0.2703*g_EE, 1.1646e10, 3.253e-10, "#00ffc0", "Al" ], //  5
+		[ 207.19 *g_AMU, 0.2348*g_EE, 1.1836e10, 3.733e-10, "#00ff80", "Pb" ], //  6
+		[  63.54 *g_AMU, 0.3429*g_EE, 1.3588e10, 2.866e-10, "#00ff40", "Cu" ], //  7
+		[ 107.87 *g_AMU, 0.3323*g_EE, 1.3690e10, 3.115e-10, "#00ff00", "Ag" ], //  8
+		[  40.08 *g_AMU, 0.1623*g_EE, 0.8054e10, 4.569e-10, "#40ff00", "Ca" ], //  9
+		[  87.62 *g_AMU, 0.1513*g_EE, 0.7878e10, 4.988e-10, "#80ff00", "Sr" ], // 10
+		[ 137.34 *g_AMU, 0.1416*g_EE, 0.6570e10, 5.373e-10, "#c0ff00", "Ba" ], // 11
+		[  22.99 *g_AMU, 0.0633*g_EE, 0.5900e10, 5.336e-10, "#ffff00", "Na" ], // 12
+		[  39.102*g_AMU, 0.0542*g_EE, 0.4977e10, 6.369e-10, "#ffc000", "K"  ], // 13
+		[  85.47 *g_AMU, 0.0464*g_EE, 0.4298e10, 7.207e-10, "#ff8000", "Rb" ], // 14
+		[ 132.905*g_AMU, 0.0449*g_EE, 0.4157e10, 7.557e-10, "#ff4000", "Cs" ], // 15
+		[  20.183*g_AMU, 0.0031*g_EE, 1.6500e10, 3.076e-10, "#cc0040", "Ne" ], // 16
+		[  39.948*g_AMU, 0.0104*g_EE, 1.3400e10, 3.816e-10, "#cc4080", "Ar" ], // 17
+		[  83.80 *g_AMU, 0.0141*g_EE, 1.2500e10, 4.097e-10, "#ff40c0", "Kr" ], // 18
+		[ 131.30 *g_AMU, 0.0200*g_EE, 1.2400e10, 4.467e-10, "#ff40ff", "Xe" ], // 19
+		[ 200.59 *g_AMU, 0.0734*g_EE, 1.4900e10, 3.255e-10, "#ff80c0", "Hg" ] ]; // 20
+	
+	const g_rCollision = [];	// (m) g_rBond[kind]/2^(1/6) as L-J potential r_Collision
+	const g_rBond = [];		// (m) bond length == 2.0*g_rBond[kind]
+	const g_massOf = [];		// (kg) g_massOf[kind] : mass of kind
+	const g_strOf = [];		// g_strOf[kind] : string of kind, such as "Fe"
+	const g_colorOf = [];		// g_colorOf[kind] : color of kind
+	const g_colorStrOf = [];
+	
+	(function() {
+		const n=g_Morse.length;
+		for (let i=0; i<n; i++) {
+			g_rCollision[i] = 0.5*g_Morse[i][3]/1.12246;
+			g_rBond[i] = 0.5*g_Morse[i][3];
+			g_massOf[i] = g_Morse[i][0];
+			g_strOf[i] = g_Morse[i][5];
+			g_colorOf[i] = g_Morse[i][4];
+			g_colorStrOf[i] = "<span style='color:"+g_colorOf[i]+"'>"+g_strOf[i]+"</span>"
+		}
+	}());
+
+	//--- set forceTable[kindi][kindj][ir] and potentialTable[kindi][kindj][ir]
+
+	function setForceTable() {
+		const hh=g_hh;
+		
+		for (let i=0; i<21; i++) {
+			for (let j=0; j<21; j++) {
+				const dd = Math.sqrt(g_Morse[i][1]*g_Morse[j][1]);
+				const aa = 0.5*(g_Morse[i][2]+g_Morse[j][2]);
+				const r0 = 0.5*(g_Morse[i][3]+g_Morse[j][3]);
+				for (let ir=1; ir<=1001; ir++) {
+					const r = ir*hh;
+					const y = Math.exp(-aa*(r-r0));
+					g_potentialTable[i][j][ir] = cutoff(r)*dd*y*(y-2.0); // V(r) = D*((1-y)^2-1) = D*y*(y-2)
+					//g_forceTable[i][j][ir] = cutoff(r)*2.0*dd*aa*y*(y-1);
+				}
+				g_potentialTable[i][j][0] = g_potentialTable[i][j][1] + g_potentialTable[i][j][2];
+				for (let ir=1; ir<=1000; ir++) {
+					g_forceTable[i][j][ir] = -(g_potentialTable[i][j][ir+1] - g_potentialTable[i][j][ir-1])/(2.0*hh);
+				}
+				g_forceTable[i][j][1001] = -(0.0 - g_potentialTable[i][j][1000])/(2.0*hh);
+				g_forceTable[i][j][0] = g_forceTable[i][j][1]; 
+			}
+		}
+	}
+
+	function cutoff(r) {
+		let ret;
+		if (r>0 && r<0.8*g_rCutoff) {
+			ret = 1.0;
+		} else if (r>=0.8*g_rCutoff && r<g_rCutoff ) {
+			ret = 0.5+0.5*Math.cos(Math.PI*(r-0.8*g_rCutoff)/(0.2*g_rCutoff));
+		} else {
+			ret = 0.0;
+		}
+		return ret;
+	}
+
+
+	//--------------------  set initial condition  --------------------
+
+	function setInitialCondition( theme, nnGrain, boundary, contTemp, contPress ) {
+		let xtalSize=1.9e-9, gapSize=0.1e-9, compress=0.93;
+		if (theme==1) {
+			xtalSize=1.86e-9; gapSize=0.14e-9; compress=0.92;
+		}
+
+		g_molecKind1 = theme;
+		g_molecKind2 = theme;
+		g_rCutoff = Math.min(Math.max(6.0*g_rCollision[g_molecKind1],6.0*g_rCollision[g_molecKind2]),1.0e-9);
+		setForceTable();
+		g_periodicSW = boundary;
+		g_controledTemperatue = contTemp;
+		g_controledPressure = contPress;
+		g_sysTime = 0.0;
+		const boxSize = (xtalSize+gapSize)*nnGrain;
+		if (g_periodicSW==0) boxSize = boxSize+2.0e-9;
+		g_initxMax = boxSize;
+		g_inityMax = boxSize;
+		g_xMax = g_initxMax;
+		g_yMax = g_inityMax;
+		g_nParticles = setNNCrystals(theme,nnGrain,nnGrain,xtalSize,gapSize,boxSize,compress);
+		g_nKind1 = g_nParticles;
+		g_nKind2 = 0;
+		removeTranslationalMotion();
+		ajustVelocity(contTemp);
+	}
+
+	function setNNCrystals(knd,nx,ny,xtalSize,gapSize,boxSize,compress) {
+		const s = 0.5*gapSize;
+		const a = xtalSize+gapSize;
+		const x0 = 0.5*(boxSize-nx*a);
+		const y0 = 0.5*(boxSize-ny*a);
+		let ii = 0;
+		for (let i=0; i<nx; i++) {
+			const xpos = x0 + 0.5*gapSize + (xtalSize+gapSize)*i;
+			for (let j=0; j<ny; j++) {
+				const ypos = y0 + 0.5*gapSize + (xtalSize+gapSize)*j;
+				//theta = ((i+nx*j)%4)*Math.PI/12.0;
+				const theta = (Math.floor(Math.random()*4))*Math.PI/12.0;
+				ii = setCompessedCrystalBlock(ii, knd, xpos, ypos, xtalSize, xtalSize, theta, compress);
+			}
+		}
+		return ii;
+	}
+
+	function setCrystalBlock(ii, knd, x0, y0, xLen, yLen, theta) {
+		return setCompessedCrystalBlock(ii, knd, x0, y0, xLen, yLen, theta, 0.98);
+	}
+
+	function setCompessedCrystalBlock(ii, knd, x0, y0, xLen, yLen, theta, compress) {
+		let iip = ii;
+		const a = compress*2.0*g_rBond[knd];
+		const b = 0.866025*a;
+		let leng = xLen;
+		if (leng<yLen) leng = yLen;
+		leng = 1.5*leng;
+		const nx = Math.floor(leng/b) + 1;
+		const ny = Math.floor(leng/a) + 1;
+		const sth = Math.sin(theta);
+		const cth = Math.cos(theta);
+		for (let i=0; i<nx; i++) {
+			const x = b*i - leng/2.0;
+			for (let j=0; j<ny; j++) {
+				let y = a*j - leng/2.0;
+				if ((i%2)==1) y = y + 0.5*a;
+				const xp = x0 + xLen/2.0 + cth*x - sth*y;
+				const yp = y0 + yLen/2.0 + sth*x + cth*y;
+				if (xp>=x0 && xp<=x0+xLen && yp>=y0 && yp<=y0+yLen) {
+					setParticle(iip, knd, xp, yp);
+					iip = iip + 1;
+				}
+			}
+		}
+		return iip;
+	}
+
+
+	function setParticle(i, knd, x, y) {
+		g_xx[i] = x;
+		g_yy[i] = y;
+		g_vx[i] = 200.0*normalRandom3();
+		g_vy[i] = 200.0*normalRandom3();
+		g_ffx[i] = 0.0;
+		g_ffy[i] = 0.0;
+		g_kind[i] = knd;
+		g_mas[i] = g_massOf[g_kind[i]];
+	}
+
+	// normal distributed random number: -3.0 <= normalRandom3() < 3.0
+	function normalRandom3() {
+		return (Math.random()+Math.random()+Math.random()+Math.random()+Math.random()+Math.random()-3.0);
+	}
+
+
+	//--------------------  time evolution  --------------------
+
+	function timeEvolution(ensemble,contTemp,contPress) { //ensemble 0:NVE 1:NVT 2:NPT
+		const nn=g_nParticles;
+
+		if (ensemble==1 || ensemble==2) { // ensemble  0:NVE  1:NVT  2:NPT
+			g_controledTemperatue = contTemp;
+			if (ensemble==2) g_controledPressure = contPress;
+			removeTranslationalMotion();
+			ajustVelocity(contTemp);
+		}
+		if (g_periodicSW==1) {
+			registrationPeriodic();
+		} else {
+			registration();
+		}
+
+		for (let ii=0; ii<20; ii++) {
+			g_sysTime += g_timeStep;
+			if (g_periodicSW==1) {
+				moveParticlesPeriodic(g_timeStep);
+			} else {
+				moveParticles(g_timeStep);
+			}
+			g_kineticEnergy = 0.0;
+			for (let i=0; i<nn; i++) {
+				g_kineticEnergy += 0.5*g_mas[i]*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
+			}
+			g_sysTemp = g_kineticEnergy/(nn*g_kB); //2D: E/N=kT, 3D: E/N=(3/2)kT
+			const press = (nn*g_kB*g_sysTemp+(g_xVirial+g_yVirial)/2.0)/(g_xMax*g_yMax);
+			g_meanTemp = 0.99*g_meanTemp + 0.01*g_sysTemp;
+			g_meanPress = 0.99*g_meanPress + 0.01*press;
+			if (ensemble==2) volControl(g_controledPressure); // for constant pressure control
+		}
+	}
+
+	//--- non-periodic
+
+	function moveParticles(dt) {
+		const nn=g_nParticles;
+
+		for (let i=0; i<nn; i++) {
+			const a = 0.5*dt/g_mas[i];
+			g_vx[i] += a*g_ffx[i];
+			g_vy[i] += a*g_ffy[i];
+			g_xx[i] += g_vx[i]*dt;
+			g_yy[i] += g_vy[i]*dt;
+		}
+		calcForce();
+		for (let i=0; i<nn; i++) {
+			const a = 0.5*dt/g_mas[i]
+			g_vx[i] += a*g_ffx[i];
+			g_vy[i] += a*g_ffy[i];
+		}
+	}
+
+	function calcForce() {
+		const nn=g_nParticles, s05 = 0.5*3.418e-10;
+		g_potentialEnergy = 0.0;
+		for (let i=0; i<nn; i++) {
+			g_ffx[i]=0; g_ffy[i]=0;
+		}
+		
+		let xvir = 0.0, yvir = 0.0, xyvir = 0.0;
+		for (let i=0; i<nn-1; i++) {
+			for (let k=1; k<g_reg[i][0]; k++) {
+				const j = g_reg[i][k];
+				const xij=g_xx[i]-g_xx[j], yij=g_yy[i]-g_yy[j];
+				const rij = Math.sqrt(xij*xij+yij*yij);
+				if (rij<g_rCutoff) {
+					const f = force(rij,g_kind[i],g_kind[j]);
+					const fxij = f*xij/rij, fyij = f*yij/rij;
+					g_ffx[i] += fxij;
+					g_ffy[i] += fyij;
+					g_ffx[j] -= fxij;
+					g_ffy[j] -= fyij;
+					xvir += fxij*xij;
+					yvir += fyij*yij;
+					xyvir +=  fxij*yij;
+				}
+			}
+		}
+
+		for (let i=0; i<nn; i++) {
+			g_ffx[i] += boundaryForce(g_xx[i]+s05)+boundaryForce(g_xx[i]-g_xMax-s05);
+			g_ffy[i] += boundaryForce(g_yy[i]+s05)+boundaryForce(g_yy[i]-g_yMax-s05);
+		}
+		g_xVirial = 0.99*g_xVirial + 0.01*xvir;
+		g_yVirial = 0.99*g_yVirial + 0.01*yvir;
+		g_xyVirial = 0.99*g_xyVirial + 0.01*xyvir;
+	}
+
+	function boundaryForce(r) {
+		const ri = (3.418e-10/r);
+		const r6 = ri*ri*ri*ri*ri*ri;
+		g_potentialEnergy += 4.0*0.5*1.711e-21*r6*(r6-1.0); // epsilonOfAr = 1.711e-21
+		return (24.0*0.5*1.711e-21*r6*(2.0*r6-1.0)/r);
+	}
+
+	// registration with preRegistration
+
+	function registration() {
+		const nn=g_nParticles, nsx=g_Nsx, nsy=g_Nsy;
+		
+		preRegistration();
+		const rreg = g_rCutoff+20*2000*g_timeStep;
+		const rreg2 = rreg*rreg;
+		for (let ipp=0; ipp<nn-1; ipp++) {
+			let kp = 1;
+			let i0 = Math.floor(nsx*(g_xx[ipp]-rreg)/g_xMax);
+			if (i0<0) i0 = 0;
+			let i1 = Math.floor(nsx*(g_xx[ipp]+rreg)/g_xMax ); 
+			if (i1>=nsx) i1 = nsx-1;
+			let j0 = Math.floor(nsy*(g_yy[ipp]-rreg)/g_yMax ); 
+			if (j0<0) j0 = 0;
+			let j1 = Math.floor(nsy*(g_yy[ipp]+rreg)/g_yMax );
+			if (j1>=nsy) j1 = nsy-1;
+			for (let i=i0; i<=i1; i++) {
+				for (let j=j0; j<=j1; j++) {
+					for (let iq=1; iq<=g_section[i][j][0]; iq++) {
+						const jp = g_section[i][j][iq];
+						if (jp>ipp) {
+							const r2 = (g_xx[ipp]-g_xx[jp])*(g_xx[ipp]-g_xx[jp])+(g_yy[ipp]-g_yy[jp])*(g_yy[ipp]-g_yy[jp]);
+							if (r2<rreg2) {
+								g_reg[ipp][kp] = jp;
+								kp = kp + 1;
+							}
+						}
+					}
+				}
+			}
+			g_reg[ipp][0] = kp;
+		}
+		g_reg[nn-1][0] = 0;
+	}
+
+	// --- periodic
+
+	function moveParticlesPeriodic(dt) { // periodic
+		const nn=g_nParticles;
+
+		for (let i=0; i<nn; i++) {
+			const a = 0.5*dt/g_mas[i];
+			g_vx[i] += a*g_ffx[i];
+			g_vy[i] += a*g_ffy[i];
+			g_xx[i] += g_vx[i]*dt;
+			g_yy[i] += g_vy[i]*dt;
+		}
+		for (let i=0; i<nn; i++) { // periodic condition
+			if (g_xx[i]<0.0) g_xx[i] += g_xMax;
+			if (g_xx[i]>g_xMax) g_xx[i] -= g_xMax;
+			if (g_yy[i]<0.0) g_yy[i] += g_yMax;
+			if (g_yy[i]>g_yMax) g_yy[i] -= g_yMax;
+		}
+		calcForcePeriodic();
+		for (let i=0; i<nn; i++) {
+			const a = 0.5*dt/g_mas[i]
+			g_vx[i] += a*g_ffx[i];
+			g_vy[i] += a*g_ffy[i];
+		}
+	}
+
+	function calcForcePeriodic() { // periodic
+		const nn=g_nParticles, s05 = 0.5*3.418e-10;
+		g_potentialEnergy = 0.0;
+		for (let i=0; i<nn; i++) {
+			g_ffx[i]=0; g_ffy[i]=0;
+		}
+		
+		let xvir = 0.0, yvir = 0.0, xyvir = 0.0;
+		for (let i=0; i<nn-1; i++) {
+			for (let k=1; k<g_reg[i][0]; k++) {
+				const j = g_reg[i][k];
+				let xij=g_xx[i]-g_xx[j];
+				if (xij>0.5*g_xMax) xij -= g_xMax;  //x-periodic
+				if (xij<-0.5*g_xMax) xij += g_xMax;
+				let yij=g_yy[i]-g_yy[j];
+				if (yij>0.5*g_yMax) yij -= g_yMax;  //y-periodic
+				if (yij<-0.5*g_yMax) yij += g_yMax;
+				const rij = Math.sqrt(xij*xij+yij*yij);
+				if (rij<g_rCutoff) {
+					const f = force(rij,g_kind[i],g_kind[j]);
+					const fxij = f*xij/rij, fyij = f*yij/rij;
+					g_ffx[i] += fxij;
+					g_ffy[i] += fyij;
+					g_ffx[j] -= fxij;
+					g_ffy[j] -= fyij;
+					xvir += fxij*xij;
+					yvir += fyij*yij;
+					xyvir +=  fxij*yij;
+				}
+			}
+		}
+
+		g_xVirial = 0.99*g_xVirial + 0.01*xvir;
+		g_yVirial = 0.99*g_yVirial + 0.01*yvir;
+		g_xyVirial = 0.99*g_xyVirial + 0.01*xyvir;
+	}
+
+	// registration with preRegistration
+
+	function registrationPeriodic() { // periodic-x, periodic-y
+		const nn=g_nParticles, nsx=g_Nsx, nsy=g_Nsy;
+		
+		preRegistration();
+		
+		const rreg = g_rCutoff+20*2000*g_timeStep;
+		const rreg2 = rreg*rreg;
+		for (let ip=0; ip<nn-1; ip++) {
+			let kp = 1;
+			const i0 = Math.floor(nsx*(g_xx[ip]-rreg)/g_xMax+nsx)-nsx; // periodic-x
+			const i1 = Math.floor(nsx*(g_xx[ip]+rreg)/g_xMax); // periodic-x
+			const j0 = Math.floor(nsy*(g_yy[ip]-rreg)/g_yMax+nsy)-nsy; // periodic-y
+			const j1 = Math.floor(nsy*(g_yy[ip]+rreg)/g_yMax); // periodic-y
+			for (let i=i0; i<=i1; i++) {
+				const ii = (i+nsx)%nsx; // periodic-x
+				for (let j=j0; j<=j1; j++) {
+					const jj = (j+nsy)%nsy; // periodic-y
+					for (let iq=1; iq<=g_section[ii][jj][0]; iq++) { // ii,jj periodic
+						const jp = g_section[ii][jj][iq]; // ii,jj periodic
+						if (jp>ip) {
+							let xij = g_xx[ip] - g_xx[jp], yij = g_yy[ip] - g_yy[jp];
+							if (xij>0.5*g_xMax) xij -= g_xMax; // periodic-x
+							if (xij<-0.5*g_xMax) xij += g_xMax; // periodic-x
+							if (yij>0.5*g_yMax) yij -= g_yMax; // periodic-y
+							if (yij<-0.5*g_yMax) yij += g_yMax; // periodic-y
+							const r2 = xij*xij+yij*yij;
+							if (r2<rreg2) {
+								g_reg[ip][kp]=jp;
+								kp += 1;
+							}
+						}
+					}
+				}
+			}
+			g_reg[ip][0]=kp;
+		}
+		g_reg[nn-1][0] = 0;
+	}
+
+	// --- common functions non-periodic, periodic
+
+	function force(r,ki,kj) { // forceTable - linear interporation
+		const hh=g_hh;
+
+		const ir = Math.floor(r/hh);
+		const a = r - ir*hh;
+		g_potentialEnergy += ((hh-a)*g_potentialTable[ki][kj][ir] + a*g_potentialTable[ki][kj][ir+1])/hh;
+		return ((hh-a)*g_forceTable[ki][kj][ir] + a*g_forceTable[ki][kj][ir+1])/hh;
+	}
+
+	function preRegistration() {
+		const nn=g_nParticles, nsx=g_Nsx, nsy=g_Nsy;
+		
+		for (let i=0; i<nsx; i++) {
+			for (let j=0; j<nsy; j++) {
+				g_section[i][j][0] = 0;
+			}
+		}
+		
+		for (let ipp=0; ipp<nn; ipp++) {
+			let i = Math.floor(nsx*g_xx[ipp]/g_xMax);
+			if (i>=nsx) i = nsx-1;
+			if (i<0) i = 0;
+			let j = Math.floor(nsy*g_yy[ipp]/g_yMax);
+			if (j>=nsy) j = nsy-1;
+			if (j<0) j = 0;
+			const iq = g_section[i][j][0] + 1;
+			g_section[i][j][0] = iq;
+			g_section[i][j][iq] = ipp
+		}
+	}
+
+	function maxNearParticles() {
+		const nn=g_nParticles;
+		
+		let mx=0;
+		for (let i=0; i<nn-1; i++) {
+			if (mx<g_reg[i][0]) mx = g_reg[i][0];
+		}
+		return (mx-1);
+	}
+
+	// --- volume control
+
+	function volControl( contPress ) {
+		const d = g_timeStep*20.0; // wall max speed = 20m/s
+		const a = 1.0e-4;
+		
+		let x = (1.0+a*(xxPress()-contPress))*g_xMax;
+		if (x>g_xMax+d) {
+			x = g_xMax + d;
+		} else if (x<g_xMax-d) {
+			x = g_xMax - d;
+		}
+		const xShift = 0.5*(x - g_xMax);
+		g_xMax = x;
+		
+		let y = (1.0+a*(yyPress()-contPress))*g_yMax;
+		if (y>g_yMax+d) {
+			y = g_yMax + d;
+		} else if (y<g_yMax-d) {
+			y = g_yMax - d;
+		}
+		const yShift = 0.5*(y - g_yMax);
+		g_yMax = y;
+		
+		shiftParticles( xShift, yShift );
+	}
+	
+	function shiftParticles( xShift, yShift ) {
+		const nn=g_nParticles;
+		for (let i=0; i<nn; i++) {
+			g_xx[i] += xShift;
+			g_yy[i] += yShift;
+		}
+	}
+
+	// --- pressure
+
+	function pressure() {
+		return (g_nParticles*g_kB*g_meanTemp+(g_xVirial+g_yVirial)/2.0)/(g_xMax*g_yMax);
+	}
+
+	function xxPress() {
+		const nn=g_nParticles;
+		let nkt= 0.0;
+		for (let i=0; i<nn; i++) {
+			nkt += g_mas[i]*g_vx[i]*g_vx[i];
+		}
+		return (nkt+g_xVirial)/(g_xMax*g_yMax);
+	}
+
+	function yyPress() {
+		const nn=g_nParticles;
+		let nkt= 0.0;
+		for (let i=0; i<nn; i++) {
+			nkt += g_mas[i]*g_vy[i]*g_vy[i];
+		}
+		return (nkt+g_yVirial)/(g_xMax*g_yMax);
+	}
+
+	function xyPress() {
+		const nn=g_nParticles;
+		let nkt= 0.0;
+		for (let i=0; i<nn; i++) {
+			nkt += g_mas[i]*g_vx[i]*g_vy[i];
+		}
+		return (nkt+g_xyVirial)/(g_xMax*g_yMax);
+	}
+
+	// --- utility
+
+	function systemTemperature() {
+		const nn=g_nParticles;
+		let ek=0.0;  //kinetic energy (J)
+		for (let i=0; i<nn; i++) {
+			ek = ek + 0.5*g_mas[i]*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
+		}
+		return ek/(nn*g_kB);
+	}
+
+	function ajustVelocity(temp) {
+		const nn=g_nParticles;
+		const a = Math.sqrt(temp/systemTemperature());
+		for (let i=0; i<nn; i++) {
+			g_vx[i] = a*g_vx[i];
+			g_vy[i] = a*g_vy[i];
+		}
+	}
+
+	function removeTranslationalMotion() {
+		const nn=g_nParticles;
+		let m=0.0, mvx=0.0, mvy=0.0;
+		for (let i=0; i<nn; i++) {
+			m += g_mas[i];
+			mvx += g_mas[i]*g_vx[i];
+			mvy += g_mas[i]*g_vy[i];
+		}
+		const vtx = mvx/m, vty = mvy/m;
+		for (let i=0; i<nn; i++) {
+			g_vx[i] -= vtx;
+			g_vy[i] -= vty;
+		}
+	}
+
+
+	// --------------------  set bonds 
+
+	const g_bondArray = [];
+
+	function setBonds() {
+		const nn = g_nParticles;
+		
+		let iBond = 0;
+		for (let i=0; i<nn-1; i++) {
+			for (let k=1; k<g_reg[i][0]; k++) {
+				const j = g_reg[i][k];
+				const d0 = g_rBond[g_kind[i]] + g_rBond[g_kind[j]];
+				const dc = 1.2*d0;
+				const xij = g_xx[i]-g_xx[j];
+				const yij = g_yy[i]-g_yy[j];
+				const dij = Math.sqrt(xij*xij+yij*yij);
+				if ( dij<dc ) {
+					let hlen = Math.floor((dij/d0-1.0)*900+120);
+					if (hlen<0) hlen = 0;
+					if (hlen>270) hlen = 240;
+					const th = 3.0*(Math.atan2(yij,xij)+0.5*Math.PI)/Math.PI;
+					const hdir = Math.floor((th-Math.floor(th))*360.0);
+					g_bondArray[iBond] = [ g_xx[i], g_yy[i], g_xx[j], g_yy[j], hlen, hdir ];
+					iBond++;
+				}
+			}
+		}
+		return iBond;
+	}
+
+
+	// --------------------  set n-bonds
+	
+	const nBond = [];
+	 
+	function setNBond() {
+		var i,j,k,n,nn=g_nParticles, xij,yij,d,d0;
+
+		for (let i=0; i<nn; i++) {
+			nBond[i] = 0;
+		}
+		for (let i=0; i<nn-1; i++) {
+			for (let k=1; k<g_reg[i][0]; k++) {
+				j = g_reg[i][k];
+				if (g_periodicSW==1) {
+					xij=g_xx[i]-g_xx[j];
+					if (xij>0.5*g_xMax) xij -= g_xMax;  //x-periodic
+					if (xij<-0.5*g_xMax) xij += g_xMax;
+					yij=g_yy[i]-g_yy[j];
+					if (yij>0.5*g_yMax) yij -= g_yMax;  //y-periodic
+					if (yij<-0.5*g_yMax) yij += g_yMax;
+					d = Math.sqrt(xij*xij+yij*yij);
+				} else {
+					d = Math.sqrt((g_xx[i]-g_xx[j])*(g_xx[i]-g_xx[j])+(g_yy[i]-g_yy[j])*(g_yy[i]-g_yy[j]));
+				}
+				d0 = (g_rBond[g_kind[i]]+g_rBond[g_kind[j]]);
+				if (d<d0*1.2) {
+					nBond[i] += 1;
+					nBond[j] += 1;
+				}
+			}
+		}
+		n = 0;
+		for (let i=0; i<nn; i++) {
+			if (nBond[i]==6) n++;
+		}
+		return n;
+	}
+
+
+	//--------------------  public  --------------------
+
+	return {
+		init:			setInitialCondition,	// setInitialCondition( theme, nnGrain, boundary, contTemp, contPress )
+		evolve:			timeEvolution,			// timeEvolution( ensemble, contTemp, contPress )
+		
+		setTemp:		ajustVelocity,			// ajustVelocity( temp )
+		setBonds:		setBonds,				// setBonds()
+		setNBond:		setNBond,				// setNBond()
+		
+		getSysParam:	function() { 
+							return [ g_molecKind1, g_molecKind2, g_nParticles, g_timeStep, g_initxMax, g_inityMax ]; },
+		getBoxSize:		function() { return [ g_xMax, g_yMax ]; }, // change boxsize in NPT condition
+		getNow:			function() { return [ g_sysTime,g_meanTemp,g_kineticEnergy,g_potentialEnergy,g_meanPress ]; },
+		getStrOf:		function(kind) { return g_strOf[kind]; },
+		getColorStrOf:	function(kind) { return g_colorStrOf[kind]; },				
+		getMolecData:	function(i) {
+							const kind = g_kind[i];
+							return [ g_rCollision[kind], g_colorOf[kind] ];
+						},
+		getPosition:	function(i) { return [ g_xx[i], g_yy[i] ]; },
+		getVelocity:	function(i) { return [ g_vx[i], g_vy[i] ]; },
+		getForce:		function(i) { return [ g_ffx[i], g_ffy[i] ]; },
+		getBonds:		function(iBond) { return g_bondArray[iBond]; },
+		getNBond:		function(iBond) { return nBond[iBond]; },
+	};
+
+})(); // =====================  grainGrowthMMD2D end  =====================
+
+
+const js108 = (function(){ // ====================  js Module  ====================
+	
+	const theModule = grainGrowthMMD2D;
+	const themeStr = [ "W" , "Mo", "Cr", "Fe", "Ni", "Al", "Pb", "Cu", "Ag", "Ca", "Sr" ];
+	const xCanvasSize = 480;	// in pixel
+	const yCanvasSize = 480;	// in pixel
+	let canvas;
+	let ctx;
+	
+	let v_theme = 3;			// == kind,  0:W, 1:Mo, 2:Cr, 3:Fe, 4:Ni, 5:Al, 6:Pb, 7:Cu, 8:Ag, 9:Ca, 10:Sr
+	let v_nnGrain = 8;
+	let v_boundary = 1;			// (==g_periodicSW)  0:non-periodic 1:periodic
+	let v_ensemble = 2;			// ensemble 0:NVE 1:NVT 2:NPT
+	let v_contTemp = 200.0;		// (K) controled temperature
+	let v_contPress = 1.0e-2;	// (N/m) controled pressure
+	
+	let p_kind1, p_kind2, p_nParticles, p_timeStep, p_initxMax, p_inityMax; // <-- theModule.getSysParam()
+	let p_xMax, p_yMax; // <-- theModule.getBoxSize()
+	
+	let nCalc = 1;
+	let dispMode = 2;
+	let resetFlag = true;
+	let pauseFlag = false;
+	let stepFlag = false;
+	
+	
+	function main() {
+		resetFlag = true;
+		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
+		initDom();
+		
+		animate();
+		
+		function setCanvas( canvasID, width, height ) {
+			canvas = document.getElementById( canvasID );
+			canvas.width  = width;
+			canvas.height = height;
+			ctx = canvas.getContext('2d');
+			ctx.font = "16px 'sans-serif'";
+			ctx.textBaseline = "bottom";
+			ctx.textAlign = "left";
+			ctx.lineWidth = 1;
+			
+			g2d.setMouseOnCanvas( canvas );
+		}
+	}
+	
+	
+	function animate() {
+		
+		if ( resetFlag ) {
+			resetFlag = false;
+			theModule.init( v_theme, v_nnGrain, v_boundary, v_contTemp, v_contPress );
+			[ p_kind1, p_kind2, p_nParticles, p_timeStep, p_initxMax, p_inityMax ] = theModule.getSysParam();
+			// g2d.init( xInitSize, yInitSize, yOffset )
+			g2d.init( p_initxMax, p_inityMax, 30 );
+		}
+		
+		if ( !pauseFlag ) {
+			for(let i=0; i<nCalc; i++ ) {
+				theModule.evolve( v_ensemble, v_contTemp, v_contPress );
+			}
+		} else if ( pauseFlag && stepFlag ) {
+			stepFlag = false;
+			theModule.evolve( v_ensemble, v_contTemp, v_contPress );
+		}
+		
+		draw( ctx, dispMode );
+		
+		requestAnimationFrame(animate);
+	}
+	
+	
+	// --------------------  draw  --------------------
+	
+	function draw( ctx, dispMode ) {
+		[ p_xMax, p_yMax ] = theModule.getBoxSize();
+		const xBoxSize = 400;
+		let xSize, ySize, scale, xp, yp;
+		[ xSize, ySize, scale, xp, yp ] = g2d.scalePosFunc( p_xMax, p_yMax, xBoxSize );
+		//const yTextPos= 430;
+		
+		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
+		
+		ctx.strokeStyle = "#888800";
+		ctx.strokeRect( xp, yp, xSize, ySize );
+		
+		if ( dispMode==0 ) {
+			drawBalls( ctx, scale, xp, yp );
+		} else if ( dispMode==1 || dispMode==2 ) {
+			const nBond = theModule.setBonds();
+			drawBonds( ctx, dispMode, nBond, scale, xp, yp );
+		} else if ( dispMode==3 ) {
+			theModule.setNBond();
+			drawNBond( ctx, scale, xp, yp );
+		}
+		
+		// caption
+		let sysTime, meanTemp, kineticEnergy, potentialEnergy, meanPress;
+		[ sysTime, meanTemp, kineticEnergy, potentialEnergy, meanPress ] = theModule.getNow();
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`time = ${(sysTime*1.0e12).toFixed(1)} (ps)`, 20, yCanvasSize-45);
+		ctx.fillText(`Temp = ${meanTemp.toFixed(1)} (k)`, 240, yCanvasSize-45);
+		ctx.fillText(`molec: ${themeStr[p_kind1]},   N = ${p_nParticles}`, 20, yCanvasSize-25);
+		ctx.fillText(`Press = ${(meanPress*1000).toFixed(1)} (mN/m)`, 240, yCanvasSize-25);
+		ctx.fillText(`Box = ${(p_xMax*1.0e9).toFixed(3)}x${(p_yMax*1.0e9).toFixed(3)} (nm)`, 20, yCanvasSize-5);
+		ctx.fillText(`Energy = ${(kineticEnergy+potentialEnergy).toExponential(4)} (J)`, 240, yCanvasSize-5);
+		//document.getElementById("text_caption").innerHTML = 
+		//	`xSize: ${xSize}, ySize: ${ySize}, scale: ${scale}, xp: ${xp}, yp: ${yp}`
+		
+	}
+	
+	function drawBalls( ctx, scale, xp, yp ) {
+		const pix2 = 2.0*Math.PI, yMax = p_yMax;
+		for (let i=0; i<p_nParticles; i++) {
+			let x, y, rCollision, col;
+			[ x, y ] = theModule.getPosition(i);
+			[ rCollision, col ] = theModule.getMolecData(i);
+			ctx.fillStyle = col;
+			ctx.beginPath();
+			ctx.arc(x*scale+xp, (yMax-y)*scale+yp, rCollision*scale, 0, pix2, false);
+			ctx.fill();
+		}
+	}
+	
+	function drawBonds( ctx, dispMode, nBond, scale, xp, yp ) {
+		const pix2 = 2.0*Math.PI, yMax = p_yMax;
+		for (let i=0; i<p_nParticles; i++) {
+			let x, y, rCollision, col;
+			[ x, y ] = theModule.getPosition(i);
+			[ rCollision, col ] = theModule.getMolecData(i);
+			const rBond = rCollision*1.12246;
+			ctx.strokeStyle = "#222222";
+			ctx.beginPath();
+			ctx.arc(x*scale+xp, (yMax-y)*scale+yp, rBond*scale, 0, pix2, false);
+			ctx.stroke();
+		}
+		for (let iBond=0; iBond<nBond; iBond++) {
+			let xi, yi, xj, yj, hlen, hdir;
+			[ xi, yi, xj, yj, hlen, hdir ] = theModule.getBonds(iBond)
+			const hue = ( dispMode==1 ) ? hlen : hdir;
+			drawLine(ctx, xi*scale+xp, (yMax-yi)*scale+yp, xj*scale+xp, (yMax-yj)*scale+yp, "hsl("+hue+",100%,50%)" );
+		}
+	}
+	
+	function drawNBond( ctx, scale, xp, yp ) {
+		const pix2 = 2.0*Math.PI, yMax = p_yMax;
+		for (let i=0; i<p_nParticles; i++) {
+			let x, y, rCollision, col;
+			[ x, y ] = theModule.getPosition(i);
+			[ rCollision, col ] = theModule.getMolecData(i);
+			const nbond = theModule.getNBond(i);
+			const hue = (18120+(nbond-6)*60)%360;
+			ctx.fillStyle = `hsl(${hue},100%,50%)`;
+			ctx.beginPath();
+			ctx.arc(x*scale+xp, (yMax-y)*scale+yp, rCollision*scale, 0, pix2, false);
+			ctx.fill();
+		}
+	}
+	
+	function drawLine(ctx, x1, y1, x2, y2, color) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	}
+	
+	
+	// --- mouse event  --- mouse drug to shift and mouse wheel to zoom in/out 
+	// ver 0.0.0  2023.05.16  last updated  2023.07.27
+	//
+	// extenal xCanvasSize, yCanvasSize
+	
+	const g2d = {};
+	g2d.mouseDownFlag = 0;			// 1:on mouse down, 0:else
+	g2d.x_mouse = 0;				// x-position of mouse
+	g2d.y_mouse = 0;				// y-position of mouse
+	g2d.x0_mouse = 0;				// drag-started x-position of mouse
+	g2d.y0_mouse = 0;				// drag-started y-position of mouse
+	g2d.xLimit = xCanvasSize*1.5;	// -xLimit <= xShift <= xLimit
+	g2d.yLimit = yCanvasSize*1.5;	// -yLimit <= yShift <= yLimit
+	
+	// public
+	g2d.zoom = 1.0;
+	g2d.xShift = 0.0;
+	g2d.yShift = 0.0;
+	g2d.xInitSize = 1.0;
+	g2d.yInitSize = 1.0;
+	g2d.yOffset = 30;
+	
+	g2d.init = function( xInitSize, yInitSize, yOffset ) {
+		g2d.xLimit = xCanvasSize*1.5;
+		g2d.yLimit = xCanvasSize*1.5;
+		g2d.xInitSize = xInitSize;
+		g2d.yInitSize = yInitSize;
+		g2d.yOffset = yOffset;
+	};
+	
+	g2d.scalePosFunc = function( xMax, yMax, xBoxSize ) {
+		const xmag = xMax/g2d.xInitSize, ymag = yMax/g2d.yInitSize, yBoxSize = xBoxSize*yMax/xMax;
+		const cx0 = xCanvasSize/2+g2d.xShift, cy0 = yCanvasSize/2 - g2d.yOffset + g2d.yShift;
+		const scale = xBoxSize/g2d.xInitSize*g2d.zoom;
+		const xSize = xBoxSize*xmag*g2d.zoom, ySize = yBoxSize*ymag*g2d.zoom;
+		const xp = cx0 - xSize/2, yp = cy0-ySize/2;
+		return [ xSize, ySize, scale, xp, yp ];
+	};
+	
+	g2d.setMouseOnCanvas = function( canvas ) {
+		canvas.addEventListener('mousemove', g2d.mouse_move);
+		canvas.addEventListener('mousedown', g2d.mouse_down);
+		canvas.addEventListener('mouseup', g2d.mouse_up);
+		canvas.addEventListener("mousewheel", g2d.mouseWheel);
+	};
+	
+	g2d.mouse_move = function(e) {
+		var pi = Math.PI;
+
+		if (g2d.mouseDownFlag==1) {
+			g2d.x_mouse = e.clientX;
+			g2d.y_mouse = e.clientY;
+			g2d.xShift = g2d.xShift + (g2d.x_mouse-g2d.x0_mouse);
+			if (g2d.xShift<-g2d.xLimit) g2d.xShift=-g2d.xLimit;
+			if (g2d.xShift>g2d.xLimit) g2d.xShift=g2d.xLimit;
+			g2d.yShift = g2d.yShift + (g2d.y_mouse-g2d.y0_mouse);
+			if (g2d.yShift<-g2d.yLimit) g2d.yShift=-g2d.yLimit;
+			if (g2d.yShift>g2d.yLimit) g2d.yShift=g2d.yLimit;
+			g2d.x0_mouse = g2d.x_mouse;
+			g2d.y0_mouse = g2d.y_mouse;
+		}
+	};
+	
+	g2d.mouse_down = function(e) {
+		if (g2d.mouseDownFlag==0) {
+			g2d.x0_mouse = e.clientX;
+			g2d.y0_mouse = e.clientY;
+			g2d.x_mouse = g2d.x0_mouse;
+			g2d.y_mouse = g2d.y0_mouse;
+			g2d.mouseDownFlag = 1;
+		}
+	};
+	
+	g2d.mouse_up = function(e) {
+		if (g2d.mouseDownFlag==1) {
+			g2d.mouseDownFlag = 0;
+		}
+	};
+	
+	g2d.mouseWheel = function(e) {
+		g2d.deltaY = e.deltaY;
+		if ( g2d.deltaY > 0 ) g2d.zoom *= 0.95;
+		else if ( g2d.deltaY < 0 ) g2d.zoom *= 1.05;
+		if ( g2d.zoom<0.25 ) g2d.zoom = 0.25;
+		if ( g2d.zoom>4.0 ) g2d.zoom = 4.0;
+	};
+	
+	// --- mouse event end
+	
+	
+	// --------------------  control  --------------------
+	
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function reset() { resetFlag = true; }
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+		
+		pauseFlag = ( pauseFlag==false ); 
+		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==true ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() { stepFlag = true; }
+	
+	
+	function setTheme() {
+		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
+		resetFlag = true;
+	}
+	
+	function setnGrain() {  // select ensemble
+		const n = 0 + document.getElementById("slct_nGrain").selectedIndex;
+		v_nnGrain = 6 + 2*n;
+		resetFlag = true;
+	}
+	
+	function setboundary() {
+		v_boundary = 0 + document.getElementById("slct_boundary").selectedIndex;
+		resetFlag = true;
+	}
+	
+	function setEnsemble() {  // select ensemble
+		v_ensemble = 0 + document.getElementById("slct_ensemble").selectedIndex;
+	}
+	
+	function setContTemp() {
+		let tmp = document.getElementById("inp_temp").value;
+
+		if (tmp<10) tmp = 10.0;
+		if (tmp>600) tmp =600.0;
+		v_contTemp = Number(tmp);
+		document.getElementById("inp_temp").value = v_contTemp;
+		document.getElementById("text_temp").innerHTML = " "+ v_contTemp.toFixed(1)+"(K)";
+	}
+	
+	function setTempValue( temp ) {
+		document.getElementById("inp_temp").value = temp;
+		document.getElementById("text_temp").innerHTML = " "+ v_contTemp.toFixed(1)+"(K)";
+	}
+	
+	function setContPress() {
+		let press = document.getElementById("inp_press").value;
+
+		if (press<-50.0) press = -50.0;
+		if (press>100.0) press =100.0;
+		v_contPress = Number(press*1.0e-3);
+		document.getElementById("inp_press").value = Number(press);
+		document.getElementById("text_press").innerHTML = " "+ (v_contPress*1.0e3).toFixed(1)+"(mN/m)";
+	}
+	
+	function setPressValue( vpress ) {
+		document.getElementById("inp_press").value = vpress*1000.0;
+		document.getElementById("text_press").innerHTML = " "+ (vpress*1000.0).toFixed(1)+"(mN/m)";
+	}
+	
+	function setDispMode() {
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+	}
+	
+	function setnCalc() {
+		nCalc = 1 + document.getElementById("slct_nCalc").selectedIndex;
+	}
+	
+	function viewHome() {
+		g2d.zoom = 1.0;
+		g2d.xShift = 0.0;
+		g2d.yShift = 0.0;
+	
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		// dom control
+		reset:			reset,			// reset()
+		pause:			pause,			// pause()
+		step:			step,			// step()
+		
+		setTheme:		setTheme,		// setTheme()
+		setnGrain:		setnGrain,		// setnGrain()
+		setboundary:	setboundary,	// setboundary()
+		setEnsemble:	setEnsemble,	// setEnsemble()
+		setContTemp:	setContTemp,	// setContTemp()
+		setTempValue:	setTempValue,	// setTempValue( temp )
+		setContPress:	setContPress,	// setContPress()
+		setPressValue:	setPressValue,	// setPressValue( vpress )
+		
+		setDispMode:	setDispMode,	// setDispMode()
+		setnCalc:		setnCalc,		// setnCalc()
+		viewHome:		viewHome,		// viewHome()
+	};
+	
+})(); // ====================  js108 module end  ====================
+
+
+// event
+const js = js108;
+window.addEventListener('load', js.main );
+
+
+// %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%%
+
+</script>
+
+<style type="text/css">
+    body { text-align:left; color:#000000; background-color:#fff8dd; }
+</style>
+
+</head>
+
+<body>
+<p>[ht108] grain boundary (Morse potential) MD2D</p>
+<canvas ID="canvas_box" style="background-color: #000000;" width="480" height="480"></canvas>
+<br>
+
+<label>theme:</label>
+<select id="slct_theme" onChange="js.setTheme()">
+<option>W</option><option>Mo</option><option>Cr</option><option selected>Fe</option>
+<option>Ni</option><option>Al</option><option>Pb</option><option>Cu</option>
+<option>Ag</option><option>Ca</option>
+</select>
+    <span style="margin-right:60px;"></span>
+boundary: periodic
+    <span style="margin-right:60px;"></span>
+ensemble: NTP
+<br>
+
+<label>nGrain:</label>
+<select id="slct_nGrain" onChange="js.setnGrain()">
+<option>6x6</option><option selected>8x8</option>
+<option>10x10</option><option>12x12</option>
+<option>14x14</option>
+</select>
+    <span style="margin-right: 180px;"></span>
+<button onClick="js.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="js.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="js.step()">step</button>
+<br>
+
+<label>control T =</label>
+<input id="inp_temp" type="number" value="200" min="10" max="600" required>
+<button onclick="js.setContTemp()">OK</button>  (10~600K) cont.T=<label id="text_temp"> 200.0(K)</label>
+<br>
+
+<label>control P =</label>
+<input id="inp_press" type="number" value="10.0" min="-50" max="100" required>
+<button onclick="js.setContPress()">OK</button>  (-50~100mN/m) cont.P=<label id="text_press"> 10.0(mN/m)</label>
+<br>
+
+<label>disp mode:</label>
+<select id="slct_dispMode" onChange="js.setDispMode()">
+<option>atom</option><option>atom + bond length</option><option selected>atom + bond direction</option>
+<option>number of neighbors</option>
+</select>
+    <span style="margin-right: 100px;"></span>
+<button onClick="js.viewHome()">return to initial view</button>
+<br>
+drag mouse to shift the box, or wheel to zoom in / out
+<br>
+
+<p id="text_caption" ></p>
+<hr width="480" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
