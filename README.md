@@ -14,3 +14,8 @@
 
 snapshot<br>
 <img src="https://github.com/mike1336git/html_simulation/blob/main/GALLERY/ht076_airFlowsLB2D9V.png" alt="ht076_png" title="ht076">
+<br>
+
+https://github.com/mike1336git/mike1336git.github.io/blob/main/jsv3/js071_080/js076_airFlowsLB2D9Vv3a.html
+
+<br>
