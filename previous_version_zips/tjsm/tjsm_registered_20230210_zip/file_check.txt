@@ -1,0 +1,56 @@
+file check
+
+2023.02.10  OptiPlex 3070 - 9501  MX-linux21 usb-ssd500G
+
+folder: tjsm_registered_20230210
+size: 6.7 MiB (7,043,892 バイト), 172 アイテム (156 ファイル, 15 フォルダー)
+
+--- zip ---> 
+
+file name: tjsm_registered_20230210.zip
+file size: 1.7 MiB (1,762,609 バイト)
+sha256sum: 8746f00900b0897c88b2153682bc8f8edd066229d2f57ff0fe1c0141fb558cd7  tjsm_registered_20230210.zip
+
+
+--- 7z ---> 
+
+file name: tjsm_registered_20230210.7z
+file size: 414.7 KiB (424,615 バイト)
+sha256sum: 78782a5d7da59ae6f37ed20c904ffaf4e89b9a0cf803085a56126b8bc6b0d3e4  tjsm_registered_20230210.7z
+
+
+---------------------------------------------------------------------------------------
+mike@9501:~/app/1_javaScript/3_threejs/tjsm_work/tjsm_registered/tjsm_registered_20230210_zip
+$ ls -l
+合計 2144
+-rw-r--r-- 1 mike mike    1957  1月 17 06:32 file_check.txt
+-rw-r--r-- 1 mike mike  424615  2月 10 06:20 tjsm_registered_20230210.7z
+-rw-r--r-- 1 mike mike 1762609  2月 10 06:24 tjsm_registered_20230210.zip
+
+mike@9501:~/app/1_javaScript/3_threejs/tjsm_work/tjsm_registered/tjsm_registered_20230210_zip
+$ sha256sum tjsm*.* >sha256.txt
+
+mike@9501:~/app/1_javaScript/3_threejs/tjsm_work/tjsm_registered/tjsm_registered_20230210_zip
+$ cat sha256.txt 
+78782a5d7da59ae6f37ed20c904ffaf4e89b9a0cf803085a56126b8bc6b0d3e4  tjsm_registered_20230210.7z
+8746f00900b0897c88b2153682bc8f8edd066229d2f57ff0fe1c0141fb558cd7  tjsm_registered_20230210.zip
+
+mike@9501:~/app/1_javaScript/3_threejs/tjsm_work/tjsm_registered/tjsm_registered_20230210_zip
+$ sha256sum -c sha256.txt 
+tjsm_registered_20230210.7z: 完了
+tjsm_registered_20230210.zip: 完了
+
+mike@9501:~/app/1_javaScript/3_threejs/tjsm_work/tjsm_registered/tjsm_registered_20230210_zip
+$ ls -l
+合計 2148
+-rw-r--r-- 1 mike mike    2115  2月 10 06:33 file_check.txt
+-rw-r--r-- 1 mike mike     189  2月 10 06:31 sha256.txt
+-rw-r--r-- 1 mike mike  424615  2月 10 06:20 tjsm_registered_20230210.7z
+-rw-r--r-- 1 mike mike 1762609  2月 10 06:24 tjsm_registered_20230210.zip
+
+-----------------------------------------------------------------------------------------
+
+
+
+
+

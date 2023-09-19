@@ -1,0 +1,32 @@
+
+2023.09.14
+--------------------------------------------------------------------------
+mike@mx9501:~/app/a1_javaScript/a2_js_work/jsv3_work/jsv3_registered_20230914_7z
+$ ls -l
+合計 336
+-rwxr-xr-x 1 mike mike   1277  8月  1 05:21 check.txt
+-rw-r--r-- 1 mike mike 337957  9月 14 17:51 jsv3_registered_20230914.7z
+
+mike@mx9501:~/app/a1_javaScript/a2_js_work/jsv3_work/jsv3_registered_20230914_7z
+$ sha256sum jsv3_registered_20230914.7z >sha256.txt
+
+mike@mx9501:~/app/a1_javaScript/a2_js_work/jsv3_work/jsv3_registered_20230914_7z
+$ cat sha256.txt 
+674ade8be2c7ed3948c4a3c8d8d67255f4ffd5ef706ab9499757fc950044d8c7  jsv3_registered_20230914.7z
+
+mike@mx9501:~/app/a1_javaScript/a2_js_work/jsv3_work/jsv3_registered_20230914_7z
+$ sha256sum jsv3_registered_20230914.7z 
+674ade8be2c7ed3948c4a3c8d8d67255f4ffd5ef706ab9499757fc950044d8c7  jsv3_registered_20230914.7z
+
+mike@mx9501:~/app/a1_javaScript/a2_js_work/jsv3_work/jsv3_registered_20230914_7z
+$ sha256sum -c sha256.txt 
+jsv3_registered_20230914.7z: 完了
+
+mike@mx9501:~/app/a1_javaScript/a2_js_work/jsv3_work/jsv3_registered_20230914_7z
+$ ls -l
+合計 340
+-rwxr-xr-x 1 mike mike   1366  9月 14 17:59 check.txt
+-rw-r--r-- 1 mike mike 337957  9月 14 17:51 jsv3_registered_20230914.7z
+-rw-r--r-- 1 mike mike     94  9月 14 17:55 sha256.txt
+
+--------------------------------------------------------------------------

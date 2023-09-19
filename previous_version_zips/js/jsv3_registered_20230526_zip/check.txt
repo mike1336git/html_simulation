@@ -1,0 +1,33 @@
+
+2023.06.14
+--------------------------------------------------------------------------
+mike@mx2:~/app/1_javascript/2_jsv3_registered/jsv3_registered_20230526_zip
+$ ls -l
+合計 1588
+-rw-r--r-- 1 mike mike       0  6月 14 15:40 check.txt
+-rw-r--r-- 1 mike mike  326382  6月 14 15:39 jsv3_registered_20230526.7z
+-rw-r--r-- 1 mike mike 1296136  6月 14 15:40 jsv3_registered_20230526.zip
+
+mike@mx2:~/app/1_javascript/2_jsv3_registered/jsv3_registered_20230526_zip
+$ sha256sum js*.* >sha256.txt
+
+mike@mx2:~/app/1_javascript/2_jsv3_registered/jsv3_registered_20230526_zip
+$ cat sha256.txt 
+3838cab0eae56efa34049ed42dc559aca30cd6e9bc633d8d43797a4f3eaad250  jsv3_registered_20230526.7z
+08fe321f116438662d4e64ccf2d5e9cd4c6b76fe8e0bd6575a642d1583c3ef04  jsv3_registered_20230526.zip
+
+mike@mx2:~/app/1_javascript/2_jsv3_registered/jsv3_registered_20230526_zip
+$ sha256sum -c sha256.txt 
+jsv3_registered_20230526.7z: 完了
+jsv3_registered_20230526.zip: 完了
+
+mike@mx2:~/app/1_javascript/2_jsv3_registered/jsv3_registered_20230526_zip
+$ ls -l
+合計 1596
+-rw-r--r-- 1 mike mike    1386  6月 14 15:45 check.txt
+-rw-r--r-- 1 mike mike  326382  6月 14 15:39 jsv3_registered_20230526.7z
+-rw-r--r-- 1 mike mike 1296136  6月 14 15:40 jsv3_registered_20230526.zip
+-rw-r--r-- 1 mike mike     189  6月 14 15:42 sha256.txt
+
+
+--------------------------------------------------------------------------

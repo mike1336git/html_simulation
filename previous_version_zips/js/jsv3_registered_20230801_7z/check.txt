@@ -1,0 +1,33 @@
+
+2023.08.01
+--------------------------------------------------------------------------
+mike@mx2:~/app/1_javascript/5_js_work/jsv3_registered_20230801_7z
+$ ls -l
+合計 328
+-rw-r--r-- 1 mike mike   1387  6月 14 15:45 check.txt
+-rw-r--r-- 1 mike mike 329314  8月  1 05:07 jsv3_registered_20230801.7z
+
+mike@mx2:~/app/1_javascript/5_js_work/jsv3_registered_20230801_7z
+$ sha256sum jsv3_registered_20230801.7z >sha256.txt
+
+mike@mx2:~/app/1_javascript/5_js_work/jsv3_registered_20230801_7z
+$ cat sha256.txt 
+6fd294a2f4b4c1b79f49a9c1870c710a96444e6cd20191e5ec8054fb3bff39a0  jsv3_registered_20230801.7z
+
+mike@mx2:~/app/1_javascript/5_js_work/jsv3_registered_20230801_7z
+$ sha256sum -c sha256.txt 
+jsv3_registered_20230801.7z: 完了
+
+mike@mx2:~/app/1_javascript/5_js_work/jsv3_registered_20230801_7z
+$ ls -l
+合計 332
+-rw-r--r-- 1 mike mike   1075  8月  1 05:17 check.txt
+-rw-r--r-- 1 mike mike 329314  8月  1 05:07 jsv3_registered_20230801.7z
+-rw-r--r-- 1 mike mike     94  8月  1 05:15 sha256.txt
+
+mike@mx2:~/app/1_javascript/5_js_work/jsv3_registered_20230801_7z
+$ sha256sum jsv3_registered_20230801.7z 
+6fd294a2f4b4c1b79f49a9c1870c710a96444e6cd20191e5ec8054fb3bff39a0  jsv3_registered_20230801.7z
+
+
+--------------------------------------------------------------------------

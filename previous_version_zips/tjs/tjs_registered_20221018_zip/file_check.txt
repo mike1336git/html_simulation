@@ -1,0 +1,57 @@
+file check
+
+2022.10.18 D583KX  MX-linux21 usb-ssd500G
+
+folder: tjs_registered_20221018
+size: 197 個のアイテム、合計 7.0 MiB (7,384,704 バイト)
+
+--- zip ---> 
+
+file name: tjs_registered_20221018.zip
+file size: 1.8 MiB (1,909,365 バイト)
+sha256sum: 7c1a0d8036ba202b29dd2fb43247f2c381f1e45c1ac15fda3a1fed757751385a  tjs_registered_20221018.zip
+
+
+--- 7z ---> 
+
+file name: tjs_registered_20221018.7z
+file size: 364.2 KiB (372,928 バイト)
+sha256sum: 796ace418d9c8fcae2996e3e7d551a5d0e47863db3bf6496010728c6d2ec07f0  tjs_registered_20221018.7z
+
+
+---------------------------------------------------------------------------------------
+mike@mx2:~/ドキュメント/tjs_registered/tjs_registered_20221018_zip
+$ ls -l
+合計 2244
+-rw-r--r-- 1 mike mike    1957 10月 18 05:59 file_check.txt
+-rw-r--r-- 1 mike mike     187 10月 18 05:57 sha256.txt
+-rw-r--r-- 1 mike mike  372928 10月 18 05:56 tjs_registered_20221018.7z
+-rw-r--r-- 1 mike mike 1909365 10月 18 05:55 tjs_registered_20221018.zip
+
+mike@mx2:~/ドキュメント/tjs_registered/tjs_registered_20221018_zip
+$ sha256sum tjs*.* >sha256.txt
+
+mike@mx2:~/ドキュメント/tjs_registered/tjs_registered_20221018_zip
+$ cat sha256.txt 
+796ace418d9c8fcae2996e3e7d551a5d0e47863db3bf6496010728c6d2ec07f0  tjs_registered_20221018.7z
+7c1a0d8036ba202b29dd2fb43247f2c381f1e45c1ac15fda3a1fed757751385a  tjs_registered_20221018.zip
+
+mike@mx2:~/ドキュメント/tjs_registered/tjs_registered_20221018_zip
+$ sha256sum -c sha256.txt 
+tjs_registered_20221018.7z: 完了
+tjs_registered_20221018.zip: 完了
+
+mike@mx2:~/ドキュメント/tjs_registered/tjs_registered_20221018_zip
+$ ls -l
+合計 2244
+-rw-r--r-- 1 mike mike    1957 10月 18 05:59 file_check.txt
+-rw-r--r-- 1 mike mike     187 10月 18 06:04 sha256.txt
+-rw-r--r-- 1 mike mike  372928 10月 18 05:56 tjs_registered_20221018.7z
+-rw-r--r-- 1 mike mike 1909365 10月 18 05:55 tjs_registered_20221018.zip
+
+-----------------------------------------------------------------------------------------
+
+
+
+
+
