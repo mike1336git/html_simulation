@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>js116_SEIRSinfectionModel</title>
+<script type="text/javascript">
+
+// %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%%
+
+'use strict';
+
+/* --------------------
+//
+//  js116_SEIRSinfectionModel
+//    Copyright(C) 2021-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2021.01.12 created, last updated on 2021.01.21
+//    ver 0.0.1  2021.10.22 v1, last updated on 2021.10.22
+//    ver 0.0.2  2021.11.08 v2, last updated on 2021.11.08
+//    ver 0.0.3  2023.05.20 v3, last updated on 2023.09.13
+//
+// -------------------- SEIRS infection model - Finite Difference Method
+//
+//    S-E-I-R-S model
+//                                                       /---> delta ---> [D]
+//                                                      /
+//      [S] --- beta*I ---> [E] --- sigma ---> [I]--- gamma ---> [R] 
+//       ^                                                      /
+//        \------------------------- kappa <-------------------/
+//
+//
+//    S-E-I-R-S model -- differential equation
+//      dS/dt = kappa*R - beta*S*I
+//      dE/dt = beta*S*I - sigma*E
+//      dI/dt = sigma*E - gamma*I - delta*D
+//      dR/dt = gamma*I - kappa*R
+//      dD/dr = delta*D
+//    where
+//      S: susceptible
+//      E: exposed
+//      I: infectious
+//      R: removed (recover)
+//      D: dead
+//      N = S + E + I + R + D
+//      beta: infection rate (1/day/I)
+//      sigma: incidence rate (1/day) ~ 1/(mean incubation period)
+//      gamma: recovery rate (1/day) ~ 1/(mean infected period)
+//      kappa: lose antibody rate (1/day) ~ 1/(Duration of antibody presence)
+//
+//    basic reproduction number R0
+//      R0 = beta*N/gamma
+//
+//
+// --------------------
+*/
+
+const SEIRSinfectionModel = (function(){ // ====================  SEIRSinfectionModel Module  ====================
+	
+	const g_nMax = 360*3*20;			// array max
+	const g_dt = 1.0/20.0;				// (day) time step g_dt
+	
+	let g_beta = 0.00025;				// (1/day) infection rate
+	let g_sigma = 0.2;					// (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
+	let g_gamma = 0.1;					// (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
+	let g_kappa = 1/(200.0);			// (1/day) lose antibody rate ~ 1/(Duration of antibody presence)
+	let g_delta = 0.02;					// (1/day) death rate
+	let g_removedRatio = 0.0;			// 
+	
+	let g_pN0 = 1000.0;					// (person) total = S+I+R at t=0
+	let g_pE0 = 1.0;					// (person) exposed at t=0
+	let g_pI0 = 0.0;					// (person) infectius at t=0
+	let g_pS0 = g_pN0 - g_pI0;			// (person) susceptible at t=0
+	let g_pR0 = 0.0;					// (person) removed at t=0
+	let g_pD0 = 0.0;					// (person) dead at t=0
+	
+	const g_pS = dim1( g_nMax );		// (person) susceptible
+	const g_pE = dim1( g_nMax );		// (person) exposed
+	const g_pI = dim1( g_nMax );		// (person) infectius
+	const g_pR = dim1( g_nMax );		// (person) removed
+	const g_pN = dim1( g_nMax );		// (person) total = S+E+I+R
+	const g_pD = dim1( g_nMax );		// (person) dead
+	
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+	
+	
+	// --------------------  set SEIRS function  --------------------
+	
+	function setSEIRSfunc( v_pN0, v_pI0, v_beta, v_sigma, v_gamma, v_kappa, v_delta, v_removedRatio) {
+		const nn=g_nMax, dt=g_dt;
+		
+		// set gloval
+		g_beta = v_beta;
+		g_sigma = v_sigma;
+		g_gamma = v_gamma;
+		g_kappa = v_kappa;
+		g_delta = v_delta;
+		g_removedRatio = v_removedRatio;
+		
+		g_pN0 = v_pN0;
+		g_pE0 = 0.0;
+		g_pI0 = v_pI0;
+		g_pS0 = g_pN0 - g_pI0 - g_pN0*v_removedRatio;
+		g_pR0 = g_pN0*v_removedRatio;
+		g_pD0 = 0.0;
+		
+		// set initial value
+		const beta = g_beta;
+		const sigma = g_sigma;
+		const gamma = g_gamma;
+		const kappa = g_kappa;
+		const delta = g_delta;
+		let pS = g_pS0;
+		let pE = g_pE0;
+		let pI = g_pI0;
+		let pR = g_pR0;
+		let pD = g_pD0;
+		let pN = pS + pE + pI + pR;
+		
+		for (let i=0; i<nn; i++) {
+			g_pS[i] = pS;
+			g_pE[i] = pE;
+			g_pI[i] = pI;
+			g_pR[i] = pR;
+			g_pN[i] = pS + pE + pI + pR;
+			g_pD[i] = pD;
+			
+			// dS/dt = kappa*R - beta*S*I
+			const dSvdt = kappa*pR - beta*pS*pI;
+			
+			// dE/dt = beta*S*I - sigma*E
+			const dEvdt = beta*pS*pI - sigma*pE;
+			
+			// dI/dt = sigma*E - gamma*I - delta*I
+			const dIvdt = sigma*pE - gamma*pI - delta*pI;
+			
+			// dR/dt = gamma*I - kappa*R
+			const dRvdt = gamma*pI - kappa*pR;
+			
+			// dD/dr = delta*I
+			const dDvdt = delta*pI;
+			
+			pS = pS + dSvdt*dt;
+			pE = pE + dEvdt*dt;
+			pI = pI + dIvdt*dt;
+			pR = pR + dRvdt*dt;
+			pD = pD + dDvdt*dt;
+		}
+
+	}
+	
+	
+	// --------------------  utility  --------------------
+	
+	function maxInfectiusIndex() {
+		const nn=g_nMax;
+		
+		let im = 0, m = g_pI[0];
+		for(let i=0; i<nn; i++) {
+			if (g_pI[i]>m) {
+				m = g_pI[i];
+				im = i;
+			}
+		}
+		
+		return im;
+	}
+	
+	function  reproductionNumber() {
+		return g_beta*g_pS[0]/g_gamma;
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		setSEIRSfunc:	setSEIRSfunc,	
+						// setSEIRSfunc( v_pN0, v_pI0, v_beta, v_sigma, v_gamma, v_kappa, v_delta, v_removedRatio);
+		
+		getSysParam:	function() { return [ g_nMax, g_pN0, g_dt, reproductionNumber() ]; },
+		getS:			function(i) { return g_pS[i]; },
+		getE:			function(i) { return g_pE[i]; },
+		getI:			function(i) { return g_pI[i]; },
+		getR:			function(i) { return g_pR[i]; },
+		getN:			function(i) { return g_pN[i]; },
+		getD:			function(i) { return g_pD[i]; },
+		getSEIRN:		function(i) { return [ g_pS[i], g_pE[i], g_pI[i], g_pR[i], g_pN[i], g_pD[i] ]; },
+		getImax:		function() {  const iMax = maxInfectiusIndex(); return [ iMax, g_pI[iMax] ]; },
+	};
+	
+})(); // ====================  SEIRSinfectionModel end  ====================
+
+
+const js116 = (function(){ // ====================  js Module  ====================
+	
+	const theModule = SEIRSinfectionModel;
+	const xCanvasSize = 480;	// in pixel
+	const yCanvasSize = 480;	// in pixel
+	let canvas;					// canvas2d
+	let ctx;					// = canvas.getContext('2d');
+	
+	let v_pN0 = 1000.0;			// (person) nPop = susceptible + infectious + removed
+	let v_pI0 = 1.0;			// (person) infectious = 1
+	let v_beta = 0.00025;		// infection rate (1/day/infectious)
+	let v_sigma = 0.2;			// incidence rate (1/day) ~ 1/(mean incubation period) = 1/(5days)
+	let v_gamma = 0.1;			// recovery rate (1/day) ~ 1/(mean infected period)
+	let v_kappa = 0.005;		// lose antibody rate (1/day) ~ 1/(Duration of antibody presence)
+	let v_delta = 0.002;		// death rate (1/day)
+	let v_removedRatio = 0.0;	
+	
+	let p_nMax, p_pN0, p_dt, p_reproductionNumber; // <-- theModule.getSysParam()
+	
+	let dispMode = 0; 			// no use
+	let timeRange = 360;		// (day)
+	let resetFlag = true;
+	let outputFlag = false;
+	
+	function main() {
+		resetFlag = true;
+		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
+		
+		animate();
+		
+		function setCanvas( canvasID, width, height ) {
+			canvas = document.getElementById( canvasID );
+			canvas.width  = width;
+			canvas.height = height;
+			ctx = canvas.getContext('2d', { willReadFrequently:true } );
+			ctx.font = "16px 'sans-serif'";
+			ctx.textBaseline = "bottom";
+			ctx.textAlign = "left";
+			ctx.lineWidth = 1;
+		}
+	}
+	
+	
+	function animate() {
+		
+		if ( resetFlag ) {
+			resetFlag = false;
+			outputFlag = false;
+			theModule.setSEIRSfunc( v_pN0, v_pI0, v_beta, v_sigma, v_gamma, v_kappa, v_delta, v_removedRatio);
+			[ p_nMax, p_pN0, p_dt, p_reproductionNumber ] = theModule.getSysParam();
+
+		}
+		
+		draw( ctx, dispMode, timeRange, outputFlag );
+		
+		requestAnimationFrame(animate);
+	}
+	
+	
+	//--------------------  draw  --------------------
+	
+	const gColor = { 
+		S:"#0088ff", Ex:"#ffff00", I:"#ff0000", R:"#00ff00", N:"#ff00ff", D:"#cc99cc",
+		text:"#888888", grid:"#666666" 
+	};
+	
+	function draw( ctx, dispMode, timeRange, outputFlag ) {
+		const xBoxSize = 400, yBoxSize = 400, xp=60, yp=60;
+		
+		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
+		
+		if (dispMode==0) {
+			plotSIR(ctx, xp,yp,timeRange);
+		} else if (dispMode==1) {
+			logPlotSIR(ctx, xp,yp,timeRange);
+		}
+		
+
+		const iMax = theModule.getImax()[0];
+		let pS, pE, pI, pR, pN, pD;
+			[ pS, pE, pI, pR, pN, pD ] = theModule.getSEIRN(iMax);
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`infectius max = ${pI.toFixed(1)} at ${(iMax*p_dt).toFixed(2)}`
+						+`(day),  S+E+I+R = ${(pS+pE+pI+pR).toFixed(2)}`, 10, yCanvasSize-25);
+		ctx.fillText(`basic reproduction number R0 = ${p_reproductionNumber.toFixed(2)}`, 10, yCanvasSize-5);
+		
+		if ( outputFlag ) outputTextArea(1,timeRange);
+	}
+	
+	function plotSIR(ctx, xp,yp,timeRange) {
+		const mag = 300.0/p_pN0, m=Math.floor(timeRange/360/p_dt);
+		
+		//drawGrid(xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color)
+		drawGrid(ctx, xp,yp,360,300,30,30,"0",timeRange+"(day)","0","1000", gColor.grid );
+		
+		drawText(ctx, "Susceptible", xp+20, yp-5, gColor.S );
+		drawText(ctx, "Exposed", xp+70, yp-25, gColor.Ex );
+		drawText(ctx, "Infectious", xp+120, yp-5, gColor.I );
+		drawText(ctx, "Removed", xp+220, yp-5, gColor.R );
+		drawText(ctx, "Population", xp+160, yp-25, gColor.N );
+		drawText(ctx, "dead", xp+260, yp-25, gColor.D );
+		drawText(ctx, "plot SEIRS", xp+100, yp+360, gColor.text );
+		
+		plotFunc( ctx, xp, yp, m, theModule.getS, mag, gColor.S );
+		plotFunc( ctx, xp, yp, m, theModule.getE, mag, gColor.Ex );
+		plotFunc( ctx, xp, yp, m, theModule.getI, mag, gColor.I );
+		plotFunc( ctx, xp, yp, m, theModule.getR, mag, gColor.R );
+		plotFunc( ctx, xp, yp, m, theModule.getN, mag, gColor.N );
+		plotFunc( ctx, xp, yp, m, theModule.getD, mag, gColor.D );
+	}
+	
+	function plotFunc(ctx, xp,yp,m,pFunc,mag,colr) {
+		ctx.strokeStyle = colr;
+		ctx.beginPath();
+		for (let i=0; i<360; i++) {
+			ctx.lineTo(xp+i, yp+300-mag*pFunc(i*m));
+		}
+		ctx.stroke();
+	}
+	
+	function logPlotSIR(ctx, xp,yp,timeRange) {
+		const m=Math.floor(timeRange/360/p_dt);
+		
+		//drawGrid(xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color)
+		drawGrid(ctx, xp,yp,360,300,30,50,"0",timeRange+"(day)","10^0","10^3", gColor.grid );
+		
+		drawText(ctx, "Susceptible", xp+20, yp-5, gColor.S );
+		drawText(ctx, "Exposed", xp+70, yp-25, gColor.Ex );
+		drawText(ctx, "Infectious", xp+120, yp-5, gColor.I );
+		drawText(ctx, "Removed", xp+220, yp-5, gColor.R );
+		drawText(ctx, "Population", xp+160, yp-25, gColor.N );
+		drawText(ctx, "dead", xp+260, yp-25, gColor.D );
+		drawText(ctx, "log plot SEIRS", xp+100, yp+360, gColor.text );
+		
+		plotLog10Func(ctx, xp,yp,m,theModule.getS, gColor.S );
+		plotLog10Func(ctx, xp,yp,m,theModule.getE, gColor.Ex );
+		plotLog10Func(ctx, xp,yp,m,theModule.getI, gColor.I );
+		plotLog10Func(ctx, xp,yp,m,theModule.getR, gColor.R );
+		plotLog10Func(ctx, xp,yp,m,theModule.getN, gColor.N );
+		plotLog10Func(ctx, xp,yp,m,theModule.getD, gColor.D );
+	}
+	
+	function plotLog10Func(ctx, xp,yp,m,pFunc,colr) {
+		ctx.strokeStyle = colr;
+		ctx.beginPath();
+		for (let i=0; i<360; i++) {
+			let p = pFunc(i*m); 
+			if (p<=0.0) p = 0.1;
+			const logp = Math.log10(p);
+			if (logp>-0.2) ctx.lineTo(xp+i, yp+300-100.0*logp);
+		}
+		ctx.stroke();
+	}
+	
+	function drawGrid(ctx, xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color) {
+		ctx.strokeStyle = color;
+		ctx.fillStyle = color;
+		ctx.strokeRect(xp,yp,xLen,yLen);
+		
+		for (let i=0; i<xLen; i+=xDiv) {
+			drawLine(ctx, xp+i,yp, xp+i, yp+yLen,color);
+		}
+		for (let j=0; j<yLen; j+=yDiv) {
+			drawLine(ctx, xp,yp+yLen-j, xp+xLen, yp+yLen-j,color);
+		}
+		ctx.fillText(x0Str, xp-5, yp+yLen+20);
+		ctx.fillText(xMaxStr, xp+xLen-xMaxStr.length*4, yp+yLen+20);
+		ctx.fillText(y0Str, xp-y0Str.length*8-12, yp+yLen+5);
+		ctx.fillText(yMaxStr, xp-yMaxStr.length*8-12, yp+5);
+	}
+	
+	 function drawLine( ctx, x1, y1, x2, y2, color ) {
+	 	ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	}
+	
+	function drawText( ctx, txt, x, y, color ) {
+		ctx.fillStyle = color;
+		ctx.fillText(txt, x, y);
+	}
+	
+	
+	// --------------------  data output  --------------------
+	
+	function outputTextArea(outputSW,timeRange) {
+		// outputSW:  0:textarea clear,  1:output text data
+		outputFlag = false;
+		
+		let str;
+		
+		if (outputSW==0) {
+			str = "";
+			
+		} else if (outputSW==1) {
+			let pS, pE, pI, pR, pN, pD;
+			[ pS, pE, pI, pR, pN, pD ] = theModule.getSEIRN(0);
+			str = `beta = ${v_beta.toFixed(5)},  sigma = ${v_sigma.toFixed(2)},  gamma = ${v_gamma.toFixed(2)},\n`
+				+ `  kappa = ${v_kappa.toFixed(4)},  delta = ${v_delta.toFixed(4)} \n`
+				+ `basic reproduction number R0 = ${p_reproductionNumber.toFixed(2)} \n`
+				+ `S(0) = ${pS.toFixed(1)},  E(0) =${pE.toFixed(1)},  I(0) = ${pI.toFixed(1)},`
+				+ `  R(0) = ${pR.toFixed(1)},  D(0) = ${pD.toFixed(1)} \n \n`;
+				
+			str += " day,  S(t),  E(t),  I(t),  R(t),  D(t) \n";
+			for (let i=0; i<timeRange; i++) {
+				const j = i*20;
+				[ pS, pE, pI, pR, pN, pD ] = theModule.getSEIRN(j);
+				str += ` ${i},  ${pS.toFixed(1)},  ${pE.toFixed(1)},  ${pI.toFixed(1)},  ${pR.toFixed(1)},`
+					+ `  ${pD.toFixed(1)}\n`;
+			}
+		}
+		document.getElementById("outputText").innerHTML = str;
+	}
+	
+	
+	// --------------------  dom control  --------------------
+	
+	function setBeta() {
+		const b = 0 + document.getElementById("range_beta").value;
+		v_beta = 0.00001*b;
+		document.getElementById("text_beta").innerHTML = " " + v_beta.toFixed(5);
+		resetFlag = true;
+	}
+	
+	function setSigma() {
+		const s = 0 + document.getElementById("range_sigma").value;
+		v_sigma = 0.005*s;
+		document.getElementById("text_sigma").innerHTML =
+			" " + v_sigma.toFixed(2) + " (1/ " + (1.0/v_sigma).toFixed(1) + " day)";
+		resetFlag = true;
+	}
+	
+	function setGamma() {
+		const g = 0 + document.getElementById("range_gamma").value;
+		v_gamma = 0.005*g;
+		document.getElementById("text_gamma").innerHTML =
+			" " + v_gamma.toFixed(2) + " (1/ " + (1.0/v_gamma).toFixed(1) + " day)";
+		resetFlag = true;
+	}
+	
+	function setKappa() {
+		const k = 0 + document.getElementById("range_kappa").value;
+		v_kappa = 0.0001*k;
+		document.getElementById("text_kappa").innerHTML =
+			" " + v_kappa.toFixed(4) + " (1/ " + (1.0/v_kappa).toFixed(1) + " day)";
+		resetFlag = true;
+	}
+	
+	function setDelta() {
+		const d = 0 + document.getElementById("range_delta").value;
+		v_delta = 0.0001*d;
+		document.getElementById("text_delta").innerHTML = 
+			" " + v_delta.toFixed(4) + " (1/day)";
+		resetFlag = true;
+	}
+	
+	function setRemovedRatio() {
+		const r = 0 + document.getElementById("range_removedRatio").value;
+		v_removedRatio = 0.01*r;
+		document.getElementById("text_removedRatio").innerHTML = " " + v_removedRatio.toFixed(2);
+		resetFlag = true;
+	}
+	
+	function setDispMode() {
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+	}
+	
+	function setTimeRange() {
+		timeRange = setTimeRange.range[ 0 + document.getElementById("slct_timeRange").selectedIndex ];
+	}
+	setTimeRange.range = [180,360,720,1080];
+	
+	function getData() {
+		outputFlag = true; 
+	}
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:				main,				// main()
+		
+		// dom control
+		setBeta:			setBeta,			// setBeta()
+		setSigma:			setSigma,			// setSigma()
+		setGamma:			setGamma,			// setGamma()
+		setKappa:			setKappa,			// setKappa()
+		setDelta:			setDelta,			// setDelta()
+		setRemovedRatio:	setRemovedRatio,	// setRemovedRatio()
+		
+		setDispMode:		setDispMode,		// setDispMode()
+		setTimeRange:		setTimeRange,		// setTimeRange()
+		getData:			getData,			// getData()
+	};
+	
+})(); // ====================  js116 module end  ====================
+
+
+// event
+const js = js116;
+window.addEventListener('load', js.main );
+
+
+// %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%%
+
+</script>
+
+<style type="text/css">
+    body { text-align:left; color:#000000; background-color:#fff8dd; }
+</style>
+
+</head>
+
+<body>
+<p>[ht116] SEIRS infection model - solve finite difference equations</p>
+<canvas ID="canvas_box" style="background-color: #000000;" WIDTH="480" HEIGHT="480"></canvas>
+<br>
+
+<span>theme: S-E-I-R-S infection model</span>
+<br>
+
+<label>beta (infection rate) =</label>
+<input type="range" id="range_beta" min="1" max="100" value="25" step="1" 
+style="width:200px" oninput="js.setBeta()">
+<label id="text_beta"> 0.00025</label> (1/day/I)
+<br>
+
+<label>sigma (incidence rate)=</label>
+<input type="range" id="range_sigma" min="1" max="100" value="40" step="1" 
+style="width:200px" oninput="js.setSigma()">
+<label id="text_sigma"> 0.20 (1/ 5.0 day)</label>
+<br>
+
+<label>gamma (recovery rate)=</label>
+<input type="range" id="range_gamma" min="1" max="100" value="20" step="1" 
+style="width:200px" oninput="js.setGamma()">
+<label id="text_gamma"> 0.10 (1/ 10.0 day)</label>
+<br>
+
+<label>immunity loss rate =</label>
+<input type="range" id="range_kappa" min="0" max="100" value="50" step="1" 
+style="width:200px" oninput="js.setKappa()">
+<label id="text_kappa"> 0.0050 (1/ 200.0 day)</label>
+<br>
+
+<label>infection death rate =</label>
+<input type="range" id="range_delta" min="0" max="100" value="20" step="1" 
+style="width:200px" oninput="js.setDelta()">
+<label id="text_delta"> 0.0020 (1/day)</label>
+<br>
+
+<label>vaccinated ratio =</label>
+<input type="range" id="range_removedRatio" min="0" max="100" value="0" step="1" 
+style="width:200px" oninput="js.setRemovedRatio()">
+<label id="text_removedRatio"> 0.00</label>
+<br>
+
+<label>dispMode:</label>
+<select id="slct_dispMode" onChange="js.setDispMode()">
+<option selected>plot SEIR</option><option >log plot SEIR</option></select>
+    <span style="margin-right: 50px;"></span>
+<label>time range:</label>
+<select id="slct_timeRange" onChange="js.setTimeRange()">
+<option >0 - 180</option><option selected>0 - 360</option><option >0 - 720</option>
+<option >0 - 1080</option></select>
+<br>
+
+<button id="getData_button" onClick="js.getData()">output text data</button>
+<br>
+
+<textarea id="outputText" rows="7" cols="72" disabled></textarea>
+<br>
+
+<p id="text_caption" ></p>
+<hr width="480" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
