@@ -1,0 +1,15 @@
+mike@mx2:~/app/1_javascript/3_threejs/build_r147
+$ ls -l
+合計 4060
+-rw-r--r-- 1 mike mike    1081 11月 30 16:14 LICENSE
+-rw-r--r-- 1 mike mike   26660 11月 30 16:14 OrbitControls.js
+-rw-r--r-- 1 mike mike   17598 11月 30 16:14 TrackballControls.js
+-rw-r--r-- 1 mike mike     543 12月  6 06:50 r147.txt
+-rw-r--r-- 1 mike mike 1138805 11月 30 16:14 three.cjs
+-rw-r--r-- 1 mike mike 1169314 11月 30 16:14 three.js
+-rw-r--r-- 1 mike mike  607784 11月 30 16:14 three.min.js
+-rw-r--r-- 1 mike mike 1171690 11月 30 16:14 three.module.js
+
+
+
+
