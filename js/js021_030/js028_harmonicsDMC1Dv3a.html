@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>js028_harmonicsDMC1D</title>
+<script type="text/javascript">
+
+// %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%%
+
+'use strict';
+
+/* --------------------
+//
+//  js028_harmonicsDMC1D
+//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT )
+//
+//    ver 0.0.0  2017.05.16 created, last updated on 2018.11.17
+//    ver 0.0.1  2019.01.15 v1, last updated on 2021.05.19
+//    ver 0.0.2  2021.10.30 v2, last updated on 2021.10.30
+//    ver 0.0.3  2023.03.14 v3, last updated on 2023.08.20
+//
+// --------------------  diffusion Monte-Carlo method 1D
+//
+// DMC algorithm : I. Kosztin et. al.; e-print arXiv:physics/9702023v1 (1997)
+//                 "Introduction to the Diffusion Monte Carlo Method"
+// (1) replica walk
+//     x -> x + sqrt(dt)*GaussianRandom
+// (2) branch: replica birth-death (branching) processes
+//     weight function W
+//       W = exp( -(V-ER)*dt/hbar ) --> Wi ~ 1-(Vi-Ei)*dt/h
+//       m = int( wi + random[0-1] )
+//     if (m=0)  death
+//     if (m=1)  alive
+//     if (m=2)  alive + birth one replica
+//     if (m>=3) alive + birth two replica
+// (3) count: number of replicas N1
+// (4) energy calc
+//     ER(k+1) = ER(k) + (hbar/dt)(1-N1/N0)
+//        (N0: target number of replica)
+// goto (1)
+//
+// --------------------
+*/
+
+const harmonicsDMC1D = (function(){ // ====================  harmonicsDMC1D Module  ====================
+	
+	// au: atomic unit hBar=1,e=1,me=1,a0=1
+	const g_auLength = 5.29177211e-11;		// (m) 1(au) = auLength (m)
+	const g_auTime = 2.418884326e-17;		// (s) 1(au) = auTime (s)
+	const g_auEnergy = 4.35974465e-18;		// (J) 1(au) = auEnergy (J)
+	const g_au2eV = 27.211386;				// (eV) 1(au) = 27.211386 (eV)
+	const g_hbar = 1.0;						// hbar = 1 in au(atomic unit)
+	
+	let g_NNr = 2000;						// number of replica
+	let g_NNb = 100;						// max number of box division 0:x=-5.0 50:x=0.0 100:x=+5.0
+	let g_dx = 0.1;
+	let g_sysTime = 0.0;					// (au) system time
+	let g_timeStep = 0.1;					// (au) time division dt
+	let g_referenceEnergy = 0.0;			// (au) reference energy of the system
+	let g_energy = g_referenceEnergy;		// (au) system energy
+	let g_NN0 = g_NNr/2;					// memory of NN1
+	let g_NN1 = g_NN0;						// number of alive replicas
+	let g_NN00 = 1000;						// initial number of alive replicas
+	let g_vIndex = 0;						// potential index 0:parabolic 1:well 2:well 2
+	
+	const g_repStatus = dimInt1( g_NNr );	// status of 1-th replica
+	const g_replica = dim2( g_NNr, 3 );		// replica[i][0] x-coordinate of 1-th replica
+	const g_box = dimInt1( g_NNb );			// box[ix] number of replica, ix = Math.floor(50.0+x*10+0.5);
+	const g_psi = dim1( g_NNb );			// wave function psi[ix]
+	const g_dens = dim1( g_NNb );			// density dens[ix] = a*psi[ix]*psi[ix], sum(dens[ix],ix)=1
+	
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+	
+	function dimInt1( n ) {
+		return new Int32Array( n );
+	}
+	
+	function dim2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Float64Array( nj );
+		}
+		return a;
+	}
+	
+	
+	// --------------------  set initial condition  --------------------
+	
+	function setInitialCondition( vIndex ) {
+		const nnr=g_NNr;
+		g_vIndex = vIndex;
+		g_sysTime = 0.0;
+		for (let i=0; i<nnr; i++) {
+			g_repStatus[i] = 0;
+		}
+		const n0 = nnr/2;
+		for (let i=0; i<n0; i++) {
+			g_repStatus[i] = 1;
+			g_replica[i][0] = 4.0*Math.random()-2.0;
+		}
+		setPsi(0);
+		g_NN0 = numberOfReplica();
+		g_NN00 = g_NN0;
+	}
+	
+	
+	// --------------------  evolve DMC  --------------------
+	
+	function evolveDMC(nCalc) {
+		for (let i=0; i<nCalc; i++) {
+			walkReplica();
+		}
+	}
+	
+	function walkReplica() {
+		const nnr=g_NNr;
+		g_sysTime = g_sysTime + g_timeStep;
+		const sqrtdt = Math.sqrt(g_timeStep);
+		
+		// (1) replica walk
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) {
+				g_replica[i][0] += sqrtdt*GaussianRandom();
+			}
+		}
+		// (2) branch
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) {
+				birthDeathProcess(i);
+			}
+		}
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==2) {
+				g_repStatus[i] = 1;
+			}
+		}
+		// (3) count
+		g_NN1 = numberOfReplica();
+		// (4) energy
+		const er = g_referenceEnergy + g_hbar/g_timeStep*(1.0-(g_NN1+1.0)/(g_NN0+1.0)*(g_NN1+10.0*nnr)/(g_NN00+10.0*nnr));
+		g_NN0 = g_NN1;
+		g_referenceEnergy = er;
+		g_energy = 0.99*g_energy+0.01*g_referenceEnergy;
+		setPsi(1);
+		setDensity();
+	}
+	
+	function GaussianRandom() {  //Box-Muller transform  
+		return Math.sqrt(-2*Math.log(1-Math.random()))*Math.sin(2*Math.PI*Math.random());
+	}
+	
+	function birthDeathProcess(i) {
+		const xi = g_replica[i][0];
+		const mn = Math.floor(weightFunction(xi)+Math.random());
+		if (mn==0) {
+			g_repStatus[i] = 0; // death replica
+		} else if (mn==2) {
+			birthReplica(i);
+		} else if (mn>=3) {
+			birthReplica(i);
+			birthReplica(i);
+		}
+	}
+	
+	function weightFunction(xn) {
+		return Math.exp(-(potential(xn,g_vIndex)-g_referenceEnergy)*g_timeStep/g_hbar);
+	}
+	
+	function potential(x,vIndex) {
+		let ret=0.0;
+		if (vIndex==0) { // 0:parabolic V(x)= 0.5*x^2
+			ret = 0.5*x*x;
+		} else if (vIndex==1) { // 1: well V(x)= 0.0(|x|<1.0) 10.0(else)
+			ret = (Math.abs(x)<1.0) ? 0.0 : 10.0;
+		} else if (vIndex==2) { // 2: well V(x)= -1(|x|<1.0) 0.0(else)
+			ret = (Math.abs(x)<1.0) ? -1.0 : 0.0;
+		}
+		return ret;
+	}
+	
+	function birthReplica(i) {
+		const ip = seekSpace(i);
+		if (ip>=0) {
+			g_repStatus[ip] = 2;
+			g_replica[ip][0] = g_replica[i][0];
+		}
+	}
+	
+	function seekSpace(istart) {
+		const nnr=g_NNr;
+
+		let ip = -1;
+		for (let i=1; i<nnr; i++) {
+			if (g_repStatus[(i+istart)%nnr]==0) {
+				ip = (i+istart)%nnr;
+				break;
+			}
+		}
+		return ip;
+	}
+	
+	function numberOfReplica() {
+		const nnr=g_NNr;
+		let n = 0;
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) n+=1;
+		}
+		return n;
+	}
+	
+	function setPsi(sw) {
+		const nnr=g_NNr, nnb=g_NNb;
+		
+		for (let ix=0; ix<nnb; ix++) {
+			g_box[ix] = 0;
+		}
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) {
+				const ix = Math.floor(50.0+g_replica[i][0]*10+0.5);
+				if (ix>=0 && ix<nnb) g_box[ix] += 1;
+			}
+		}
+		if (sw==1) {
+			for (let ix=0; ix<nnb; ix++) {
+				g_psi[ix] = 0.99*g_psi[ix]+0.01*g_box[ix];
+			}
+		} else {
+			for (let ix=0; ix<nnb; ix++) {
+				g_psi[ix] = g_box[ix];
+			}
+		}
+	}
+	
+	function setDensity() {
+		const nnb=g_NNb;
+		
+		const r = 1.0/Math.sqrt(g_NN0);
+		for (let ix=0; ix<nnb; ix++) {
+			g_dens[ix] = g_psi[ix]*g_psi[ix]*r;
+		}
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		init:			setInitialCondition,	// setInitialCondition( vIndex )
+		evolve:			evolveDMC,				// evolveDMC( nCalc )
+		
+		getAUinSI:		function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:	function() { return [ g_NNr, g_NNb, g_dx, g_timeStep ]; },
+		getNow:			function() { return [ g_sysTime, g_energy, g_NN1 ]; },
+		
+		getRepStatus:	function(ir) { return g_repStatus[ir]; },
+		getRepPos:		function(ir) { return g_replica[ir][0]; },
+		getPsi:			function(ix) { return g_psi[ix]; },
+		getVext:		function(ix) { return potential((ix-g_NNb/2)*g_dx,g_vIndex); },
+	};
+	
+})(); // ====================  harmonicsDMC1D end  ====================
+
+
+const js028 = (function(){ // ====================  js Module  ====================
+	
+	const theModule = harmonicsDMC1D;
+	const xCanvasSize = 480;	// in pixel
+	const yCanvasSize = 480;	// in pixel
+	let canvas;					// canvas2d
+	let ctx;
+	
+	// v_vIndex:	0: parabolic V(x)= 0.5*x^2
+	// 				1: well V(x)= 0.0(|x|<1.0) 10.0(else)
+	//				2: well V(x)= -1(|x|<1.0) 0.0(else)
+	let v_vIndex = 0;
+	let v_nCalc = 1;
+	
+	let p_NNrep, p_NNx, p_dx, p_timeStep; // = theModule.getSysParam();
+	
+	let dispMode = 0;
+	let resetFlag = true;
+	let pauseFlag = false;
+	let stepFlag = false;
+	
+	function main() {
+		resetFlag = true;
+		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
+		initDom();
+		
+		animate();
+		
+		function setCanvas( canvasID, width, height ) {
+			canvas = document.getElementById( canvasID );
+			canvas.width  = width;
+			canvas.height = height;
+			ctx = canvas.getContext('2d');
+			ctx.font = "16px 'sans-serif'";
+			ctx.textBaseline = "bottom";
+			ctx.textAlign = "left";
+			ctx.lineWidth = 1;
+		}
+	}
+	
+	
+	function animate() {
+		
+		if ( resetFlag ) {
+			resetFlag = false;
+			theModule.init( v_vIndex ); // ( nn, BoxSizeInNM, contTemp )
+			[ p_NNrep, p_NNx, p_dx, p_timeStep ] = theModule.getSysParam();
+		}
+		
+		if ( !pauseFlag ) {
+			theModule.evolve( v_nCalc );
+		} else if ( pauseFlag && stepFlag ) {
+			stepFlag = false;
+			theModule.evolve( v_nCalc );
+		}
+		
+		draw( ctx, dispMode );
+		
+		requestAnimationFrame(animate);
+	}
+	
+	
+	// --------------------  draw  --------------------
+	
+	function draw( ctx, dispMode ) {
+		const NNrep = p_NNrep, NNx = p_NNx, dx = p_dx;
+		const xBoxPos = 40, yBoxPos = 20, xBoxSize = NNx*4, yBoxSize = 360;
+		const xp = 40, yp = 20;
+		const pmag = 4.0, emag = 25.0;
+		
+		// clear
+		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
+		
+		// box
+		ctx.strokeStyle = "#888800";
+		ctx.strokeRect( xBoxPos, yBoxPos, xBoxSize, yBoxSize );
+		
+		drawLine( ctx, xp-20, yp+300, xp+xBoxSize+20, yp+300, "#444444" ); // base line
+		
+		const Vext = function(i) { return emag*theModule.getVext(i); };
+		drawFunc( ctx, Vext, "#00aa00", xp, yp); // Vext(x)
+		
+		const phi = function(i) { return pmag*theModule.getPsi(i); };
+		drawFunc( ctx, phi, "#aaaa00", xp, yp); 
+		
+		ctx.fillStyle = "#00aa00";
+		ctx.fillText("V(x)", 340, 60);
+		ctx.fillStyle = "#aaaa00";
+		ctx.fillText("phi(x)", 340, 40);
+		
+		let sysTime, energy, NN1;
+		[ sysTime, energy, NN1 ] = theModule.getNow();
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`box size = ${NNx*dx} (au)`, xp, yCanvasSize-50);
+		ctx.fillText(`time = ${sysTime.toFixed(2)} (au)`, xp+220, yCanvasSize-50);
+		ctx.fillText(`energy = ${energy.toFixed(6)} (au)`, xp, yCanvasSize-30);
+		ctx.fillText(`alive replicas = ${NN1}`, xp, yCanvasSize-10);
+		ctx.fillText(`total replicas = ${NNrep}`, xp+220, yCanvasSize-10);
+		
+		document.getElementById("text_caption").innerHTML = 
+			`energy calculated from phi(x) shape = ${energyOfPhi().toFixed(6)} (au)` +
+			`<br> non-smoothed phi(x) shape causes somewhat higher energy`;
+	}
+	
+	function drawFunc( ctx, func, color, xp, yp ) {
+		const nnx = p_NNx, xScale= 4, yPos = 300+yp
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		for (let i=1; i<nnx; i++) {
+			ctx.lineTo( i*xScale+xp, yPos-func(i) );
+		}
+		ctx.stroke();
+	}
+	
+	function drawLine( ctx, x1, y1, x2, y2, color ) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	}
+	
+	function energyOfPhi() {
+		// E = <phi| -0.5*d^2/dx^2 + Vext |phi> / <phi | phi>
+		const Vext = function(i) { return theModule.getVext(i); };
+		const phi = function(i) { return theModule.getPsi(i); };
+		const NNx = p_NNx, dx = p_dx, h2 = 2*dx*dx;
+		
+		let s = 0.0;
+		let sn = 0.0;
+		for (let i=1; i<NNx-1; i++) {
+			s = s + phi(i)*( (2*phi(i)-phi(i+1)-phi(i-1))/h2 + Vext(i)*phi(i) );
+			sn = sn + phi(i)*phi(i);
+		}
+		return s/sn;
+	}
+	
+	
+	// --------------------  control  --------------------
+	
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function reset() { resetFlag = true; }
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = ( pauseFlag==false ); 
+		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==true ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() { stepFlag = true; }
+	
+	function setTheme() {  // select theme
+		v_vIndex = 0 + document.getElementById("slct_theme").selectedIndex;
+		resetFlag = true;
+	}
+	
+	function setDispMode() {
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;	
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		reset:			reset,			// reset()
+		pause:			pause,			// pause()
+		step:			step,			// step()
+		
+		setTheme:		setTheme,		// setTheme()
+		setDispMode:	setDispMode,	// setDispMode()
+	};
+	
+})(); // ====================  js028 module end  ====================
+
+
+// event
+const js = js028;
+window.addEventListener('load', js.main );
+
+
+// %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%%
+
+</script>
+
+<style type="text/css">
+    body { text-align:left; color:#000000; background-color:#fff8dd; }
+</style>
+
+</head>
+
+<body>
+<p>[js028] Diffusion Monte-Carlo Method 1D</p>
+<canvas ID="canvas_box" style="background-color: #000000;" WIDTH="480" HEIGHT="480"></canvas>
+<br>
+
+<label>theme:</label>
+<select id="slct_theme" onChange="js.setTheme()">
+<option selected>in parabolic V(x)= 0.5*x^2</option>
+<option>in well V(x)= 0.0(|x|<1.0) 10.0(else)</option>
+<option>in well V(x)= -1(|x|<1.0) 0.0(else)</select>
+</select>
+    <span style="margin-right: 30px;"></span>
+<button onClick="js.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="js.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="js.step()">step</button>
+<br>
+
+<!--
+<label>disp. mode:</label>
+<select id="slct_dispMode" onChange="js.setDispMode()">
+<option>threejs</option><option>canvas2d</option>
+</select>
+<br>
+-->
+
+<p id="text_caption" ></p>
+<hr width="480" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+

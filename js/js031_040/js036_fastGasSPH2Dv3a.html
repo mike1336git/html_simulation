@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>js036_fastGasSPH2D</title>
+<script type="text/javascript">
+
+// %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%%
+
+'use strict';
+
+/* --------------------
+//
+//  js036_fastGasSPH2D
+//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2017.06.14 created, last updated on 2018.11.18
+//    ver 0.0.1  2019.01.16 v1, last updated on 2021.05.27
+//    ver 0.0.2  2021.10.31 v2, last updated on 2021.10.31
+//    ver 0.0.3  2023.03.21 v3, last updated on 2023.08.22
+//
+// --------------------  smoothed particle hydrodynamics 2D
+//
+// - particle base Lagrangian method
+//    Monaghan; "Smoothed Particle Hydrodynamics" 
+//              Annu. Rev. Astron. Astrophys.1992. 30:543-74
+//
+//    W(x-xi,h) : kernel weight function (q=|x-xi|/h)
+//      = aKernel*(1-1.5*q^2+0.75*q^3)  (q<1)
+//      = aKernel*0.25*(2-q)^3  (1<=q<2)
+//      = 0  (q>=2)
+//
+//        aKernel = 2/3/h (1D)
+//                = 10/(7Pi)/h^2 (2D)
+//                = 1/Pi/h^3 (3D)
+//
+//    f(x) --> sum[mj/rhoj*f(xj)*W(x-xj,h), j]
+//    grad f(x) --> -sum[mj/rhoj*f(xj)*grad W(x-xj,h), j]
+//
+// - time step
+//   (1) registration - set section[][][]
+//   (2) set density[]
+//   (3) set pressure[]
+//   (4) Verlet step1 (t = t + dt/2)
+//   (5) set acceleration ax[] ay[] and power[] <-- x(t+dt/2),y(t+dt/2)
+//   (6) Verlet step2 (t = (t + dt/2) + dt/2)
+//   (7) set boundary
+//   goto (1)
+//
+//   for fast calculation - O(N) calculation
+//     set section: smoothed particle divided into lattice section (see setSection() )
+//     calculate acceleration: sum up near section (see accCalc() )
+//       near means r<2*hh0
+//
+// --------------------
+*/
+
+const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  ====================
+	
+	let g_xMax = 10.0;					// (m) x-Box size
+	let g_yMax = 10.0;					// (m) y-Box size
+	let g_sysTime = 0.0;				// (s) system time
+	let g_dt = 0.0001;					// (s) time step
+	let g_hh0 = 0.25;					// (m) diameter of smoothed particles
+	let g_NNp = 1600;					// number of smoothed particles
+	let g_Nsx = 30;						// number of division to x-lattice section
+	let g_Nsy = 30;						// number of division to y-lattice section
+	
+	const g_xx = dim1( g_NNp );			// (m) smooth particle pos-x
+	const g_yy = dim1( g_NNp );			// (m) smooth particle pos-y
+	const g_vx = dim1( g_NNp );			// (m/s) smooth particle velocity-x
+	const g_vy = dim1( g_NNp );			// (m/s) smooth particle velocity-y
+	const g_ax = dim1( g_NNp );			// (m/s^2) smooth particle total accelaration-x
+	const g_ay = dim1( g_NNp );			// (m/s^2) smooth particle total accelaration-y
+	const g_hh = dim1( g_NNp );			// (m) smooth particle diameter
+	const g_mass = dim1( g_NNp );		// (kg) smooth particle mass
+	const g_cp = dim1( g_NNp );			// (J/(kg*K)) smooth particle specific heat
+	const g_density = dim1( g_NNp );	// (kg/m^3) smooth particle density
+	const g_pressure = dim1( g_NNp );	// (N/m^2) smooth particle pressure
+	const g_energy = dim1( g_NNp );		// (J) smooth particle energy = mass*cp*temp
+	const g_power = dim1( g_NNp );		// (W) smooth particle power : energy(t+dt) = energy(t)+power*dt
+	const g_section = dimInt3( g_Nsx, g_Nsy, 100 ); // registration: particles in g_Nsx x Nsy sections
+	
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+	
+	function dimInt3( ni, nj, nk ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = [];
+			for (let j=0; j<nj; j++) {
+				a[i][j] =  new Int32Array( nk );
+			}
+		}
+		return a;
+	}
+	
+	
+	// --------------------  set initial condition  --------------------
+	
+	// public
+	function setInitialCondition() {
+		const nnp=g_NNp;
+		g_sysTime = 0.0;
+		for (let i=0; i<nnp; i++) {
+			g_mass[i] = (0.029/0.0224)/4.0; //air
+			g_cp[i] = 1000.0; //air
+			g_xx[i] = 0.1*(i%40)+1.0;
+			g_yy[i] = 0.1*Math.floor(i/40)+2.0;
+			g_vx[i] = 0.0;
+			g_vy[i] = 0.0;
+			g_ax[i] = 0.0;
+			g_ay[i] = 0.0;
+			g_hh[i] = g_hh0;
+		}
+		for (let i=0; i<nnp; i++) {
+			g_energy[i] = g_mass[i]*g_cp[i]*300; //300=temp(K)
+			g_power[i] = 0.0;
+		}
+		setDensity();
+	}
+	
+	
+	// --------------------  time evolution  --------------------
+	
+	// public
+	function timeEvolution(nCalc) {
+		for (let i=0; i<nCalc; i++) {
+			timeStep();
+			g_sysTime += g_dt;
+		}
+	}
+	
+	function timeStep() {
+		const nnp=g_NNp;
+		const dtv2 = g_dt/2.0;
+		
+		// (1) registration - set section[][][]
+		setSection();
+		
+		// (2) set density
+		setDensity();
+    	
+		// (3) set pressure
+		for (let i=0; i<nnp; i++) {
+			g_pressure[i] = 8.31*g_density[i]*(g_energy[i]/(g_mass[i]*g_cp[i]));
+		}
+		
+		// (4) Verlet step1 (t = t + dt/2)
+		for (let i=0; i<nnp; i++) {
+			g_vx[i] += dtv2*g_ax[i];
+			g_vy[i] += dtv2*g_ay[i];
+			g_xx[i] += g_vx[i]*g_dt;
+			g_yy[i] += g_vy[i]*g_dt;
+		}
+		
+		// (5) set acceleration ax[] ay[] and power[]
+		accCalc();
+
+		// (6) Verlet step2 (t = t + dt/2 + dt/2)
+		for (let i=0; i<nnp; i++) {
+			g_vx[i] += dtv2*g_ax[i];
+			g_vy[i] += dtv2*g_ay[i];
+			g_energy[i] += g_power[i]*g_dt;
+		}
+		
+		// (7) boundary
+		const rr = 1.0;
+		for (let i=0; i<nnp; i++) {
+			if (g_xx[i] < 0.0) { 
+				g_xx[i] = 0.0; g_vx[i] = -rr*g_vx[i]; g_vy[i] = rr*g_vy[i]; 
+			}
+			if (g_xx[i] > g_xMax) {
+				g_xx[i] = g_xMax; g_vx[i] = -rr*g_vx[i]; g_vy[i] = rr*g_vy[i]; 
+			}
+			if (g_yy[i] < 0.0) { 
+				g_yy[i] = 0.0; g_vx[i] = rr*g_vx[i]; g_vy[i] = -rr*g_vy[i]; 
+			}
+			if (g_yy[i] > g_yMax) {
+				g_yy[i] = g_yMax; g_vx[i] = rr*g_vx[i]; g_vy[i] = -rr*g_vy[i];
+			}
+		}
+	}
+	
+	// --- (1) registration
+	
+	function setSection() {
+		const nnp=g_NNp ,nsx=g_Nsx, nsy=g_Nsy;
+		for (let i=0; i<nsx; i++) {
+			for (let j=0; j<nsy; j++) {
+				g_section[i][j][0] = 0;
+			}
+		}
+		for (let ip=0; ip<nnp; ip++) {
+			let i = Math.floor(nsx*g_xx[ip]/g_xMax); if (i>=nsx) i = nsx-1;
+			let j = Math.floor(nsy*g_yy[ip]/g_yMax); if (j>=nsy) j = nsy-1;
+			const iq = g_section[i][j][0]+1;
+			g_section[i][j][0] = iq;
+			g_section[i][j][iq] = ip;
+		}
+	}
+	
+	function maxSection() {
+		const nsx=g_Nsx, nsy=g_Nsy;
+		let m=0;
+		for (let i=0; i<nsx; i++) {
+			for (let j=0; j<nsy; j++) {
+				if (g_section[i][j][0]>m) m = g_section[i][j][0];
+			}
+		}
+		return m;
+	}
+	
+	// --- (2) set density[]
+	
+	function setDensity() {
+		const nnp=g_NNp, nsx=g_Nsx, nsy=g_Nsy;
+		const rcc = g_hh0*2.0;
+		const rcc2 = rcc*rcc;
+		for (let i=0; i<nnp; i++) {
+			let s = 0.0;
+			let i0 = Math.floor(nsx*(g_xx[i]-rcc)/g_xMax); if (i0<0) i0 = 0;
+			let i1 = Math.floor(nsx*(g_xx[i]+rcc)/g_xMax); if (i1>=nsx) i1 = nsx-1;
+			let j0 = Math.floor(nsy*(g_yy[i]-rcc)/g_yMax); if (j0<0) j0 = 0;
+			let j1 = Math.floor(nsy*(g_yy[i]+rcc)/g_yMax); if (j1>=nsy) j1 = nsy-1;
+			for (let ii=i0; ii<=i1; ii++) {
+				for (let jj=j0; jj<=j1; jj++) {
+					for (let iq=1; iq<=g_section[ii][jj][0]; iq++) {
+						const j = g_section[ii][jj][iq];
+						const r2 = (g_xx[i]-g_xx[j])*(g_xx[i]-g_xx[j])+(g_yy[i]-g_yy[j])*(g_yy[i]-g_yy[j]);
+						if (r2<rcc2) {
+							const rij = Math.sqrt(r2);
+							s += g_mass[j]*kernel(rij, (g_hh[i]+g_hh[j])/2.0);
+						}
+					}
+				}
+			}
+			g_density[i] = s;
+		}
+	}
+	
+	// --- (5) set acceleration ax[] ay[] and power[]
+	
+	function accCalc() {
+		const nnp=g_NNp,nsx=g_Nsx,nsy=g_Nsy;
+		const rcc = g_hh0*2.0;
+		const rcc2 = rcc*rcc;
+		for (let i=0; i<nnp; i++) {
+			g_ax[i] = 0.0; g_ay[i] = 0.0;
+			g_power[i] = 0.0;
+			const ai = g_pressure[i]/(g_density[i]*g_density[i]);
+
+			let i0 = Math.floor(nsx*(g_xx[i]-rcc)/g_xMax); if (i0<0) i0 = 0;
+			let i1 = Math.floor(nsx*(g_xx[i]+rcc)/g_xMax); if (i1>=nsx) i1 = nsx-1;
+			let j0 = Math.floor(nsy*(g_yy[i]-rcc)/g_yMax); if (j0<0) j0 = 0;
+			let j1 = Math.floor(nsy*(g_yy[i]+rcc)/g_yMax); if (j1>=nsy) j1 = nsy-1;
+			for (let ii=i0; ii<=i1; ii++) {
+				for (let jj=j0; jj<=j1; jj++) {
+					for (let iq=1; iq<=g_section[ii][jj][0]; iq++) {
+						const j = g_section[ii][jj][iq];
+						const r2 = (g_xx[i]-g_xx[j])*(g_xx[i]-g_xx[j])+(g_yy[i]-g_yy[j])*(g_yy[i]-g_yy[j]);
+						if (r2<rcc2) {
+							const rij = Math.sqrt(r2);
+							if (rij>0) {
+								const aj = g_pressure[j]/(g_density[j]*g_density[j]);
+								const b = g_mass[j]*(ai+aj);
+								const gradW = dwwvdr(rij, (g_hh[i]+g_hh[j])/2.0);
+								const gradWx = gradW*(g_xx[i]-g_xx[j])/rij;
+								const gradWy = gradW*(g_yy[i]-g_yy[j])/rij;
+								g_ax[i] += -b*gradWx;
+								g_ay[i] += -b*gradWy;
+								g_power[i] += 0.5*b*((g_vx[i]-g_vx[j])*gradWx+(g_vy[i]-g_vy[j])*gradWy);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// --- smooth particle
+	
+	function distance(i,j) {
+		const x = g_xx[i]-g_xx[j], y = g_yy[i]-g_yy[j];
+		return Math.sqrt(x*x+y*y);
+	}
+	
+	function kernel(r,h) {
+		let ret = 0.0;
+		const q = r/h;
+		const a = 10.0/(7.0*3.141592)/(h*h);
+		if (q<1.0) {
+			ret = a*(1.0-1.5*q*q+0.75*q*q*q);
+		} else if (q<2.0) {
+			ret = a*0.25*(2.0-q)*(2.0-q)*(2.0-q);
+		}
+		return ret;
+	}
+	
+	function dwwvdr(r,h) {
+		let ret = 0.0;
+		const q = r/h;
+		const a = 10.0/(7.0*3.141592)/(h*h*h);
+		if (q<1.0) {
+			ret = a*(-3.0*q+2.25*q*q);
+		} else if (q<=2.0) {
+			ret = -a*0.75*(2.0-q)*(2.0-q);
+		}
+		return ret;
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		init:			setInitialCondition,	// setInitialCondition()
+		evolve:			timeEvolution,			// timeEvolution( nCalc )
+		
+		getSysParam:	function() { return [ g_xMax, g_yMax, g_dt, g_hh0, g_NNp ]; },
+		getSysTime:		function() { return g_sysTime; },
+		getSPData:		function(i) { return [ g_hh[i], g_mass[i], g_cp[i] ]; },
+		getPosition:	function(i) { return [ g_xx[i], g_yy[i] ]; },
+		getVelocity:	function(i) { return [ g_vx[i], g_vy[i] ]; },
+		getAcc:			function(i) { return [ g_ax[i], g_ay[i] ]; },
+		getDensity:		function(i) { return g_density[i]; },
+		getPressure:	function(i) { return g_pressure[i]; },
+		getTemp:		function(i) { return (g_energy[i]/(g_mass[i]*g_cp[i])); },
+		getEnergy:		function(i) { return g_energy[i]; },
+		getPower:		function(i) { return g_power[i]; },
+	};
+	
+})(); // ====================  fastGasSPH2D end  ====================
+
+
+const js036 = (function(){ // ====================  js Module  ====================
+	
+	const theModule = fastGasSPH2D;
+	const xCanvasSize = 480;	// in pixel
+	const yCanvasSize = 480;	// in pixel
+	let canvas;
+	let ctx;
+	
+	let v_theme = 0;  // no use
+	let v_nCalc = 2;
+	
+	let p_xMax, p_yMax, p_dt, p_hh0, p_NNp; // = theModule.getSysParam();
+	
+	let dispMode = 2;
+	let resetFlag = true;
+	let pauseFlag = false;
+	let stepFlag = false;
+	
+	
+	function main() {
+		resetFlag = true;
+		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
+		initDom();
+		
+		animate();
+	
+		function setCanvas( canvasID, width, height ) {
+			canvas = document.getElementById( canvasID );
+			canvas.width  = width;
+			canvas.height = height;
+			ctx = canvas.getContext('2d');
+			ctx.font = "16px 'sans-serif'";
+			ctx.textBaseline = "bottom";
+			ctx.textAlign = "left";
+			ctx.lineWidth = 1;
+		}
+	}
+	
+	
+	function animate() {
+		
+		if ( resetFlag ) {
+			resetFlag = false;
+			theModule.init( );
+			[ p_xMax, p_yMax, p_dt, p_hh0, p_NNp ] = theModule.getSysParam();
+		}
+		
+		if ( !pauseFlag ) {
+			theModule.evolve( v_nCalc );
+		} else if ( pauseFlag && stepFlag ) {
+			stepFlag = false;
+			theModule.evolve( 1 );
+		}
+		
+		draw( ctx, dispMode );
+		
+		requestAnimationFrame(animate);
+	}
+	
+	
+	// --------------------  draw  --------------------
+	
+	function draw( ctx, dispMode ) {
+		const xp = 40, yp = 15, xSize = 400, ySize = 400, scale = xSize/p_xMax;
+		
+		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
+		
+		ctx.strokeStyle = "#888800";
+		ctx.strokeRect( xp, yp, xSize, ySize );
+		
+		if ( dispMode<=3 ) {
+			drawField( ctx, dispMode, p_NNp, p_hh0, scale, xp, yp );
+		} else if ( dispMode==4 ) {
+			drawFlow( ctx, p_NNp, scale, xp, yp );
+		}
+		
+		// caption
+		const sysTime = theModule.getSysTime();
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`Box = ${p_xMax.toFixed(1)}x${p_yMax.toFixed(1)} (m)`, xp, yCanvasSize-30);
+		ctx.fillText(`N = ${p_NNp}`, xp+260, yCanvasSize-30);
+		ctx.fillText(`time = ${sysTime.toFixed(3)} (s)`, xp, yCanvasSize-10);
+		//document.getElementById("text_caption").innerHTML = msg;
+	}
+
+	function drawField( ctx, dispMode, nnp, hh0, sc, xp, yp ) {
+		const yMax = p_yMax, twoPi = 2.0*Math.PI, dmag=5.0, pmag=0.003, tmag=2.0;
+
+		for (let i=0; i<nnp; i++) {
+			let xi, yi, hue;
+			[ xi, yi ] = theModule.getPosition(i);
+			if (dispMode==0) { // smooth particle
+				hue = 180;
+			} else if (dispMode==1) { // density
+				const dens = theModule.getDensity(i);
+				hue = Math.floor(18180-dens*dmag) % 360;
+			} else if (dispMode==2) { // pressure
+				const press = theModule.getPressure(i);
+				hue = Math.floor(18180-press*pmag) % 360;
+			}  else if (dispMode==3) { // temp
+				const temp = theModule.getTemp(i)-273;
+				hue = Math.floor(18240-temp*tmag) % 360;
+			}
+			ctx.strokeStyle = `hsl(${hue},100%,50%)`
+			ctx.beginPath();
+			ctx.arc(xi*sc+xp, (yMax-yi)*sc+yp, hh0*sc, 0, twoPi, false);
+			ctx.stroke();
+		}
+	}
+
+	function drawFlow( ctx, nnp, sc, xp, yp ) {
+		const yMax = p_yMax, vmag = 80.0*p_dt*sc;
+
+		for (let i=0; i<nnp; i++) {
+			let xi, yi, vxi, vyi;
+			[ xi, yi ] = theModule.getPosition(i);
+			[ vxi, vyi ] = theModule.getVelocity(i);
+			const x = xi*sc+xp, y = (yMax-yi)*sc+yp;
+			const hue = Math.floor((Math.atan2(vyi,vxi))*180.0/Math.PI+180.0);
+			ctx.strokeStyle = `hsl(${hue},100%,50%)`;
+			ctx.beginPath();
+			ctx.moveTo( x, y );
+			ctx.lineTo( x+vxi*vmag, y-vyi*vmag);
+			ctx.stroke();
+		}
+	}
+	
+	
+	// --------------------  control  --------------------
+	
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function reset() { resetFlag = true; }
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+		
+		pauseFlag = ( pauseFlag==false ); 
+		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==true ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() { stepFlag = true; }
+	
+	function setTheme() {
+		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
+		resetFlag = true;
+	}
+	
+	function setDispMode() {
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+	}
+	
+	function setNcalc() {
+		v_nCalc = 1 + document.getElementById("slct_nCalc").selectedIndex;
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		// dom control
+		reset:			reset,			// reset()
+		pause:			pause,			// pause()
+		step:			step,			// step()
+		
+		setTheme:		setTheme,		// setTheme()
+		setDispMode:	setDispMode,	// setDispMode()
+		setNcalc:		setNcalc,		// setNcalc()
+	};
+	
+})(); // ====================  js036 module end  ====================
+
+
+// event
+const js = js036;
+window.addEventListener('load', js.main );
+
+
+// %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%%
+
+</script>
+
+<style type="text/css">
+    body { text-align:left; color:#000000; background-color:#fff8dd; }
+</style>
+
+</head>
+
+<body>
+<p>[js036] gas expansion - fast smoothed particle hydrodynamics 2D</p>
+<canvas ID="canvas_box" style="background-color: #000000;" width="480" height="480"></canvas>
+<br>
+
+<label>theme: gas expansion</label>
+    <span style="margin-right: 150px;"></span>
+<button onClick="js.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="js.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="js.step()">step</button>
+<br>
+
+<label> disp. mode:</label>
+<select id="slct_dispMode" onChange="js.setDispMode()">
+<option>smooth particle</option><option selected>density</option>
+<option selected>pressure</option><option>temperature</option>
+<option>flow</option>
+</select>
+    <span style="margin-right: 80px;"></span>
+<label>speed(nCalc/frame):</label>
+<select id="slct_nCalc" onChange="js.setNcalc()">
+<option>1</option><option selected>2</option>
+<option>3</option><option>4</option>
+</select>
+<br>
+
+<p id="text_caption" ></p>
+<hr width="480" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+

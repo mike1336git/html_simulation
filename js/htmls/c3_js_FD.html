@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>fluid dynamics</title>
+<meta charset="utf-8">
+<script type="text/javascript">
+
+/*--------------------
+//
+//  fluid dynamics as gallery - Modified JS031_channelMAC2D (MAC2D)
+//    Copyright(C) 2018 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2018.05.8 created, last updated on 2019.10.30
+//    ver 0.0.1  2021.11.09 v1, last updated on 2021.11.09
+//
+//--------------------
+*/
+
+var fluidDynamics = (function(){ //========================  fluidDynamics Module
+
+  var NNx = 80;                // array x-size of field
+  var NNy = 44;                // array y-size of field
+  var sysTime = 0.0;           // system time
+  var dt = 0.01;               // time step // = 0.008;
+  var dx = 1.0/20.0;           // x-division
+  var dy = 1.0/20.0;           // y-division
+  var ReynoldsNumber = 400.0;  // Re for Representative length 1
+  var alphaKK = 3.0;           // Kawamura-Kuwahara scheme alpha
+  var vx0 = 1.0;               // initial flow velosity
+  var referencePressure = 1.0; // reference pressure
+  var omega = 1.70;            // Poisson SOR omega
+  var nIter = 0;               // number of Poisson iteration
+  var pError = 1.0;            // error in Poisson iteration
+  var errorMax = 0.001;        // Maximum Poisson iteration error
+  var status = 'stable';
+  var particleFlag = 1;        // show powder as tracer
+  var fanSW = 0;               // if (fanSW==1) setFan(vx0);
+  var nLen = 6;               // typical length L=nLen*dx
+
+  var xBoxSize = 300;          // in pixel
+  var yBoxSize = 240;          // in pixel
+  var canvas  = null;          // canvas ptr
+  var ctx     = null;          // = canvas.getContext('2d'); 
+  var imageData;
+  var imageScale = 3;
+  var xImageSize = NNx*imageScale;
+  var yImageSize = NNy*imageScale;
+  var xDispPos = 20;
+  var yDispPos = 30;
+
+  var cellKind = dimInt2(NNx,NNy);// kind of cell 0:free space, 1:wall
+  var vx = dim2(NNx,NNy);         // velocity(t) x-component
+  var vy = dim2(NNx,NNy);         // velocity(t) y-component
+  var nvx = dim2(NNx,NNy);        // next velosity(t+dt) x-component
+  var nvy = dim2(NNx,NNy);        // next velosity(t+dt) y-component
+  var source = dim2(NNx,NNy);     // source term
+  var pressure = dim2(NNx,NNy);   // pressure
+
+  var hue = dimInt2(3,361);
+  var hueColor = [];
+  (function() {
+    var deg,x,r,g,b;
+    for (deg=0; deg<361; deg++) {
+      if (deg<60) {
+        x = deg;
+        hue[0][deg] = 255;
+        hue[1][deg] = Math.floor(255.0*x/60.0);
+        hue[2][deg] = 0;
+      } else if (deg<120) {
+        x = deg-60;
+        hue[0][deg] = Math.floor(255.0*(60.0-x)/60.0);
+        hue[1][deg] = 255;
+        hue[2][deg] = 0;
+      } else if (deg<180) {
+        x = deg-120;
+        hue[0][deg] = 0;
+        hue[1][deg] = 255;
+        hue[2][deg] = Math.floor(255.0*x/60.0);
+      } else if (deg<240) {
+        x = deg-180;
+        hue[0][deg] = 0;
+        hue[1][deg] = Math.floor(255.0*(60.0-x)/60.0);
+        hue[2][deg] = 255;
+      } else if (deg<360) {
+        x = deg-240;
+        hue[0][deg] = Math.floor(255.0*x/120.0);
+        hue[1][deg] = 0;
+        hue[2][deg] = Math.floor(255.0*(120.0-x)/120.0);
+      } else {
+        hue[0][deg] = 0; hue[1][deg] = 0; hue[2][deg] = 0;
+      }
+      hueColor[deg] = 'rgb('+hue[0][deg]+','+hue[1][deg]+','+hue[2][deg]+')';
+    }
+  }());
+
+  var n_particle = 300;
+  var x_particle = [];
+  var y_particle = [];
+
+  function dim2(ni,nj) {
+    var a = [];
+    for (var i=0;i<ni;i++) {
+      a[i] = [];
+      for(var j=0;j<nj;j++) {
+        a[i][j] = 0.0;
+      }
+    }
+    return a;
+  }
+
+  function dimInt2(ni,nj) {
+    var a = [];
+    for (var i=0;i<ni;i++) {
+      a[i] = [];
+      for(var j=0;j<nj;j++) {
+        a[i][j] = 0;
+      }
+    }
+    return a;
+  }
+
+  //-------------------- set initial condition
+
+  function setInitialCondition(revL,canvasId) {
+    var i,j;
+    if (canvas==null) setCanvas(canvasId);
+    sysTime = 0.0;
+    status = 'stable';
+    setBoundary();
+    for (i=0; i<NNx; i++) {  
+      for (j=0; j<NNy; j++) {
+        if (cellKind[i][j]==1) continue;
+        pressure[i][j] = referencePressure;
+        vx[i][j] = vx0;
+        vy[i][j] = 0.0;
+      }
+    }
+    ReynoldsNumber = revL;
+    setParticles();
+  }
+
+  function setCanvas(canvasId) {
+    canvas = document.getElementById(canvasId);
+    canvas.width  = xBoxSize
+    canvas.height = yBoxSize
+    ctx = canvas.getContext('2d');
+    ctx.font = "16px 'sans-serif'";
+    ctx.textBaseline = "bottom";
+    ctx.textAlign = "left";
+    ctx.lineWidth = 1;
+    imageData = ctx.getImageData(xDispPos, yDispPos, xImageSize, yImageSize);
+    setImageData();
+  }
+
+  function setImageData() {
+    var i,j,idx, data;
+    data = imageData.data;
+    for (j=0; j<yImageSize; j++) {
+      for (i = 0; i<xImageSize; i++) {
+        idx = (j*xImageSize+i)*4;
+        data[idx] = 240;
+        data[++idx] = 240;
+        data[++idx] = 240;
+        data[++idx] = 255;
+      }
+    }
+  }
+
+  function setBoundary() {
+    var i,j,xpos=Math.floor(NNx/5),ypos=Math.floor(NNy/2),sz=nLen/2;
+    for (i=0; i<NNx; i++) {  
+      for (j=0; j<NNy; j++) {
+        cellKind[i][j] = 0;
+        if ( i>=xpos && i<=xpos+2 && j>=ypos-sz && j<=ypos+sz ) {
+          cellKind[i][j] = 1;
+          pressure[i][j] = referencePressure;
+          vx[i][j] = 0.0;
+          vy[i][j] = 0.0;
+        }
+      }
+    }
+  }
+
+  function setParticles() {
+    for (var i=0; i<n_particle; i++) {
+        x_particle[i] = Math.floor((NNx-2)*Math.random())+1;
+        y_particle[i] = Math.floor((NNy-2)*Math.random())+1;
+    }
+  }
+
+  //-------------------- evolve flow
+
+  function evolveFlow(nCalc,revL) {
+    if (status!='stable') return status;
+    ReynoldsNumber = revL;
+    for (var i=0;i<nCalc;i++) {
+      sysTime = sysTime + dt;
+      setNextVelocity();
+      setFan(vx0);
+      setNextPressure(200);
+      if (pError>0.01) {
+        status = 'unstable';
+        return status;
+      }
+      if (particleFlag==1) moveParticles();
+    }
+    return status;
+  }
+
+  function setNextVelocity() {
+    var i,ip,ipp,im,imm,j,jp,jpp,jm,jmm;
+    var absui,absvi, dpx,d2ux,d2uy,udux,vduy, dpy,d2vx,d2vy,udvx,vdvy;
+
+    for (i=0; i<NNx; i++) {
+      ip = i+1; if (ip>=NNx) ip = 0;
+      ipp = ip+1; if (ipp>=NNx) ipp = 0;
+      im = i-1; if (im<0) im = NNx-1;
+      imm = im-1; if (imm<0) imm = NNx-1;	  
+      for (j=0; j<NNy; j++) {
+        if (cellKind[i][j]==1) continue;
+        jp = j+1; if (jp>=NNy) jp = 0;
+        jpp = jp+1; if (jpp>=NNy) jpp = 0;
+        jm = j-1; if (jm<0) jm = NNy-1;
+        jmm = jm-1; if (jmm<0) jmm = NNy-1;
+
+        absui = vx[i][j]; if (absui<0.0) absui = -absui;
+        absvi = vy[i][j]; if (absvi<0.0) absvi = -absvi;
+
+        dpx = (pressure[ip][j]-pressure[im][j])/(2.0*dx);
+        d2ux = (vx[ip][j]+vx[im][j]-2.0*vx[i][j])/(dx*dx);
+        d2uy = (vx[i][jp]+vx[i][jm]-2.0*vx[i][j])/(dy*dy);
+
+        udux = vx[i][j]*(-vx[ipp][j]+8.0*vx[ip][j]-8.0*vx[im][j]+vx[imm][j])/(12.0*dx) +
+          alphaKK*absui*(vx[ipp][j]-4.0*vx[ip][j]+6*vx[i][j]-4.0*vx[im][j]+vx[imm][j])/(12.0*dx);
+        vduy = vy[i][j]*(-vx[i][jpp]+8.0*vx[i][jp]-8.0*vx[i][jm]+vx[i][jmm])/(12.0*dy) +
+          alphaKK*absvi*(vx[i][jpp]-4.0*vx[i][jp]+6*vx[i][j]-4.0*vx[i][jm]+vx[i][jmm])/(12.0*dy);
+        nvx[i][j] = vx[i][j]+dt*(-udux-vduy-dpx+(d2ux+d2uy)/ReynoldsNumber);
+
+        dpy = (pressure[i][jp]-pressure[i][jm])/(2.0*dy);
+        d2vx = (vy[ip][j]+vy[im][j]-2.0*vy[i][j])/(dx*dx);
+        d2vy = (vy[i][jp]+vy[i][jm]-2.0*vy[i][j])/(dy*dy);
+
+        udvx = vx[i][j]*(-vy[ipp][j]+8.0*vy[ip][j]-8.0*vy[im][j]+vy[imm][j])/(12.0*dx) +
+          alphaKK*absui*(vy[ipp][j]-4.0*vy[ip][j]+6*vy[i][j]-4.0*vy[im][j]+vy[imm][j])/(12.0*dx);
+        vdvy = vy[i][j]*(-vy[i][jpp]+8.0*vy[i][jp]-8.0*vy[i][jm]+vy[i][jmm])/(12.0*dy) +
+          alphaKK*absvi*(vy[i][jpp]-4.0*vy[i][jp]+6*vy[i][j]-4.0*vy[i][jm]+vy[i][jmm])/(12.0*dy);
+        nvy[i][j] = vy[i][j]+dt*(-udvx-vdvy-dpy+(d2vx+d2vy)/ReynoldsNumber);
+      }
+    }
+
+    for (i=0; i<NNx; i++) {  
+      for (j=0; j<NNy; j++) {
+        if (cellKind[i][j]==1) continue;
+        vx[i][j] = nvx[i][j];
+        vy[i][j] = nvy[i][j];
+      }
+    }
+  }
+
+  function setFan(v0) {
+    var i,j;
+    for (j=2; j<NNy-2; j++) {
+      vx[0][j] = v0;
+      vy[0][j] = 0.0;//+0.01*(Math.random()-0.5);
+      vx[1][j] = v0;
+      vy[1][j] = 0.0;//+0.01*(Math.random()-0.5);
+    }
+    for (i=0; i<NNx; i++) {
+      vx[i][0] = v0;
+      vy[i][0] = 0.0;//+0.01*(Math.random()-0.5);
+    }
+  }
+
+  function setNextPressure(iter) {
+    var i,j,ir, pMean;
+    setSource();
+    nIter = iter;
+    for (ir=0; ir<iter; ir++) {
+      pError = poisson(omega);
+      if (pError<errorMax) {
+        nIter = ir;
+        break;
+      }
+    }
+    pMean = meanPressure(); //correction to avoid accumrated pressure error
+    for (i=0; i<NNx; i++) {  
+      for (j=0; j<NNy; j++) {
+        pressure[i][j] += -pMean +referencePressure;
+      }
+    }
+  }
+
+  function setSource() {
+    var i,ip,im,j,jp,jm, dux,dvx,duy,dvy;
+    for (i=0; i<NNx; i++) {
+      ip = (i+1)%NNx;
+      im = (i-1+NNx)%NNx;	  
+      for (j=0; j<NNy; j++) {
+        if (cellKind[i][j]==1) continue;
+        jp = (j+1)%NNy;
+        jm = (j-1+NNy)%NNy;
+
+        dux = (vx[ip][j]-vx[im][j])/(2.0*dx);
+        dvx = (vy[ip][j]-vy[im][j])/(2.0*dx);
+        duy = (vx[i][jp]-vx[i][jm])/(2.0*dy);
+        dvy = (vy[i][jp]-vy[i][jm])/(2.0*dy);
+        source[i][j] = -(dux+dvy)/dt +(dux*dux+2.0*dvx*duy+dvy*dvy);
+      }
+    }
+  }
+
+  function poisson(omg) {
+    var i,ip,im,j,jp,jm,ir,np, dp,absdp,dpmax,p;
+    dpmax = 0.0;
+    for (i=0; i<NNx; i++) {
+      ip = (i+1)%NNx;
+      im = (i-1+NNx)%NNx;	  
+      for (j=0; j<NNy; j++) {
+        jp = (j+1)%NNy;
+        jm = (j-1+NNy)%NNy;
+        if (cellKind[i][j]==0) {
+          dp = 0.25*(pressure[ip][j]+pressure[im][j]+pressure[i][jp]+pressure[i][jm]
+                 -4.0*pressure[i][j]+(dx*dx)*source[i][j]);
+          pressure[i][j] += omg*dp;
+          absdp = dp; if (absdp<0) absdp = -absdp;
+          if (absdp>dpmax) dpmax = absdp;
+        } else {
+          p = 0.0; np = 0;
+          if (cellKind[ip][j]==0) { p += pressure[ip][j]; np++; };
+          if (cellKind[im][j]==0) { p += pressure[im][j]; np++; };
+          if (cellKind[i][jp]==0) { p += pressure[i][jp]; np++; };
+          if (cellKind[i][jm]==0) { p += pressure[i][jm]; np++; };
+          if (np>0) {
+            pressure[i][j] = p/np;
+          } else {
+            pressure[i][j] = referencePressure;
+          }
+        }
+      }
+    }
+    return dpmax;
+  }
+
+  // ---------- move paricles
+
+  function moveParticles() {
+    var i,ix,iy, ta=dt*(1.0/dx);
+    for (i=0; i<n_particle; i++) {
+      ix = Math.floor(x_particle[i]);
+      iy = Math.floor(y_particle[i]);
+      x_particle[i] += vx[ix][iy]*ta;
+      y_particle[i] += vy[ix][iy]*ta;
+      if (x_particle[i]>NNx*dx) x_particle[i] -= NNx;
+      if (x_particle[i]<0) x_particle[i] += NNx;
+      if (y_particle[i]>NNy*dy) y_particle[i] -= NNy;
+      if (y_particle[i]<0) y_particle[i] += NNy;
+      if (cellKind[ix][iy]==1 || iy==0) {
+        x_particle[i] = 0.0;
+        y_particle[i] = Math.floor((NNy-2)*Math.random())+1;
+      }
+    }
+  }
+
+  //-------------------- utility
+
+  function meanPressure() {
+    var i,j,n, s;
+    s = 0.0; n = 0;
+    for (i=0; i<NNx; i++) {
+      for (j=0; j<NNy; j++) {
+        if (cellKind[i][j]==0) {
+          s += pressure[i][j];
+          n += 1;
+        }
+      }
+    }
+    return s/n;
+  }
+
+  function vorticity(i, j) {
+    if (i==0 || i==NNx-1 || j==0 || j==NNy-1) return 0.0;
+    return (vy[i+1][j]-vy[i-1][j])/(2*dx)-(vx[i][j+1]-vx[i][j-1])/(2*dy);
+  }
+
+  //--------------------  draw
+
+  function draw(drawMode,dispAdd) { // drawMode 0:wall 1:pressure 2:volticity 3:flowSpeed
+    var xp=xDispPos,yp=yDispPos,sc=imageScale;
+    ctx.clearRect(0, 0, canvas.width, canvas.height); // clear
+    ctx.strokeStyle = "rgb(80, 80, 80)"; // box
+    //ctx.strokeRect(xp-1,yp-1,NNx*sc+2,NNy*sc+2);
+    if (drawMode==0) { // drawMode 0:wall 1:pressure 2:volticity 3:flowSpeed
+      drawWall(xp,yp);
+    } else if (drawMode==1) { // pressure
+      drawField(0,xp,yp);
+    } else if (drawMode==2) {
+      drawField(1,xp,yp); //1:field=vorticity
+    } else if (drawMode==3) {
+      drawField(2,xp,yp); //2:field=speed
+    }
+    particleFlag = 0;
+    if (dispAdd==1) { // dispAdd: 0:none 1:flowLine 2:powder
+      drawFlow(xp,yp,sc);
+    } else if (dispAdd==2) {
+      particleFlag = 1; drawParticles(xp,yp,sc);
+    }
+    ctx.fillStyle = "rgb(80, 80, 80)"; // text
+    ctx.fillText("time = "+sysTime.toFixed(2), xp, yBoxSize-45);
+    ctx.fillText("Re = "+(ReynoldsNumber*nLen*dx).toFixed()+" (L="+(nLen*dx).toFixed(1)+")",
+      150, yBoxSize-45);
+    ctx.fillText("Poison iteration = "+nIter, xp, yBoxSize-25);
+  }
+
+  function drawFlow(xp,yp,sc) {
+    var i,j,mag=15, x,y, color;
+    ctx.lineWidth = 1;
+    for(i=0; i<NNx; i+=2) {
+      for(j=0; j<NNy; j+=2) {
+        if (cellKind[i][j]==0) {
+          color = (vx[i][j]>=0) ? "rgb(0,0,250)" : "rgb(180,0,180)";
+          x = (i+0.5)*sc; y = (j+0.5)*sc;
+          drawLine(xp+x,yp+y,xp+x+vx[i][j]*mag,yp+y+vy[i][j]*mag,color);
+        }
+      }
+    }
+  }
+
+  function drawField(FieldMode,xp,yp) {
+    var i,j,colIndex, deg,aSize=imageScale;
+    for (i=0; i<NNx; i++) {
+      for (j=0; j<NNy; j++) {
+        if (FieldMode==0) { // pressure
+          deg = Math.floor(120*(pressure[i][j]-referencePressure));
+        } else if (FieldMode==1) { // vorticity
+          deg = Math.floor(20*vorticity(i,j));
+        } else if (FieldMode==2) { // speed
+          deg = Math.floor(100*(Math.sqrt(vx[i][j]*vx[i][j]+vy[i][j]*vy[i][j])-vx0));
+        }
+        if (deg<-150) deg = -150;
+        if (deg>150) deg = 150;
+        colIndex = ((120-deg)+360)%360;
+        if (cellKind[i][j]==1) colIndex = 360;
+        setSquare(i*aSize,j*aSize,aSize,colIndex);
+      }
+    }
+    ctx.putImageData(imageData, xp, yp);
+  }
+
+  function drawWall(xp,yp) {
+    var i,j, aSize=imageScale;
+    setImageData(); // fill color rgb(240,240,240)
+    for(i=0; i<NNx; i++) {
+      for(j=0; j<NNy; j++) {
+        if (cellKind[i][j]==1) setSquare(i*aSize,j*aSize,aSize,360);
+      }
+    }
+    ctx.putImageData(imageData, xp, yp);
+  }
+
+  function setSquare(ix,iy,aSize,colIndex) {
+    var pi,pj,idx, xSize=xImageSize;
+    for (pj=iy; pj<iy+aSize; pj++) {
+      for (pi=ix; pi<ix+aSize; pi++) {
+        idx = (pj*xSize+pi)*4;
+        imageData.data[idx] = hue[0][colIndex];
+        imageData.data[idx+1] = hue[1][colIndex];
+        imageData.data[idx+2] = hue[2][colIndex];
+      }
+    }
+  }
+
+  function drawParticles(xp,yp,sc) {
+    var i,ix,iy;
+    ctx.fillStyle = "#ff80ff";
+    for (i=1; i<n_particle; i++) {
+      ix = Math.round(x_particle[i]*sc); iy = Math.round(y_particle[i]*sc);
+      ctx.fillRect(xp+ix,yp+iy,2,2);
+    }
+  }
+
+  function drawLine(x1, y1, x2, y2, color) {
+    ctx.strokeStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+
+  //--------------------  public
+
+  return {
+    init: setInitialCondition, // setInitialCondition(reFor1,canvasId)
+    evolve: evolveFlow,        // evolveFlow(nCalc)
+    draw: draw,                // draw(drawMode)
+  }
+
+})(); //=============================================  end of fluidDynamics Module
+
+
+  var timerID = -1;        // interval timer ID
+  var busyFlag = 0;        // if busyFlag==0, exec evolve(),draw() 
+  var sleepCount = 0;      // use onTimerExec
+  var sleepCountMax = 4;   // set in setSpeed()
+  var resetFlag = 0;       //
+  var pauseFlag = 0;       // if pauseFlag=0, evolve()  : pause/go button
+  var dispMode = 2;        // 0:wall 1:pressure 2:volticity 3:flowSpeed
+  var dispAdd = 2;         // 0:none 1:flowLine 2:powder
+  var revL = 200;          // Re for Representative length 1
+
+  //--------------------  onLoadstart()
+
+  function onLoadStart() {
+    resetFlag = 1;
+    timerID = setInterval('onTimerExec()', 10);
+  }
+
+  //--------------------  onTimerExec
+
+  function onTimerExec() {
+    if (sleepCount>0) {
+      sleepCount--;
+    }
+    if (busyFlag==0 && sleepCount==0) { 
+      busyFlag = 1;
+      if (resetFlag==1) {
+        resetFlag = 0;
+        fluidDynamics.init(revL,'canvas_box');
+      }
+      if (pauseFlag==0) fluidDynamics.evolve(2,revL);
+      fluidDynamics.draw(dispMode,dispAdd);
+      sleepCount = sleepCountMax;
+      busyFlag = 0;
+    }
+  }
+
+  //--------------------  end of javaScript
+
+</script>
+<style type="text/css"><!--
+body { color:#000000; background-color:#fff8dd;}
+--></style>
+</head>
+
+<body class="white" style="text-align: left" onLoad="onLoadStart()">
+<p>Fluid Dynamics</p>
+<canvas ID="canvas_box" style="background-color: #f0f0f0;" width="300" height="240">
+</canvas>
+<br>
+
+
+
+<p>
+ - Real corded Lattice Gas Model (RLG)<br>
+(009) <a href="../js001_010/js009_expansionRLG2Dv3a.html">expansion RLG2D</a>
+ gas expansion to free space<br>
+(045) <a href="../js041_050/js045_gravityRLG2Dv3a.html">gravity RLG2D</a>
+ <br>
+(046) <a href="../js041_050/js046_vortexRLG2Dv3a.html">vortex RLG2D</a>
+ <br>
+(047) <a href="../js041_050/js047_shearFlowRLG2Dv3a.html">shear flow RLG2D</a>
+ <br>
+(048) <a href="../js041_050/js048_windTunnelRLG2Dv3a.html">wind tunnel RLG2D</a>
+ <br>
+</p>
+
+<p>
+ - Finite Difference Method<br>
+<span style="margin-right: 20px;"></span>
+ Marker And Cell Method (MAC)<br>
+(029) <a href="../js021_030/js029_shearFlowMAC2Dv3a.html">shear flow MAC2D</a>
+ <br>
+(031) <a href="../js031_040/js031_channelMAC2Dv3a.html">channel MAC2D</a>
+ channel flow<br>
+(089) <a href="../js081_090/js089_waterFlowMAC2Dv3a.html">water flow</a>
+ shear water flow<br>
+(090) <a href="../js081_090/js090_turbelenceMAC2Dv3a.html">turbelence</a>
+ high Re<br>
+(102) <a href="../js101_110/js102_birdsEyeViewMAC2Dv3a.html">birds-eye view MAC2D</a>
+ <br>
+</p>
+
+<p>
+ - Smoothed Particle Hydrodynamics (SPH)<br>
+(035) <a href="../js031_040/js035_gasSPH2Dv3a.html">gas SPH2D</a>
+ gas expansion<br>
+(036) <a href="../js031_040/js036_fastGasSPH2Dv3a.html">fast gas SPH2D</a>
+ fast(booking) gas expansion<br>
+(037) <a href="../js031_040/js037_viscositySPH2Dv3a.html">viscosity SPH2D</a>
+ introducing viscosity<br>
+(038) <a href="../js031_040/js038_airAndWoodSPH2Dv3a.html">air and wood SPH2D</a>
+ gas + elastic body<br>
+(039) <a href="../js031_040/js039_waterSPH2Dv3a.html">water SPH2D</a>
+ liquid<br>
+(040) <a href="../js031_040/js040_drainageSPH2Dv3a.html">drainage SPH2D</a>
+ drainage: water + wood + fixed wood<br>
+(041) <a href="../js041_050/js041_windTunnelSPH2Dv3a.html">wind tunnel SPH2D</a>
+ <br>
+</p>
+
+<p>
+ - Lattice Boltzmann Method (LBM)<br>
+(076) <a href="../js071_080/js076_airFlowsLB2D9Vv3a.html">air flows LB2D9V</a>
+ 2D9V model<br>
+(077) <a href="../js071_080/js077_airFlowsLBD2Q9v3a.html">air flows LBD2Q9</a>
+ D2Q9 model<br>
+(078) <a href="../js071_080/js078_windTunnelLBD2Q9v3a.html">wind tunnel LBD2Q9</a>
+ D2Q9 model<br>
+(079) <a href="../js071_080/js079_gravityLBD2Q9v3a.html">gravity LBD2Q9</a>
+ D2Q9 model<br>
+(080) <a href="../js071_080/js080_phaseSeparationLBD2Q9v3a.html">phase separation LBD2Q9</a>
+ D2Q9 model<br>
+(081) <a href="../js081_090/js081_surfacesLBD2Q9v3a.html">surface LBM</a>
+ D2Q9 model, gas-liquid surface<br>
+<br>
+(104) <a href="../js101_110/js104_airFlowLB3D19Vv3a.html">air flow LB3D19V</a>
+ 3D 19-velocity model<br>
+(105) <a href="../js101_110/js105_airFlowLB3D15Vv3a.html">air flow LB3D15V</a>
+ 3D 15-velocity model<br>
+(106) <a href="../js101_110/js106_airFlowLB3D27Vv3a.html">air flow LB3D27V</a>
+ 3D 27-velocity model<br>
+</p>
+
+<p>
+ - Direct Simulation Monte-Carlo Method (DSMC)<br>
+(088) <a href="../js081_090/js088_jetDSMC2Dv3a.html">jet stream</a>
+ expand to free space<br>
+</p>
+
+<br>
+<p>
+<a href="../../index.html">top page</a><br>
+</p>
+
+<hr>
+<p>
+Copyright(C) 2023 Mitsuru Ikeuchi<br>
+Released under the <a href="https://opensource.org/licenses/MIT">MIT license</a>
+ (Open Source)
+</p>
+
+(created 2023.08.09, last updated 2023.09.18)<br>
+</body>
+</html>
+

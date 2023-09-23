@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>molecules in the box</title>
+<meta charset="utf-8">
+<script type="text/javascript">
+
+/*--------------------
+//
+//  molecules in the box  as gallery - Modified JS001_ArMD2D
+//    Copyright(C) 2018 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT )
+//
+//    ver 0.0.0  2018.05.12 created, last updated on 2020.12.15
+//    ver 0.0.1  2021.11.09 v1, last updated on 2021.11.09
+//
+//--------------------
+*/
+
+//"use strict";
+
+var ArMD2D = (function(){ //========================  ArMD2D Module 
+
+  const kB = 1.380662e-23;   // (J/K) Boltzman's constant
+  const nMax = 300;          // array max
+
+  var nMolec = 30;           // number of particles
+  var sysTime = 0.0;         // (s) system time
+  var dt = 10.0*1.0e-15;     // (s) time step
+  var xMax = 6.0E-9;         // (m) x-Box size
+  var yMax = 6.0E-9;         // (m) y-Box size
+  var mass = 39.95*1.67e-27; // (kg) mass of Ar
+  var sigma = 3.418e-10;     // (m) Lennard-Jones potential sigma for Ar 
+  var epsilon = 1.711e-21;   // (J) Lennard-Jones potential epsilon FOR Ar
+  var kineticEnergy = 0.0;   // (J)
+  var potentialEnergy = 0.0; // (J)
+
+  var xBoxSize = 240;        // in pixel
+  var yBoxSize = 240;        // in pixel
+  var yTextSize = 30;        // in pixel
+  var canvas  = null;        // canvas ptr
+  var ctx     = null;        // ctx = canvas.getContext('2d')
+
+  var xx = dim1(nMax);       // particle position x-component
+  var yy = dim1(nMax);       // particle position y-component
+  var vx = dim1(nMax);       // particle velocity x-component
+  var vy = dim1(nMax);       // particle velocity y-component
+  var ffx = dim1(nMax);      // total force applied the particle x-component
+  var ffy = dim1(nMax);      // total force applied the particle y-component
+
+  function dim1(n) {
+    var a = [];
+    for (var i=0; i<n; i++) {
+      a[i] = 0.0;
+    }
+    return a;
+  }
+
+  //-------------------- set initial molec
+
+  function setInitialCondition(nn,BoxSizeInNM,contTemp,canvasId) {
+    if (canvas==null) setCanvas(canvasId);
+    sysTime = 0.0;
+    nMolec = nn;
+    xMax = BoxSizeInNM*1.0e-9;
+    yMax = BoxSizeInNM*1.0e-9;
+    setParticles(nn);
+    ajustVelocity(contTemp);
+  }
+
+  function setCanvas(canvasId) {
+    canvas = document.getElementById(canvasId);
+    canvas.width  = xBoxSize;
+    canvas.height = yBoxSize+yTextSize;
+    ctx = canvas.getContext('2d');
+    ctx.font = "16px 'sans-serif'";
+    ctx.textBaseline = "bottom";
+    ctx.textAlign = "left";
+  }
+
+  function setParticles(nn) {
+    var i,j,loopCount;
+    nMolec = nn;
+    for (j=1; j<=nn; j++) {
+      loopCount = 0;
+      do {
+        xx[j] = (xMax-2*sigma)*Math.random() + sigma;
+        yy[j] = (yMax-2*sigma)*Math.random() + sigma;
+        for (i=1; i<=j-1; i++) {
+          if ((xx[i]-xx[j])*(xx[i]-xx[j])+(yy[i]-yy[j])*(yy[i]-yy[j]) < 2*sigma*sigma) break;
+        }
+        loopCount = loopCount + 1;
+        if (loopCount>1000) break;
+      } while (i<j);
+      if (loopCount>1000) {
+         nMolec = j - 1;
+         break;
+      }
+    }
+    for (i=1; i<=nMolec; i++) {
+      vx[i] = 200.0*(Math.random()+Math.random()+Math.random()+Math.random()
+                +Math.random()+Math.random()-3.0);
+      vy[i] = 200.0*(Math.random()+Math.random()+Math.random()+Math.random()
+                +Math.random()+Math.random()-3.0);
+      ffx[i] = 0.0;
+      ffy[i] = 0.0;
+    }
+  }
+
+  //-------------------- move particles
+
+  function timeEvolution() {
+    var i;
+    for (i=1; i<=20; i++) {
+      sysTime += dt;
+      moveParticles();
+    }
+  }
+
+  function moveParticles() {
+    var i, a;
+    a = 0.5*dt/mass;
+    for (i=1; i<=nMolec; i++) {
+      vx[i] += a*ffx[i];
+      vy[i] += a*ffy[i];
+      xx[i] += vx[i]*dt;
+      yy[i] += vy[i]*dt;
+    }
+    calcForce();
+    for (i=1; i<=nMolec; i++) {
+      vx[i] += a*ffx[i];
+      vy[i] += a*ffy[i];
+    }
+    kineticEnergy = 0.0;
+    for (i=1; i<=nMolec; i++) {
+      kineticEnergy += 0.5*mass*(vx[i]*vx[i]+vy[i]*vy[i]);
+    }
+  }
+
+  function calcForce() {
+    var i,j, s05,xij,yij,r,f,fxij,fyij,ri,r6;
+    s05 = 0.5*sigma;
+    potentialEnergy = 0.0;
+    for(i=1; i<=nMolec; i++) {
+      ffx[i]=0; ffy[i]=0;
+    }
+    for(i=1; i<nMolec; i++) {
+      for(j=i+1; j<=nMolec; j++) {
+        xij=xx[i]-xx[j]; yij=yy[i]-yy[j];
+        r = Math.sqrt(xij*xij+yij*yij);
+        ri = (sigma/r);
+        r6 =ri*ri*ri*ri*ri*ri;
+        potentialEnergy += 4.0*epsilon*r6*(r6-1.0); // V(r) = 4.0*epsilon*((sigma/r)^12-(sigma/r)^6)
+        f = 24.0*epsilon*r6*(2.0*r6-1.0)/r; // F(r) = 24.0*epsilon*r6*(2.0*r6-1.0)/r, r6=(sigma/r)^6
+        fxij = f*xij/r;
+        fyij = f*yij/r;
+        ffx[i] += fxij;
+        ffy[i] += fyij;
+        ffx[j] -= fxij;
+        ffy[j] -= fyij;
+      }
+    }
+    for(i=1; i<=nMolec; i++) {
+      ffx[i] += boundaryForce(xx[i]+s05)+boundaryForce(xx[i]-xMax-s05);
+      ffy[i] += boundaryForce(yy[i]+s05)+boundaryForce(yy[i]-yMax-s05);
+    }
+  }
+
+  function boundaryForce(r) { // boundary:L-J type; epsilon = 0.5*epsilonOfAr, sigma = sigmaOfAr
+    var ri,r6;
+    ri = (sigma/r);
+    r6 =ri*ri*ri*ri*ri*ri;
+    potentialEnergy += 4.0*0.5*epsilon*r6*(r6-1.0);
+    return (24.0*0.5*epsilon*r6*(2.0*r6-1.0)/r);
+  }
+
+  //-------------------- utility
+
+  function systemTemperature() {
+    var i, ek= 0.0; //kinetic energy (J)
+    for (i=1; i<=nMolec; i++) {
+      ek = ek + 0.5*mass*(vx[i]*vx[i]+vy[i]*vy[i]);
+    }
+    return ek/(nMolec*kB);
+  }
+
+  function ajustVelocity(temp) {
+    var i, r;
+    r = Math.sqrt(temp/systemTemperature());
+    for (i=1; i<=nMolec; i++) {
+      vx[i] = r*vx[i];
+      vy[i] = r*vy[i];
+    }
+  }
+
+  //--------------------  draw
+
+  function draw() {
+    ctx.clearRect(0, 0, xBoxSize, yBoxSize);
+    drawBalls();
+    // caption
+    ctx.fillStyle = "rgb(240,240,240)"; //text background color
+    ctx.fillRect(0, yBoxSize,xBoxSize, yTextSize); //clear text area
+    ctx.fillStyle = "rgb(80, 80, 80)";
+    ctx.fillText("time = "+(sysTime*1.0e12).toFixed(1)+" (ps)", 10, yBoxSize+24);
+  }
+
+  function drawBalls() {
+    var i, sc;
+    sc = xBoxSize/xMax;
+    ctx.fillStyle = "rgb(0, 250, 0)";
+    for(i=1; i<=nMolec; i++) {
+      ctx.beginPath();
+      ctx.arc(xx[i]*sc, yy[i]*sc, sigma*sc*0.5, 0, 2*Math.PI, false);
+      ctx.fill();
+    }
+  }
+
+  //--------------------  public
+
+  return {
+    init: setInitialCondition, // setInitialCondition(nn,BoxSizeInNM,contTemp,canvasId)
+    evolve: timeEvolution,     // timeEvolution()
+    draw: draw                 // draw()
+  }
+
+})(); //=============================================  end of ArMD2D Module
+
+
+var timerID = -1;          // interval timer ID
+var busyFlag = 0;          // if busyFlag==0, exec evolve(),draw() 
+var pauseFlag = 0;         // if pauseFlag==0, ArMD2D.evolve()
+
+// onLoadstart()
+
+function onLoadStart() {
+  ArMD2D.init(30,5.0,300.0,'canvas_box');  //(nn,BoxSizeInNM,contTemp,canvasId)
+  timerID = setInterval('onTimerExec()', 20); // 50fps
+}
+
+// onTimerExec
+
+function onTimerExec() {
+  if (busyFlag==0) { 
+    busyFlag = 1;
+    if (pauseFlag==0) ArMD2D.evolve();
+    ArMD2D.draw();
+    busyFlag = 0;
+  }
+}
+  
+//--------------------  end of javaScript
+
+</script>
+<style type="text/css"><!--
+body { color:#000000; background-color:#fff8dd;}
+--></style>
+</head>
+
+<body class="white" style="text-align: left" onLoad="onLoadStart()">
+<p>molecules in the box -- top</p>
+<p>
+ - collection of visual simulation code<br>
+</p>
+<hr>
+
+<canvas ID="canvas_box" style="background-color: #a0a0a0;" width="240" height="270">
+</canvas>
+<br>
+
+<p>
+classification by field<br>
+ - Molecular Dynamics: <a href="c1_js_MD.html">MD</a> <br>
+ - Quantum Mechanics: <a href="c2_js_QM.html">QM</a> <br>
+ - Fluid Dynamics: <a href="c3_js_FD.html">FD</a> <br>
+ - Miscellenius: <a href="c4_js_misc.html">M</a> <br>
+</p>
+
+<p>
+number index<br>
+page <a href="js01.html">01</a>, index 001-010<br>
+page <a href="js02.html">02</a>, index 011-020<br>
+page <a href="js03.html">03</a>, index 021-030<br>
+page <a href="js04.html">04</a>, index 031-040<br>
+page <a href="js05.html">05</a>, index 041-050<br>
+page <a href="js06.html">06</a>, index 051-060<br>
+page <a href="js07.html">07</a>, index 061-070<br>
+page <a href="js08.html">08</a>, index 071-080<br>
+page <a href="js09.html">09</a>, index 081-090<br>
+page <a href="js10.html">10</a>, index 091-100<br>
+</p>
+
+<p>
+page <a href="js11.html">11</a>, index 101-110<br>
+page <a href="js12.html">12</a>, index 111-120<br>
+
+</p>
+
+<br>
+<p>
+<a href="../../index.html">top page</a><br>
+</p>
+
+<br>
+<p>
+molecules in the box<a href="https://mike1336.web.fc2.com/">
+top</a> ( move to fc2 homepage ) <br>
+</p>
+
+<hr>
+<p>
+Copyright(C) 2023 Mitsuru Ikeuchi<br>
+Released under the <a href="https://opensource.org/licenses/MIT">MIT license</a>
+ (Open Source)
+</p>
+
+(created 2023.08.09, last updated 2023.09.18)<br>
+</body>
+</html>
+

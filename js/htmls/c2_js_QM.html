@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>quantum mechanics</title>
+<meta charset="utf-8">
+<script type="text/javascript">
+
+/*--------------------
+//
+//  quantum mechanics as gallery - Modified JS002_wavePacketQED1D
+//    Copyright(C) 2018 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2018.05.11 created, last updated on 2019.10.30
+//    ver 0.0.1  2021.11.09 v1, last updated on 2021.11.09
+//
+//--------------------
+*/
+
+//"use strict";
+
+var wavePacketQED1D = (function(){ //========================  wavePacketQED1D Module 
+
+  const auLength = 5.29177e-11 // (m) 1(au) = auLength (m)
+  const auTime = 2.41888e-17   // (s) 1(au) = auTime (s)
+  const auEnergy = 4.38975e-18 // (J) 1(au) = auEnergy (J)
+  const au2eV = 27.2114        // (eV) 1(au) = 27.2114 (eV)
+
+  var NNx = 300;             // number of space division
+  var sysTime = 0.0;         // (au) system time in the module
+  var dx = 0.5;              // (au) space division 
+  var dt = 0.5*dx*dx;        // (au) time step
+
+  var xCanvasSize = 300;
+  var yCanvasSize = 240;
+  var canvas  = null;        // canvas ptr
+  var ctx     = null;        // context ptr
+
+  var phRe = dim1(NNx);      // real part of wave function
+  var phIm = dim1(NNx);      // imaginary part of wave function
+  var vv = dim1(NNx);        // external potential
+  var bRe = dim1(NNx);       // real part of b vector (b,u: see avove QED1D document)
+  var bIm = dim1(NNx);       // imaginary part of b vector
+  var uRe = dim1(NNx);       // real part of u vector
+  var uIm = dim1(NNx);       // imaginary part of u vector
+
+  function dim1(n) {
+    var a = [];
+    for (var i=0; i<n; i++) {
+      a[i] = 0.0;
+    }
+    return a;
+  }
+
+  //-------------------- set initial condition
+
+  function setInitialCondition(canvasId) {
+    if (canvas==null) setCanvas(canvasId);
+    sysTime = 0.0;
+    setWave(40.0, 7.5, 0.0);
+    setPotential(0.5*NNx*dx,0.0001);
+  }
+
+  function setCanvas(canvasId) {
+    canvas = document.getElementById(canvasId);
+    canvas.width  = xCanvasSize;
+    canvas.height = yCanvasSize;
+    ctx = canvas.getContext('2d');
+    ctx.font = "16px 'sans-serif'";
+    ctx.textBaseline = "bottom";
+    ctx.textAlign = "left";
+    ctx.lineWidth = 1;
+  }
+
+  function setPotential(x0,k) {
+    var i, x;
+    for (i=0;i<NNx;i++) {
+      x = i*dx;
+      vv[i] = k*(x-x0)*(x-x0);
+    }
+  }
+
+  function setWave(wavePos, waveWidth, momentum) {
+    var i, a,x,phAb,phPh;
+    a = Math.pow(2.0*Math.PI*waveWidth*waveWidth,-0.25);
+    for (i=1;i<NNx-1;i++) {
+      x = i*dx;
+      phAb = a*Math.exp(-((x-wavePos)/(2.0*waveWidth))*((x-wavePos)/(2.0*waveWidth)));
+      phPh = momentum*x;
+      phRe[i] = phAb*Math.cos(phPh);
+      phIm[i] = phAb*Math.sin(phPh);
+    }
+    phRe[0] = 0.0;
+    phIm[0] = 0.0;
+    phRe[NNx-1] = 0.0;
+    phIm[NNx-1] = 0.0;
+
+    a = Math.sqrt(norm());
+    for (i=1;i<NNx-1;i++) {
+      phRe[i] = phRe[i]/a;
+      phIm[i] = phIm[i]/a;
+    }
+  }
+
+  //-------------------- timeEvolution
+
+ function timeEvolution() {
+    var i;
+    for (i=0; i<20; i++) {
+      sysTime = sysTime + dt;
+      phaseStep();
+      kxStep();
+      phaseStep();
+    }
+  }
+
+  function kxStep() { //evolve dt
+    var i, bbRe,bbIm,aaRe,aaIm,aaAb,auAb;
+    bbRe = 2.0;
+    bbIm = 4*dx*dx/dt;
+    aaRe = -2.0;
+    aaIm = 4*dx*dx/dt;
+    aaAb = aaRe*aaRe+aaIm*aaIm;
+
+    for (i=1; i<NNx-1; i++) { //b-vector
+      bRe[i] = bbRe*phRe[i]-bbIm*phIm[i] - phRe[i+1] - phRe[i-1];
+      bIm[i] = bbRe*phIm[i]+bbIm*phRe[i] - phIm[i+1] - phIm[i-1];
+    }
+
+    uRe[1] = aaRe/aaAb; //ph(1)
+    uIm[1] = -aaIm/aaAb;
+    phRe[1] = bRe[1]*uRe[1] - bIm[1]*uIm[1];
+    phIm[1] = bIm[1]*uRe[1] + bRe[1]*uIm[1];
+
+    for (i=2; i<NNx-1; i++) { //forward elimination
+      auAb = (aaRe-uRe[i-1])*(aaRe-uRe[i-1])+(aaIm-uIm[i-1])*(aaIm-uIm[i-1]);
+      uRe[i] = (aaRe-uRe[i-1])/auAb;
+      uIm[i] = -(aaIm-uIm[i-1])/auAb;
+      phRe[i] = (bRe[i]-phRe[i-1])*uRe[i] - (bIm[i]-phIm[i-1])*uIm[i];
+      phIm[i] = (bRe[i]-phRe[i-1])*uIm[i] + (bIm[i]-phIm[i-1])*uRe[i];
+    }
+
+    for (i=NNx-3; i>=1; i--) { //backward substitution
+      phRe[i] -= phRe[i+1]*uRe[i] - phIm[i+1]*uIm[i];
+      phIm[i] -= phRe[i+1]*uIm[i] + phIm[i+1]*uRe[i];
+    }
+  }
+
+  function phaseStep() { //evolve 0.5*dt
+    var i, th,cs,sn,phr,phi;
+    for (i=1; i<NNx-1; i++) {
+      th = 0.5*dt*vv[i];
+      cs = Math.cos(th); sn = Math.sin(th);
+      phr = phRe[i];
+      phi = phIm[i];
+      phRe[i] =  cs*phr+sn*phi;
+      phIm[i] = -sn*phr+cs*phi;
+    }
+  }
+
+  //--------------------  utility
+
+  function norm() {
+    var i, p = 0.0;
+    for (i=0; i<NNx; i++) {
+      p += (phRe[i]*phRe[i]+phIm[i]*phIm[i])*dx;
+    }
+    return p;
+  }
+
+  function energy() {
+    return kineticEnergy()+potentialEnergy();
+  }
+
+  function kineticEnergy() { // (psi(x)|-d^2/dx^2|psi(x))
+    var i, s,hphRe,hphIm;
+    s = 0.0;
+    for (i=1; i<NNx-1; i++) {
+      hphRe = (2.0*phRe[i]-phRe[i+1]-phRe[i-1])/(2.0*dx*dx);
+      hphIm = (2.0*phIm[i]-phIm[i+1]-phIm[i-1])/(2.0*dx*dx);
+      s += (phRe[i]*hphRe + phIm[i]*hphIm)*dx;
+    }
+    return s;
+  }
+
+  function potentialEnergy() { // (psi(x)|V(x)|psi(x))
+    var i, s,hphRe,hphIm;
+    s = 0.0;
+    for (i=1; i<NNx-1; i++) {
+      s += vv[i]*(phRe[i]*phRe[i] + phIm[i]*phIm[i])*dx;
+    }
+    return s;
+  }
+
+  //--------------------  draw
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawV(0,160,100);
+    drawPsi2(0,160,100,2000);
+    ctx.fillStyle = "rgb(240,240,240)"; //background color
+
+    ctx.fillStyle = "rgb(80, 80, 80)";
+    ctx.fillText("time = "+(sysTime*auTime*1.0e15).toFixed(2)+"(fs)", 10, yCanvasSize-45);
+    ctx.fillText("norm = "+norm().toFixed(15), 10, yCanvasSize-25);
+    ctx.fillText("x = 0.0 ... "+(NNx*dx*auLength*1.0e9).toFixed(2)+"(nm)", 10, yCanvasSize-5);
+  }
+
+  function drawPsi2(xp,yp,vmag,pmag) {
+    var i, p2;
+    for (i=1; i<NNx-1; i++) {
+      p2 = (phRe[i]*phRe[i] + phIm[i]*phIm[i])*dx;
+      if (p2*pmag>1) {
+        drawLine(i+xp,yp-vv[i]*vmag-1, i+xp, yp-vv[i]*vmag-p2*pmag, "rgb(0,200,200)");
+      }
+    }
+  }
+
+  function drawV(xp,yp,vmag) {
+    var i;
+    ctx.strokeStyle = "rgb(0,250,0)";
+    ctx.beginPath();
+    ctx.moveTo(xp, yp-vv[0]*vmag);
+    for (i=1; i<NNx-1; i++) {
+      ctx.lineTo(i+xp,yp-vv[i]*vmag);
+    }
+    ctx.stroke();
+  }
+
+  function drawLine(x1, y1, x2, y2, color) {
+    ctx.strokeStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+
+  //--------------------  public
+
+  return {
+    init: setInitialCondition, // setInitialCondition(canvasId)
+    evolve: timeEvolution,     // timeEvolution()
+    draw: draw                 // draw()
+  }
+
+})(); //=============================================  end of wavePacketQED1D Module
+
+
+  var pauseFlag = 0;       // if pauseFlag=0, timeEvolution()  : pause Button
+  var busyFlag = 0;        // if busyFlag==0, exec evolve(),draw() 
+  var resetFlag = 0;
+  var timerID = -1;        // interval timer ID
+
+  // onLoadstart()
+
+  function onLoadStart() {
+    wavePacketQED1D.init('canvas_box');
+    timerID = setInterval('onTimerExec()', 40);
+  }
+
+  // onTimerExec
+
+  function onTimerExec() {
+    if (busyFlag==0) { 
+      busyFlag = 1;
+      if (resetFlag==1) {
+        resetFlag = 0;
+        pauseFlag = 0;
+        wavePacketQED1D.init('canvas_box');
+      }
+      if (pauseFlag==0) wavePacketQED1D.evolve();
+      wavePacketQED1D.draw();
+      busyFlag = 0;
+    }
+  }
+
+  //--------------------  end of javaScript
+
+</script>
+<style type="text/css"><!--
+body { color:#000000; background-color:#fff8dd;}
+--></style>
+</head>
+
+<body class="white" style="text-align: left" onLoad="onLoadStart()">
+<p>Quantum Mechanics</p>
+<canvas ID="canvas_box" style="background-color: #b8b8b8;" WIDTH="300" HEIGHT="240">
+</canvas>
+<br>
+
+<p>
+ - Quantum Electron Dynamics<br>
+<span style="margin-right: 20px;"></span>
+ solve time dependent Schrodinger equation<br>
+(002) <a href="../js001_010/js002_wavePacketQED1Dv3a.html">wave packet QED1D</a>
+ in harmonic potential 1D<br>
+(005) <a href="../js001_010/js005_wavePacketQED2Dv3a.html">wave packet QED2D</a>
+ in harmonic potential 2D<br>
+(093) <a href="../js091_100/js093_electronQED3Dv3a.html">electron QED3D</a>
+ in harmonic potential 3D<br>
+(107) <a href="../js101_110/js107_RabiOscillationQED3Dv3a.html">Rabi Oscillation QED3D</a>
+ Rabi Oscillation - a case of H atom<br>
+</p>
+
+<p>
+<span style="margin-right: 20px;"></span>
+ solve time dependent Schrodinger equation - periodic, explecit method<br>
+(109) <a href="../js101_110/js109_electronPQM1Dv3a.html">electron Periodic QM1D</a>
+ electron - Periodic condition<br>
+(110) <a href="../js101_110/js110_electronPQM2Dv3a.html">electron Periodic QM2D</a>
+ electron - Periodic condition<br>
+(111) <a href="../js111_120/js111_electronPQM3Dv3a.html">electron Periodic QM3D</a>
+ electron - Periodic condition<br>
+</p>
+
+<p>
+ - Steepest Descent Method<br>
+<span style="margin-right: 20px;"></span>
+ solve time independent Schrodinger equation<br>
+(008) <a href="../js001_010/js008_harmonicsSD1Dv3a.html">harmonics SD1D</a>
+ <br>
+(011) <a href="../js011_020/js011_harmonicsSD2Dv3a.html">harmonics SD2D</a>
+ <br>
+(013) <a href="../js011_020/js013_harmonicsSD3Dv3a.html">harmonics SD3D</a>
+ <br>
+(016) <a href="../js011_020/js016_periodicPSD1Dv3a.html">periodic PSD1D</a>
+ periodic boundary condition<br>
+(018) <a href="../js011_020/js018_periodicPSD2Dv3a.html">periodic PSD2D</a>
+ periodic boundary condition<br>
+(020) <a href="../js011_020/js020_periodicPSD3Dv3a.html">periodic PSD3D</a>
+ periodic boundary condition<br>
+</p>
+
+<p>
+ - Density Functional Theory (real space, many electrons)<br>
+<span style="margin-right: 20px;"></span>
+ Local Density approximation (LDA)<br>
+(022) <a href="../js021_030/js022_sampleLDA1Dv3a.html">sample LDA1D</a>
+ LDA:Perdew-Zunger<br>
+(024) <a href="../js021_030/js024_sampleLDA2Dv3a.html">sample LDA2D</a>
+ LDA:Perdew-Zunger<br>
+(026) <a href="../js021_030/js026_sampleLDA3Dv3a.html">sample LDA3D</a>
+ LDA:Perdew-Zunger<br>
+(032) <a href="../js031_040/js032_LiLikeAtomLDA3Dv3a.html">Li like atom LDA3D</a>
+ atom H He Li Be B C N O F Ne<br>
+(043) <a href="../js041_050/js043_H2MoleculeLDA3Dv3a.html">H2 molecule LDA3D</a>
+ <br>
+(044) <a href="../js041_050/js044_LiHMoleculeLDA3Dv3a.html">LiH molecule LDA3D</a>
+ <br>
+(094) <a href="../js091_100/js094_alkaliAtomECPLDA3Dv3a.html">alkali atom LDA3D</a>
+ empty core pseudo-potential<br>
+(095) <a href="../js091_100/js095_thirdPeriodAtomLDA3Dv3a.html">3rd-period atom</a>
+ atom Na, Mg, Al, Si, P, S, Cl, Ar<br>
+(097) <a href="../js091_100/js097_HeineAbarenkovPLDA3Dv3a.html">simple metal LDA3D</a>
+ Heine-Abarenkov pseudo-potential<br>
+
+<br>
+<span style="margin-right: 20px;"></span>
+ Local Spin Density approximation (LSD)<br>
+(092) <a href="../js091_100/js092_LiLikeAtomLSD3Dv3a.html">Li like atom LSD</a>
+ LDA:Perdew-Zunger, atom Li, Be, B, C, N, O, F, Ne<br>
+</p>
+
+<p>
+ - Diffusion Monte-Carlo Method<br>
+<span style="margin-right: 20px;"></span>
+ stationary state - lowest energy state only<br>
+(028) <a href="../js021_030/js028_harmonicsDMC1Dv3a.html">harmonics DMC1D</a>
+ <br>
+(033) <a href="../js031_040/js033_harmonicsDMC2Dv3a.html">harmonics DMC2D</a>
+ <br>
+(034) <a href="../js031_040/js034_harmonicsDMC3Dv3a.html">harmonics DMC3D</a>
+ <br>
+(096) <a href="../js091_100/js096_H2MoleculeDMC3Dv3a.html">H2 molecule DMC3D</a>
+ <br>
+</p>
+
+<p>
+ - Time Dependent Kohn-Sham (TDKS)<br>
+<span style="margin-right: 20px;"></span>
+ solve time dependent Kohn-Sham equation, many electrons<br>
+(098) <a href="../js091_100/js098_electronsTDKS1Dv3a.html">time dependent Kohn-Sham 1D</a>
+ electrons in parabolic potential<br>
+(099) <a href="../js091_100/js099_electronsTDKS2Dv3a.html">time dependent Kohn-Sham 2D</a>
+ electrons in parabolic potential<br>
+(100) <a href="../js091_100/js100_electronsTDKS3Dv3a.html">time dependent Kohn-Sham 3D</a>
+ electrons in parabolic potential<br>
+</p>
+
+<p>
+ - Dirac equation<br>
+(103) <a href="../js101_110/js103_solveDiracEquation1Dv3a.html">solve Dirac Equation</a>
+ Jeffrey Yepez<br>
+</p>
+
+<br>
+<p>
+<a href="../../index.html">top page</a><br>
+</p>
+
+<hr>
+<p>
+Copyright(C) 2023 Mitsuru Ikeuchi<br>
+Released under the <a href="https://opensource.org/licenses/MIT">MIT license</a>
+ (Open Source)
+</p>
+
+(created 2023.08.09, last updated 2023.09.18)<br>
+</body>
+</html>
+

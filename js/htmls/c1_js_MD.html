@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>molecular dynamics</title>
+<meta charset="utf-8">
+<script type="text/javascript">
+
+/** --------------------
+//
+//  molecular dynamics as gallery - Modified JS007_fastLJMD3D, Lennard-Jones potential 
+//    Copyright(C) 2017 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT )
+//
+//    ver 0.0.0  2018.05.10 created, last updated on 2019.10.30
+//    ver 0.0.1  2021.11.09 v1, last updated on 2021.11.09
+//
+//--------------------
+*/
+
+//"use strict";
+
+var molecularDynamics = (function(){ //========================  molecularDynamics Module 
+
+  const AMU = 1.661e-27;     //(kg) atomic mass unit
+  const kB = 1.3807e-23;     //(J/k) Boltzman's constant
+
+  var nMax = 2000;           // array max
+  var molecKind = 2;         // 0:He,1:Ne,2:Ar,3:Kr,4:Xe,5:Hg
+  var nMolec =100;           // number of particles
+  var sysTime = 0.0;         // system time (s) in the module
+  var dt = 10.0*1.0e-15;     // time step (s)
+  var xMax = 6.0E-9;         // x-Box size (m)
+  var yMax = 6.0E-9;         // y-Box size (m)
+  var zMax = 6.0E-9;         // z-Box size (m)
+  var mass = 39.948*AMU;     // mass of Ar (kg)
+  var sigma = 3.418e-10;     // Lennard-Jones potential sigma for Ar (m)
+  var epsilon = 124.0*kB;    // Lennard-Jones potential epsilon FOR Ar (J)
+  var rCutoff = 1.0e-9;      // force cutoff length
+  var hh = 1.0e-12;          // forceTable r-division
+  var kineticEnergy = 0.0;   // (J)
+  var potentialEnergy = 0.0; // (J)
+
+  var xBoxSize = 300;        // in pixel
+  var yBoxSize = 240;        // in pixel
+  var canvas  = null;        // canvas ptr
+  var ctx     = null;        // = canvas.getContext('2d');
+
+  var cx0 = 0.5*xMax;　　　　　// rotate center (3D graphics)
+  var cy0 = 0.5*yMax;
+  var cz0 = 0.5*zMax;
+  var Ax = Math.PI/12.0;     // rotate angle around x-axis
+  var Ay = Math.PI/6.0;
+  var cosAx,sinAx,cosAy,sinAy; // cosAx=Math.cos(Ax), ..
+
+  var xx = dim1(nMax);
+  var yy = dim1(nMax);
+  var zz = dim1(nMax);
+  var vx = dim1(nMax);
+  var vy = dim1(nMax);
+  var vz = dim1(nMax);
+  var ffx = dim1(nMax);
+  var ffy = dim1(nMax);
+  var ffz = dim1(nMax);
+  var ppx = dim1(nMax);
+  var ppy = dim1(nMax);
+  var ppz = dim1(nMax);
+  var srtzix = dimInt1(nMax);
+  var potentialTable = dim1(1010);
+  var forceTable = dim1(1010);
+  var reg = dimInt2(nMax,420);
+
+  var xApex = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+  var yApex = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+  var zApex = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+  var pxApex = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+  var pyApex = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+  var pzApex = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];;
+  var boxApex = [[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1], [1,0,1], [0,1,1], [1,1,1] ];
+  var boxEdge = [[0,1,9], [0,2,9], [0,4,9], [1,3,9], [1,5,9], [2,3,9], 
+                 [2,6,9], [3,7,9], [4,5,9], [4,6,9], [5,7,9], [6,7,9] ];
+
+  var LJMolec = [
+  //    mass(AMU)  E(in kB)  sigma(m)
+    [   4.003*AMU,  10.2*kB, 2.576e-10 ], // 0 He
+    [  20.183*AMU,  36.2*kB, 2.976e-10 ], // 1 Ne
+    [  39.948*AMU, 124.0*kB, 3.418e-10 ], // 2 Ar
+    [  83.500*AMU, 190.0*kB, 3.610e-10 ], // 3 Kr
+    [ 131.300*AMU, 229.0*kB, 4.055e-10 ], // 4 Xe
+    [ 200.590*AMU, 851.0*kB, 2.898e-10 ], // 5 Hg
+    [   2.016*AMU,  33.3*kB, 2.968e-10 ], // 6 H2
+    [  28.013*AMU,  91.5*kB, 3.681e-10 ], // 7 N2
+    [  31.999*AMU, 113.0*kB, 3.433e-10 ], // 8 O2
+    [  18.015*AMU, 809.1*kB, 2.641e-10 ], // 9 H2O
+    [  16.043*AMU, 137.0*kB, 3.822e-10 ], //10 CH4
+    [  44.010*AMU, 190.0*kB, 3.996e-10 ], //11 CO2
+    [  28.011*AMU, 110.0*kB, 3.590e-10 ]  //12 CO
+  ];
+
+  var molecStr = [ "He","Ne","Ar","Kr","Xe","Hg","H2","N2","O2","H2O","CH4","CO2","CO" ];
+  var molecColor = [ "rgb(200,0,200)","rgb(0,0,250)","rgb(0,150,250)",
+                     "rgb(0,220,220)","rgb(0,250,150)","rgb(0,250,0)"];
+
+  function dim1(n) {
+    var a = [];
+    for (var i=0; i<n; i++) {
+      a[i] = 0.0;
+    }
+    return a;
+  }
+
+  function dimInt1(n) {
+    var a = [];
+    for (var i=0; i<n; i++) {
+      a[i] = 0;
+    }
+    return a;
+  }
+
+  function dimInt2(ni,nj) {
+    var a = [];
+    for (var i=0; i<ni; i++) {
+      a[i] = [];
+      for(var j=0; j<nj; j++) {
+        a[i][j] = 0;
+      }
+    }
+    return a;
+  }
+
+  //-------------------- set initial molec
+
+  function setInitialCondition(kind,nn,BoxSizeInNM,contTemp,canvasId) {
+    if (canvas==null) setCanvas(canvasId)
+    sysTime = 0.0;
+    molecKind = kind
+    mass = LJMolec[molecKind][0];
+    epsilon = LJMolec[molecKind][1];
+    sigma = LJMolec[molecKind][2];
+    rCutoff = 1.0e-9;
+    if (sigma*3<rCutoff) rCutoff = sigma*3;
+    setForceTable();
+    nMolec = nn;
+    xMax = BoxSizeInNM*1.0e-9;
+    yMax = BoxSizeInNM*1.0e-9;
+    zMax = BoxSizeInNM*1.0e-9;
+    setParticles(nn);
+    ajustVelocity(contTemp);
+    setBox();
+  }
+
+  function setCanvas(canvasId) {
+    canvas = document.getElementById(canvasId);
+    canvas.width  = xBoxSize;
+    canvas.height = yBoxSize;
+    ctx = canvas.getContext('2d');
+    ctx.font = "10px 'sans-serif'";
+    ctx.textBaseline = "bottom";
+    ctx.textAlign = "left";
+    ctx.lineWidth = 1;
+  }
+
+  function setParticles(nn) {
+    var i,j,loopCount;
+    nMolec = nn;
+    for (j=1; j<=nn; j++) {
+      loopCount = 0;
+      do {
+        xx[j] = (xMax-2*sigma)*Math.random() + sigma;
+        yy[j] = (yMax-2*sigma)*Math.random() + sigma;
+        zz[j] = (zMax-2*sigma)*Math.random() + sigma;
+        for (i=1; i<=j-1; i++) {
+          if ((xx[i]-xx[j])*(xx[i]-xx[j])+(yy[i]-yy[j])*(yy[i]-yy[j])
+          	+(zz[i]-zz[j])*(zz[i]-zz[j]) < 2*sigma*sigma) break;
+        }
+        loopCount = loopCount + 1
+        if (loopCount>1000) break;
+      } while (i<j);
+      if (loopCount>1000) {
+         nMolec = j - 1;
+         break;
+      }
+    }
+    for (i=1; i<=nMolec; i++) {
+      vx[i] = 200.0*nrnd();
+      vy[i] = 200.0*nrnd();
+      vz[i] = 200.0*nrnd();
+      ffx[i] = 0.0;
+      ffy[i] = 0.0;
+      ffz[i] = 0.0;
+    }
+
+    function nrnd() {
+      return (Math.random()+Math.random()+Math.random()+Math.random()
+                +Math.random()+Math.random()-3.0);
+    }
+  }
+
+  function setBox() {
+    for (var i=0; i<8; i++) {
+      xApex[i] = boxApex[i][0]*xMax;
+      yApex[i] = boxApex[i][1]*yMax;
+      zApex[i] = boxApex[i][2]*zMax;
+    }
+  }
+
+  //----- set force table
+
+  function setForceTable() {
+    var ir,r,ri,r6;
+    for (ir=1; ir<=1001; ir++) {
+      r = ir*hh;
+      ri = (sigma/r);
+      r6 = ri*ri*ri*ri*ri*ri;
+      potentialTable[ir] = cutoff(r)*4.0*epsilon*r6*(r6-1.0);  // V(r) = 4*epsilon*((sigma/r)^12-(sigma/r)^6)
+      //forceTable[ir] = cutoff(r)*(24.0*epsilon*r6*(2.0*r6-1.0)/r);
+    }
+    potentialTable[0] = potentialTable[1] + potentialTable[2];
+    for (ir=1; ir<=1000; ir++) {
+      forceTable[ir] = -(potentialTable[ir+1] - potentialTable[ir-1])/(2.0*hh);
+    }
+    forceTable[1001] = -(0.0 - potentialTable[1000])/(2.0*hh);
+    forceTable[0] = forceTable[1];   
+  }
+
+  function cutoff(r) {
+    var ret;
+    if (r>0 && r<0.8*rCutoff) {
+      ret = 1.0;
+    } else if (r>=0.8*rCutoff && r<rCutoff ) {
+      ret = 0.5+0.5*Math.cos(Math.PI*(r-0.8*rCutoff)/(0.2*rCutoff));
+    } else {
+      ret = 0.0;
+    }
+    return ret;
+  }
+
+  //-------------------- move particles
+
+  function timeEvolution(tempMode,contTemp) {
+    var i;
+    if (tempMode==1) ajustVelocity(contTemp);
+    registerNearMolec();
+    for (i=1; i<=20; i++) {
+      sysTime += dt;
+      moveParticles();
+    }
+  }
+
+  function moveParticles() {
+    var i, a;
+    a = 0.5*dt/mass;
+    for (i=1; i<=nMolec; i++) {
+      vx[i] += a*ffx[i];
+      vy[i] += a*ffy[i];
+      vz[i] += a*ffz[i];
+      xx[i] += vx[i]*dt;
+      yy[i] += vy[i]*dt;
+      zz[i] += vz[i]*dt;
+    }
+    calcForce();
+    for (i=1; i<=nMolec; i++) {
+      vx[i] += a*ffx[i];
+      vy[i] += a*ffy[i];
+      vz[i] += a*ffz[i];
+    }
+    kineticEnergy = 0.0;
+    for (i=1; i<=nMolec; i++) {
+      kineticEnergy += 0.5*mass*(vx[i]*vx[i]+vy[i]*vy[i]+vz[i]*vz[i]);
+    }
+  }
+
+  function calcForce() {
+    var i,j,k, s05,xij,yij,zij,rij,f,fxij,fyij,fzij;
+    s05 = 0.5*sigma;
+    potentialEnergy = 0.0;
+    for(i=1; i<=nMolec; i++) {
+      ffx[i]=0;ffy[i]=0;ffz[i]=0;
+    }
+    for(i=1; i<nMolec; i++) {
+      for(k=1; k<reg[i][0]; k++) {
+	    j = reg[i][k];
+        xij=xx[i]-xx[j]; yij=yy[i]-yy[j]; zij=zz[i]-zz[j];
+        rij = Math.sqrt(xij*xij+yij*yij+zij*zij);
+        if (rij<rCutoff) {
+          f = force(rij);
+          fxij = f*xij/rij;
+          fyij = f*yij/rij;
+          fzij = f*zij/rij;
+          ffx[i] += fxij;
+          ffy[i] += fyij;
+          ffz[i] += fzij;
+          ffx[j] -= fxij;
+          ffy[j] -= fyij;
+          ffz[j] -= fzij;
+        }
+      }
+    }
+    for(i=1; i<=nMolec; i++) {
+      ffx[i] += boundaryForce(xx[i]+s05)+boundaryForce(xx[i]-xMax-s05);
+      ffy[i] += boundaryForce(yy[i]+s05)+boundaryForce(yy[i]-yMax-s05);
+      ffz[i] += boundaryForce(zz[i]+s05)+boundaryForce(zz[i]-zMax-s05);
+    }
+  }
+
+  function force(r) { // forceTable - linear interporation
+    var ir,a;
+    ir = Math.floor(r/hh);
+    a = r - ir*hh;
+    potentialEnergy += ((hh-a)*potentialTable[ir] + a*potentialTable[ir+1])/hh;
+    return ((hh-a)*forceTable[ir] + a*forceTable[ir+1])/hh;
+  }
+
+  function boundaryForce(r) {
+    var ri,r3,r6;
+    ri = (sigma/r);
+    r3 = ri*ri*ri;
+    r6 =r3*r3;
+    potentialEnergy += 4.0*0.5*epsilon*r6*(r6-1.0);
+    return (24.0*0.5*epsilon*r6*(2.0*r6-1.0)/r);
+  }
+
+  //----- registeration
+
+  function registerNearMolec() {
+    var i,j,k,rCut,rcut2,r2;
+    rCut = rCutoff+20*2000*dt;
+    rcut2 = rCut*rCut;
+    for (i=1; i<nMolec; i++) {
+      k = 1;
+      for (j=i+1; j<=nMolec; j++) {
+         r2 = (xx[i]-xx[j])*(xx[i]-xx[j])+(yy[i]-yy[j])*(yy[i]-yy[j])+(zz[i]-zz[j])*(zz[i]-zz[j]);
+         if (r2<rcut2) {
+            reg[i][k] = j;
+            k = k + 1;
+         }
+      }
+      reg[i][0] = k;
+    }
+  }
+
+  function maxNearMolec() {
+    var i,mx=0;
+    for (i=1; i<=nMolec; i++) {
+      if (mx<reg[i][0]) mx = reg[i][0];
+    }
+    return (mx-1);
+  }
+
+  //-------------------- utility
+
+  function systemTemperature() {
+    var i, ek=0.0;  //kinetic energy (J)
+    for (i=1; i<=nMolec; i++) {
+      ek = ek + 0.5*mass*(vx[i]*vx[i]+vy[i]*vy[i]+vz[i]*vz[i]);
+    }
+    return 2.0*ek/(3.0*nMolec*kB); //2D: E/N=kT, 3D: E/N=(3/2)kT
+  }
+
+  function ajustVelocity(temp) {
+    var i,r;
+    r = Math.sqrt(temp/systemTemperature());
+    for (i=1; i<=nMolec; i++) {
+      vx[i] = r*vx[i];
+      vy[i] = r*vy[i];
+      vz[i] = r*vz[i];
+    }
+  }
+
+  //--------------------  3D graphics aid
+
+  function setRotateXY(angleX,angleY) {
+    cosAx = Math.cos(angleX);
+    sinAx = Math.sin(angleX);
+    cosAy = Math.cos(angleY);
+    sinAy = Math.sin(angleY);
+    cx0 = 0.5*xMax;
+    cy0 = 0.5*yMax;
+    cz0 = 0.5*zMax;
+  }
+
+  function rotateXY() { //particles and box apex
+    var i;
+    for (i=1; i<=nMolec; i++) {
+      ppx[i] = cosAy*(xx[i]-cx0)+sinAy*(sinAx*(yy[i]-cy0)+cosAx*(zz[i]-cz0)) + cx0;
+      ppy[i] = cosAx*(yy[i]-cy0)-sinAx*(zz[i]-cz0) + cy0;
+      ppz[i] =-sinAy*(xx[i]-cx0)+cosAy*(sinAx*(yy[i]-cy0)+cosAx*(zz[i]-cz0)) + cz0;
+    }
+    for (i=0; i<8; i++) {
+      pxApex[i] = cosAy*(xApex[i]-cx0)+sinAy*(sinAx*(yApex[i]-cy0)+cosAx*(zApex[i]-cz0)) + cx0;
+      pyApex[i] = cosAx*(yApex[i]-cy0)-sinAx*(zApex[i]-cz0) + cy0;
+      pzApex[i] =-sinAy*(xApex[i]-cx0)+cosAy*(sinAx*(yApex[i]-cy0)+cosAx*(zApex[i]-cz0)) + cz0;
+    }
+  }
+
+  function markFarEdge() {
+    var i,iEdge,zMin,iMin;
+    //seek far apex --> iMin
+    zMin = pzApex[0];
+    iMin = 0;
+    for (i=1; i<8; i++) {
+      if (zMin>pzApex[i]) {
+        zMin = pzApex[i];
+        iMin = i;
+      }
+    }
+    //mark far edge
+    for (iEdge=0; iEdge<12; iEdge++) {
+      boxEdge[iEdge][2] = 0;
+      if (boxEdge[iEdge][0]==iMin || boxEdge[iEdge][1]==iMin) boxEdge[iEdge][2] = 1;
+    }
+  }
+
+  function sortz() {
+    var i;
+    for (i=1; i<=nMolec; i++) {
+      srtzix[i] = i;
+    }
+    qSort(1,nMolec);
+  }
+
+  function qSort(le,ri) {
+    var i,j, pv,w;
+    if (ri>le) {
+      i = le-1;
+      j = ri;
+      pv = ppz[srtzix[ri]];
+      while (1) {
+        do {
+          i=i+1;
+        } while (pv>ppz[srtzix[i]]);
+        do {
+          j=j-1;
+        } while (j>i && ppz[srtzix[j]]>pv);
+        if (j<=i) break;
+        w=srtzix[i]; srtzix[i]=srtzix[j]; srtzix[j]=w;
+      }
+      w=srtzix[i]; srtzix[i]=srtzix[ri]; srtzix[ri]=w;
+      qSort(le,i-1);
+      qSort(i+1,ri);
+    }
+  }
+
+  function plotNearEdge(mag,xp,yp,color) {
+    var iEdge;
+    for (iEdge=0; iEdge<12; iEdge++) {
+      if (boxEdge[iEdge][2]==0) { //far edge mark = 1
+         plotEdge(iEdge,mag,xp,yp,color);
+      }
+    }
+  }
+
+  function plotFarEdge(mag,xp,yp,color) {
+    var iEdge;
+    for (iEdge=0; iEdge<12; iEdge++) {
+      if (boxEdge[iEdge][2]==1) { //far edge mark = 1
+         plotEdge(iEdge,mag,xp,yp,color);
+      }
+    }
+  }
+
+  function plotEdge(iEdge,mag,xp,yp,color) {
+    var iApex,x1,y1,x2,y2;
+    iApex = boxEdge[iEdge][0];
+    x1=pxApex[iApex]*mag+xp; y1=pyApex[iApex]*mag+yp;
+    iApex = boxEdge[iEdge][1];
+    x2=pxApex[iApex]*mag+xp; y2=pyApex[iApex]*mag+yp;
+    drawLine(x1, y1, x2, y2, color);
+  }
+
+  //--------------------  draw
+
+  function draw(tempMode,contTemp) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    draw3D();
+    ctx.fillStyle = "rgb(80, 80, 80)";
+    ctx.fillText("time = "+(sysTime*1.0e12).toFixed(1)+" (ps)", 10, yBoxSize-16);
+    ctx.fillText("Temp ="+systemTemperature().toFixed(1)+" (K)", 150, yBoxSize-16);
+    //ctx.fillText(molecStr[molecKind]+", N = "+nMolec, 10, 374);
+    //ctx.fillText("contTemp = "+contTemp.toFixed(1)+" (K)", 200, 374);
+    ctx.fillText("Box = "+(xMax*1.0e9).toFixed(1)+"x"+(yMax*1.0e9).toFixed(1)+"x"
+                   +(zMax*1.0e9).toFixed(1)+" (nm)", 10, yBoxSize-3);
+    ctx.fillText("Energy = "+(kineticEnergy+potentialEnergy).toExponential(4)+" (J)", 150, yBoxSize-3);
+    //document.getElementById("text_caption").innerHTML = 
+    //  "max No. of registerd near molec ="+maxNearMolec();
+  }
+
+  function draw3D() {
+    var i,j,sc,xp,yp,green;
+    Ay= Ay + 0.5*Math.PI/180; if (Ay>Math.PI) Ay = Ay-2.0*Math.PI;
+    sc = 160/xMax;       //240=boxsize in graphic window
+    xp = 70;
+    yp = 30;
+    setRotateXY(Ax,Ay);
+    rotateXY();        //xx(i),yy(i),zz(i) rotate--> ppx(i),ppy(i),ppz(i)
+    sortz();           //sort ppz(i) : ppz(srtzix(1)),ppz(srtzix(2)),...,ppz(srtzix(nMolec))
+    markFarEdge();     //boxEdge(iEdge,2)=1:far side edge or 0:near side edge
+    plotFarEdge(sc,xp,yp,"rgb(120,120,0)"); // dark yellow
+
+    for(i=1; i<=nMolec; i++) {
+      j = srtzix[i];
+      green = Math.floor((ppz[j]/zMax+1)*100);
+      ctx.fillStyle = "rgb(0, "+green+", 0)";
+      ctx.beginPath();
+      ctx.arc(ppx[j]*sc+xp, ppy[j]*sc+yp, sigma*sc*0.5, 0, 2*Math.PI, false);
+      ctx.fill();
+    }
+    plotNearEdge(sc,xp,yp,"rgb(250,250,0)"); //yellow
+  }
+
+  function drawLine(x1, y1, x2, y2, color) {
+    ctx.strokeStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+
+  //--------------------  public
+
+  return {
+    init: setInitialCondition, // setInitialCondition(kind,nn,BoxSizeInNM,contTemp,canvasId)
+    evolve: timeEvolution,     // timeEvolution(tempMode,contTemp)
+    draw: draw                 // draw(tempMode,contTemp)
+  }
+
+})(); //=============================================  end of molecularDynamics Module
+
+
+  var timerID = -1;       // interval timer ID
+  var busyFlag = 0;       // if busyFlag==0, exec timeEvolution(),draw() 
+  var sleepCount = 0;     // use onTimerExec
+  var sleepCountMax = 4;  // use onTimerExec
+  var resetFlag = 0;      // if resetFlag==1, reset() : set in setMolecKind()
+  var pauseFlag = 0;      // if pauseFlag=0, timeEvolution()  : pause Button
+  var thema = 2;          // memo - selected molecKind
+  var TMode = 0;          // 0:adiabatic  1:constantTemp
+  var contT =300.0;       // controled temperture
+
+  // onLoadstart()
+
+  function onLoadStart() {
+    resetFlag = 1;
+    timerID = setInterval('onTimerExec()',10);
+  }
+
+  // onTimerExec
+
+  function onTimerExec() {
+    if (sleepCount>0) {
+      sleepCount--;
+    }
+    if (busyFlag==0 && sleepCount==0) { 
+      busyFlag = 1;
+      if (resetFlag==1) {
+        resetFlag = 0;
+        // init(thema,nn,BoxSizeInNM,contT), thema: 0:He,1:Ne,2:Ar,3:Kr,4:Xe,5:Hg
+        molecularDynamics.init(thema,300,6.0,contT,'canvas_box');
+      }
+      if (pauseFlag==0) molecularDynamics.evolve(TMode,contT);
+      molecularDynamics.draw(TMode,contT);
+      sleepCount = sleepCountMax;
+      busyFlag = 0;
+    }
+  }
+
+  //--------------------  end of javaScript
+
+</script>
+<style type="text/css"><!--
+body { color:#000000; background-color:#fff8dd;}
+--></style>
+</head>
+
+<body class="white" style="text-align: left" onLoad="onLoadStart()">
+<p>molecular dynamics</p>
+<canvas ID="canvas_box" style="background-color: #a0a0a0;" WIDTH="300" HEIGHT="240">
+</canvas><br>
+
+<p>
+ - Lennard-Jones potential<br>
+(001) <a href="../js001_010/js001_ArMD2Dv3a.html">Ar MD2D</a>
+ simple js code<br>
+(004) <a href="../js001_010/js004_fastLJMD2Dv3a.html">fast LJMD2D</a>
+ register near particle(booking)<br>
+(006) <a href="../js001_010/js006_ArMD3Dv3a.html">Ar MD3D</a>
+ simple js code<br>
+(007) <a href="../js001_010/js007_fastLJMD3Dv3a.html">fast MD3D</a>
+ register near particle(booking)<br>
+(010) <a href="../js001_010/js010_mixLJMD2Dv3a.html">mixed gas LJMD2D</a>
+ <br>
+(012) <a href="../js011_020/js012_mixLJMD3Dv3a.html">mixed gas LJMD3D</a>
+ <br>
+(054) <a href="../js051_060/js054_diffusionLJMD2Dv3a.html">diffusion LJMD2D</a>
+ <br>
+(055) <a href="../js051_060/js055_BrownianMotionLJMD2Dv3a.html">Brownian motion LJMD2D</a>
+ <br>
+(056) <a href="../js051_060/js056_ensembleLJMD2Dv3a.html">ensemble LJMD2D</a>
+ ensemble - NVE/NVT/NPT<br>
+(057) <a href="../js051_060/js057_getDataLJMD2Dv3a.html">get data LJMD2D</a>
+ get molecules data<br>
+(058) <a href="../js051_060/js058_ensembleLJMD3Dv3a.html">ensemble LJMD3D</a>
+ ensemble - NVE/NVT/NPT<br>
+(059) <a href="../js051_060/js059_getDataLJMD3Dv3a.html">get data LJMD3D</a>
+ get molecules data<br>
+(075) <a href="../js071_080/js075_threejs_ArLJMD3Dv3a.html">ArLJMD3D using three.js</a>
+using three.js<br>
+</p>
+
+<p>
+ - Morse potential<br>
+(014) <a href="../js011_020/js014_crystalMMD2Dv3a.html">crystal MMD2D</a>
+ simple js code<br>
+(015) <a href="../js011_020/js015_grainBoundaryMMD2Dv3a.html">grain boundary MMD2D</a>
+ <br>
+(017) <a href="../js011_020/js017_mixMMD2Dv3a.html">mix MMD2D</a>
+ mixed 2-kind crystals <br>
+(019) <a href="../js011_020/js019_periodicMMD2Dv3a.html">periodic MMD2D</a>
+ periodic boundary condition<br>
+(021) <a href="../js021_030/js021_fasterMixMMD2Dv3a.html">faster mix MMD2D</a>
+ faster - O(N)<br>
+(060) <a href="../js051_060/js060_ensembleMMD2Dv3a.html">ensemble MMD2D</a>
+ ensemble - NVE/NVT/NPT<br>
+(061) <a href="../js061_070/js061_getDataMMD2Dv3a.html">get data MMD2D</a>
+ get molecules data<br>
+(062) <a href="../js061_070/js062_ensembleMMD3Dv3a.html">ensemble MMD3D</a>
+ ensemble - NVE/NVT/NPT<br>
+(063) <a href="../js061_070/js063_getDataMMD3Dv3a.html">get data MMD3D</a>
+ get molecules data<br>
+(108) <a href="../js101_110/js108_grainGrowthMMD2Dv3a.html">grain growth MMD3D</a>
+ crystal grain growth<br>
+</p>
+
+<p>
+ - ion potential<br>
+(023) <a href="../js021_030/js023_NaClIonMD2Dv3a.html">NaCl IonMD2D</a>
+ simple js code<br>
+(025) <a href="../js021_030/js025_fasterIonMD2Dv3a.html">faster IonMD2D</a>
+ faster - O(N), NaCl type crystal<br>
+(027) <a href="../js021_030/js027_NaClIonMD3Dv3a.html">NaCl IonMD3D</a>
+ simple js code<br>
+(030) <a href="../js021_030/js030_periodicIonMD2Dv3a.html">periodic IonMD2D</a>
+ periodic boundary condition<br>
+(052) <a href="../js051_060/js052_periodicIonMD3Dv3a.html">periodic IonMD3D</a>
+ periodic boundary condition<br>
+(053) <a href="../js051_060/js053_fasterIonMD3Dv3a.html">faster IonMD3D</a>
+ faster - O(N)<br>
+(064) <a href="../js061_070/js064_ensembleIonMD2Dv3a.html">ensemble IonMD2D</a>
+ ensemble - NVE/NVT/NPT<br>
+(065) <a href="../js061_070/js065_getDataIonMD2Dv3a.html">get data IonMD2D</a>
+ get molecules data<br>
+(066) <a href="../js061_070/js066_ensembleIonMD3Dv3a.html">ensemble IonMD3D</a>
+ ensemble - NVE/NVT/NPT<br>
+(067) <a href="../js061_070/js067_getDataIonMD3Dv3a.html">get data IonMD3D</a>
+ get molecules data<br>
+</p>
+
+<p>
+ - Embeded Atom potential (include FS,tight-binding)<br>
+(042) <a href="../js041_050/js042_bccMetalAFSv3a.html">bcc metal AFS</a>
+ FS + Ackland correction potential<br>
+(068) <a href="../js061_070/js068_ensembleFSMD3Dv3a.html">ensemble FSMD3D</a>
+ ensemble - NVE/NVT/NPT<br>
+(069) <a href="../js061_070/js069_xzPeriodicFSMD3Dv3a.html">xz-periodic FSMD3D</a>
+ ensemble - NVE/NVT/NPT<br>
+(070) <a href="../js061_070/js070_fpiFixedFSMD3Dv3a.html">fpi-fixed FSMD3D</a>
+ fixed Finnis-Sinclair potential<br>
+(071) <a href="../js071_080/js071_bccCrystalTBMD3Dv3a.html">bcc Crystal TBMD3D</a>
+ tight binding potential<br>
+(072) <a href="../js071_080/js072_fccCrystalTBMD3Dv3a.html">fcc Crystal TBMD3D</a>
+ tight binding potential<br>
+(073) <a href="../js071_080/js073_hcpCrystalTBMD3Dv3a.html">hcp Crystal TBMD3D</a>
+ tight binding potential<br>
+(074) <a href="../js071_080/js074_crystalTBMD3Dv3a.html">crystal TBMD3D</a>
+ bcc/fcc/hcp crystal<br>
+(091) <a href="../js091_100/js091_ensembleSCMD3Dv3a.html">ensemble Sutton-Chen potential MD3D</a>
+ bcc crystal<br>
+</p>
+
+<p>
+ - First Principle Molecular Dynamics (FPMD)<br>
+(051) <a href="../js051_060/js051_H2MoleculeFPMDv3a.html">H2 molecule FPMD</a>
+ <br>
+</p>
+
+<br>
+<p>
+<a href="../../index.html">top page</a><br>
+</p>
+
+<hr>
+<p>
+Copyright(C) 2023 Mitsuru Ikeuchi<br>
+Released under the <a href="https://opensource.org/licenses/MIT">MIT license</a>
+ (Open Source)
+</p>
+
+(created 2023.08.09, last updated 2023.09.18)<br>
+</body>
+</html>
+

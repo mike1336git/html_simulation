@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>miscellenius</title>
+<meta charset="utf-8">
+<script type="text/javascript">
+
+/*--------------------
+//
+//  miscellenius as gallery - Modified JS083_adatomKMC2D
+//    Copyright(C) 2018 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2018.05.12 created, last updated on 2019.10.30
+//    ver 0.0.1  2021.11.09 v1, last updated on 2021.11.09
+//
+//--------------------
+*/
+
+//"use strict";
+
+var miscellenius = (function(){ //========================  miscellenius Module 
+
+  const hPlank = 6.626176e-34; // (Js) Plank's constant
+  const EE = 1.6021892e-19;    // (C or J) electon charge or enegy 1(eV) = EE(J)
+  const nMax = 10000;          // array max
+
+  var NNa = 600;
+  var NNx = 40;
+  var NNy = 40;
+  var sysTime = 0.0;           // system time
+  var qqHopping = 0.2;        
+  var qqNeighbor = 0.3;
+  var kT = 0.1;
+
+  var xCanvasSize = 300;
+  var yCanvasSize = 240;
+  var canvas  = null;          // canvas ptr
+  var ctx     = null;          // = canvas.getContext('2d');
+
+  var lattice = dim2Int(NNx,NNy);   // 1...NNa: adatom, -1:free space
+  var ix_adatom = dim1Int(nMax);    // x-position of adatom in lattice[][]
+  var iy_adatom = dim1Int(nMax);    // y-position of adatom in lattice[][]
+  var transition = dim1(4*nMax);    // transition rate of direction E/N/W/S adatom
+  var rate = dim1(5);
+
+  function dim1Int(n) {
+    var a = [];
+    for(var i=0; i<n; i++) {  
+      a[i] = 0;
+    }
+    return a;
+  }
+
+  function dim1(n) {
+    var a = [];
+    for(var i=0; i<n; i++) {  
+      a[i] = 0.0;
+    }
+    return a;
+  }
+
+  function dim2Int(ni,nj) {
+    var a = [];
+    for(var i=0; i<ni; i++) {  
+      a[i] = [];
+      for(var j=0; j<nj; j++) {
+        a[i][j] = 0;
+      }
+    }
+    return a;
+  }
+
+  //-------------------- set initial condition
+
+  function setInitialCondition(canvasId) {
+    if (canvas==null) setCanvas(canvasId);
+    sysTime = 0.0;
+    clearField();
+    setParticles();
+  }
+
+  function clearField() {
+    for (var i=0; i<NNx; i++) {
+      for (var j=0; j<NNy; j++) {
+        lattice[i][j] = -1;
+      }
+    }
+  }
+
+  function setParticles() {
+    var ia,x,y;
+    for (ia=0; ia<NNa; ia++) {
+      do {
+        x = Math.floor(NNx*Math.random());
+        y = Math.floor(NNy*Math.random());
+      } while (lattice[x][y]!=-1); // lattice[][] >=0: particle, -1:free space
+      lattice[x][y] = ia;
+      ix_adatom[ia] = x;
+      iy_adatom[ia] = y;
+    }
+  }
+
+  function setCanvas(canvasId) {
+    canvas = document.getElementById(canvasId);
+    canvas.width  = xCanvasSize;
+    canvas.height = yCanvasSize;
+    ctx = canvas.getContext('2d');
+    ctx.font = "16px 'sans-serif'";
+    ctx.textBaseline = "bottom";
+    ctx.textAlign = "left";
+  }
+
+  //-------------------- time evolution
+
+  function timeEvolution(speed,qqHop,qqNbr,TEnergy) {
+    var i,ii,nn, deltat;
+    qqHopping = qqHop;
+    qqNeighbor = qqNbr;
+    kT = TEnergy;
+    nn = NNa/10 + 1;
+    for (i=0; i<speed; i++) {
+      for (ii=0; ii<nn; ii++) {
+        deltat = kmcStep();
+        sysTime += deltat;
+      }
+    }
+  }
+
+  function kmcStep() {
+    var ipp, rsum,r;
+    rsum = setAllTransition();
+    ipp = selectTransion(rsum);
+    move(ipp);
+    r = 1.0-Math.random(); // r=(0,1], Math.random()= [0,1)
+    return(-Math.log(r)/rsum);
+  }
+
+  function setAllTransition() {
+    var ia, rsum;
+    setRate();
+    rsum = 0.0;
+    for (ia=0; ia<NNa; ia++) {
+      rsum += setTransition(ia);
+    }
+    return rsum;
+  }
+
+  function setRate() {
+    rate[0] = transitionRate(qqHopping);
+    rate[1] = transitionRate(qqHopping + qqNeighbor);
+    rate[2] = transitionRate(qqHopping + 2.0*qqNeighbor);
+    rate[3] = transitionRate(qqHopping + 3.0*qqNeighbor);
+    rate[4] = transitionRate(qqHopping + 4.0*qqNeighbor);
+  }
+
+  function transitionRate(energy) {
+    var nue0 = kT*EE/hPlank;
+    return nue0*Math.exp(-energy/kT);
+  }
+
+  function setTransition(ia) {
+    var i,j,nb;
+
+    i = ix_adatom[ia]; j = iy_adatom[ia];
+    nb = numberOfNeighbor(i,j);
+
+    transition[ia*4  ] = dirRate((i+1)%NNx, j, nb);
+    transition[ia*4+1] = dirRate((i-1+NNx)%NNx, j, nb);
+    transition[ia*4+2] = dirRate(i, (j+1)%NNy, nb);
+    transition[ia*4+3] = dirRate(i, (j-1+NNy)%NNy, nb);
+
+    return (transition[ia*4+0] + transition[ia*4+1] + transition[ia*4+2] + transition[ia*4+3]);
+  }
+
+  function dirRate(ii, jj, nb) {
+    var nb1, rt=0.0;
+    if (lattice[ii][jj]>=0) {
+      rt = 0.0;
+    } else {
+      nb1 = numberOfNeighbor(ii,jj)-1;
+      rt = (nb<=nb1) ? rate[0] : rate[nb-nb1];
+    }
+    return rt;
+  }
+
+  function numberOfNeighbor(i,j) {
+    var nb=0;
+    if (lattice[(i+1)%NNx][j]>=0) nb += 1;
+    if (lattice[(i-1+NNx)%NNx][j]>=0) nb += 1;
+    if (lattice[i][(j+1)%NNy]>=0) nb += 1;
+    if (lattice[i][(j-1+NNy)%NNy]>=0) nb += 1;
+    return nb;
+  }
+
+
+  function selectTransion(rsum) { /* find i  R(i-1) < u RN <= R(i) */
+    var ipp,ipmax=4*NNa, rnd;
+    rnd = rsum*Math.random();
+    for (ipp=0; ipp<ipmax; ipp++) {
+      rnd -= transition[ipp];
+      if (rnd<0.0) return(ipp);
+    }
+    return (ipmax-1);
+  }
+
+  function move(ipp) { // update ix_adatom[], iy_adatom[], lattice[][]
+    var ia,id,i,j;
+
+    ia = Math.floor(ipp/4);
+    id = ipp%4;
+    i = ix_adatom[ia]; j = iy_adatom[ia];
+    lattice[i][j] = -1;
+    if (id==0) i = (i+1)%NNx;
+    if (id==1) i = (i-1+NNx)%NNx;
+    if (id==2) j = (j+1)%NNy;
+    if (id==3) j = (j-1+NNy)%NNy;
+    ix_adatom[ia] = i; iy_adatom[ia] = j;
+    lattice[i][j] = ia;
+  }
+
+  //--------------------  draw
+
+  function draw() {
+    var xp=50,yp=10,sc=5;
+    ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
+    ctx.fillStyle = "rgb(150,150,150)";
+    ctx.fillRect(xp,yp,NNx*sc,NNy*sc);
+    ctx.fillStyle = "rgb(80, 80, 80)";
+    ctx.fillText("time = "+(sysTime*1e12).toFixed(2)+"(ps)", 20, yCanvasSize-3);
+    drawLattice(xp,yp,sc);
+    //document.getElementById("text_caption").innerHTML = "adsorption atom on cubic cryatal";
+  }
+
+  function drawLattice(xp,yp,sc) {
+    var i,j;
+    for (i=0; i<NNx; i++) {
+      for (j=0; j<NNy; j++) {
+        if (lattice[i][j]>=0) {
+          drawCircle(xp+(i+0.5)*sc,yp+(j+0.5)*sc,0.4*sc,"#00ff00");
+        }
+      }
+    }
+  }
+
+  function drawCircle(x,y,r,color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, 2*Math.PI, false);
+    ctx.fill();
+  }
+
+  //--------------------  public
+
+  return {
+    init: setInitialCondition, // setInitialCondition(canvasId)
+    evolve: timeEvolution,     // timeEvolution(nTimes,infp,immp)
+    draw: draw                 // draw()
+  }
+
+})(); //=============================================  end of miscellenius Module
+
+
+  var timerID = -1;   // interval timer ID
+  var thema = 0;      // 0:glass 1:metal 2:absorber
+  var busyFlag = 0;   // if busyFlag==0, exec evolve(),draw()
+  var resetFlag = 0;  //
+  var pauseFlag = 0;  // if pauseFlag=0, call evolve()
+  var speed = 2;      //
+  var qqHop = 0.20;
+  var qqNbr = 0.30;
+  var TEnergy = 0.100;
+
+  // onLoadStart()
+
+  function onLoadStart() {
+    resetFlag = 1;
+    timerID = setInterval('onTimerExec()', 40);
+  }
+
+  // onTimerExec
+
+  function onTimerExec() {
+    if (busyFlag==0) { 
+      busyFlag = 1;
+      if (resetFlag==1) {
+        resetFlag = 0;
+        pauseFlag = 0;
+        miscellenius.init('canvas_box');
+      }
+      if (pauseFlag==0) {
+        miscellenius.evolve(speed,qqHop,qqNbr,TEnergy);
+      }
+      miscellenius.draw();
+      busyFlag = 0;
+    }
+  }
+  
+//--------------------  end of javaScript
+
+</script>
+<style type="text/css"><!--
+body { color:#000000; background-color:#fff8dd;}
+--></style>
+</head>
+
+<body class="white" style="text-align: left" onLoad="onLoadStart()">
+<p>miscellenius</p>
+
+<canvas ID="canvas_box" style="background-color: #d0d0d0;" width="400" height="400">
+</canvas><br>
+
+<p>
+ - Finite Difference Time Domain (FDTD)<br>
+(003) <a href="../js001_010/js003_waveFDTD2Dv3a.html">E-M wave FDTD2D</a>
+ Ez-Hx,Hy wave<br>
+(049) <a href="../js041_050/js049_waveOpticsFDTD2Dv3a.html">wave optics FDTD2D</a>
+ wave optics (Ez-Hxy wave)<br>
+(050) <a href="../js041_050/js050_currentFDTD2Dv3a.html">current FDTD2D</a>
+ current jz-Hxy<br>
+</p>
+
+<p>
+ - Differential Equations<br>
+(112) <a href="../js111_120/js112_SIRinfectionModelDEQv3a.html">SIR infection model</a>
+ - initial value problem<br>
+(113) <a href="../js111_120/js113_SEIRinfectionModelDEQv3a.html">SEIR infection model</a>
+ - initial value problem<br>
+(116) <a href="../js111_120/js116_SEIRSinfectionModelv3a.html">SEIRS infection model</a>
+ - immunity loss - differential equations<br>
+</p>
+
+<p>
+ - Monte-Carlo Simulation<br>
+(082) <a href="../js081_090/js082_infectionMCS2Dv3a.html">infection model</a>
+ MCS2D, infect/immune/non-infected status<br>
+(114) <a href="../js111_120/js114_SEIRinfectionMCS2Dv3a.html">SEIR infection MCS2D</a>
+ SEIR infection - Monte-Carlo simulation<br>
+(115) <a href="../js111_120/js115_maskEffectMSC2Dv3a.html">mask effect MCS2D</a>
+ - the effect of the mask - Monte-Carlo simulation<br>
+(117) <a href="../js111_120/js117_SEIRSinfectionMCS2Dv3a.html">SEIRS infection MCS2D</a>
+ - immunity loss - Monte-Carlo simulation<br>
+(118) <a href="../js111_120/js118_gotoTravelMCS2Dv3a.html">goto travel MCS2D</a>
+ - SEIR infection Monte-Carlo simulation<br>
+ <br>
+<span style="margin-right: 20px;"></span>
+ Kinetic Monte-Carlo (KMC)<br>
+(083) <a href="../js081_090/js083_adatomKMC2Dv3a.html">adatom on crystal</a>
+ KMC2D<br>
+(084) <a href="../js081_090/js084_adatomFastKMC2Dv3a.html">fast adatom on crystal</a>
+ KMC2D<br>
+(085) <a href="../js081_090/js085_adatomFasterKMC2Dv3a.html">faster adatom on crystal</a>
+ KMC2D<br>
+(086) <a href="../js081_090/js086_crystalGrowthKMC2Dv3a.html">crystal growth</a>
+ KMC2D<br>
+(087) <a href="../js081_090/js087_heteroCrystalGrowthKMC2Dv3a.html">hetero crystal growth</a>
+ KMC2D<br>
+</p>
+
+<p>
+ - Newtonian Dynamics<br>
+(101) <a href="../js101_110/js101_astroObjectsD2Dv3a.html">astro objects D2D</a>
+ dynamics under gravity 2D<br>
+</p>
+
+<br>
+<p>
+<a href="../../index.html">top page</a><br>
+</p>
+
+<hr>
+<p>
+Copyright(C) 2023 Mitsuru Ikeuchi<br>
+Released under the <a href="https://opensource.org/licenses/MIT">MIT license</a>
+ (Open Source)
+</p>
+
+(created 2023.08.09, last updated 2023.09.18)<br>
+</body>
+</html>
+

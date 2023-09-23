@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>js022_sampleLDA1D</title>
+<script type="text/javascript">
+
+// %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%%
+
+'use strict';
+
+/* --------------------
+//
+//  js022_sampleLDA1D
+//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2017.05.13 created, last updated on 2018.11.16
+//    ver 0.0.1  2019.01.14 v1, last updated on 2021.05.11
+//    ver 0.0.2  2021.10.30 v2, last updated on 2021.10.30
+//    ver 0.0.3  2023.03.08 v3, last updated on 2023.08.20
+//
+// -------------------- RS-DFT - local density approximation 1D ----------
+//
+// - real space density functional theory - local density approximation
+// - solve Kohn-Sham equation - successive approximation
+// - Vxc : LDA(local density approximation)
+//         J. P. Perdew and A. Zunger; Phys. Rev., B23, 5048 (1981)
+//
+//  many electron system --> one electron approximation
+//    one electron ,  others -> consider as effective potential Veff
+//    Kohn-Sham equation {(-d^2/dr^2)+Veff(r)} |i> = e_i |i>,  Veff(r)=Vext+VH+Vx+Vc
+//      Veff: one electron feels effective potential
+//      Vext: external Potential
+//      VH  : Hartree potential (electron charge -> electro-static potential)
+//      Vx,Vc :electron exchange and correlation potential (LDA:Perdew-Zunger)
+//    successive approximation
+//      solve Kohn-Sham -> electron state,occupation -> electron charge density -> Veff
+//
+//  procedure
+//   (1) given: trial |i>, occupation(i)
+//
+//   (2) set electron density rho
+//       rho <-- |i>, occupation(i), mixing rho(iter-1)
+//
+//   (3) set effective potential
+//        Veff = Vext + VH + Vx + Vc
+//        VH <-- rho (Poisson eq. ,SOR iteration)
+//        Vx,Vc <-- rho (LDA:Perdew-Zunger)
+//
+//   (4) solve Kohn-Sham equation (successive approximation)
+//        |i> steepest descent method: |i(next)> = |i> - damp{H-E}|i>
+//        E(i) <-- <i|H|i>
+//        {|0>,..,|i>,..,|N>} orthogonallization : Gram-Schmidt
+//
+//   (5) sort state
+//        sort orbit by E(i)
+//
+//   (6) set occupation
+//        occupation(i) <-- E(i)
+//
+//   goto (2)
+//
+// --------------------
+*/
+
+const sampleLDA1D = (function(){ // ====================  sampleLDA1D Module  ====================
+	
+	// au: atomic unit hBar=1,e=1,me=1,a0=1
+	const g_auLength = 5.29177211e-11;			// (m) 1(au) = auLength (m)
+	const g_auTime = 2.418884326e-17;			// (s) 1(au) = auTime (s)
+	const g_auEnergy = 4.35974465e-18;			// (J) 1(au) = auEnergy (J)
+	const g_au2eV = 27.211386;					// (eV) 1(au) = 27.211386 (eV)
+	const g_nxMax = 256;						// maximum of NNx
+	const g_stMax = 20;							// maximum number of state
+	
+	let g_numberOfElectron = 4;					// number of electron in the system
+	let g_numberOfOrbit = 10;					// number of orbit
+	let g_iterCount = 0;						// iteration count
+	let g_NNx = 64;								// xMax = NNx*dx
+	let g_dx = 1.0/4.0;							// (au) x-division
+	let g_lylz = 16.0*16.0;						// (au) volume=dx*ly*lz (to use LDA rho -> Vxc)
+	let g_energyMem = 0.0;						// temporal memory of energy
+	let g_iterationError = 1.0;					// energy difference for iteration n and n+1
+	let g_dampingFactor = 0.03;					// damping factor of steepest descent method
+	let g_mixing = 0.5;							// charge mixing in setRho()
+	let g_broadening = 0.001;					// (au) level broadening in setOccupation()
+	
+	const g_sdEnergy = dim1( g_stMax );			// sdEnergy[20] electron orbit energy
+	const g_sdState =dim2( g_stMax, g_nxMax );	// sdState[20][256] electron orbit 0...19
+	const g_occupation = dim1( g_stMax );		// occupation of orbit
+	const g_wrk = dim1( g_nxMax );				// wrk[256] orbit work space in steepestDescent
+	const g_vv = dim1( g_nxMax );				// vv[256] effective potential
+	const g_vvext = dim1( g_nxMax );			// external potential
+	const g_vvh = dim1( g_nxMax );				// Hartree potential
+	const g_vvx = dim1( g_nxMax );				// exchange potential
+	const g_vvc = dim1( g_nxMax );				// correlation potential
+	const g_rho = dim1( g_nxMax );				// electron charge density
+	
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+	
+	function dim2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Float64Array( nj );
+		}
+		return a;
+	}
+	
+	
+	// --------------------  set initial condition  --------------------
+	
+	function setInitialCondition( stateMax, vIndex, nElectron ) {
+		g_iterCount = 0;
+		setInitialState(stateMax);
+		setExternalPotential(vIndex);
+		setNumberOfElectron(nElectron);
+	}
+	
+	function setInitialState(stateMax) {
+		const nnx=g_NNx;
+		for (let ist=0; ist<stateMax; ist++) {
+			for (let i=1; i<nnx-1; i++) {
+				g_sdState[ist][i] = Math.random()-0.5;
+			}
+			g_sdState[ist][0] = 0;
+			g_sdState[ist][nnx-1] = 0;
+			normalizeState(ist);
+		}
+	}
+	
+	function setExternalPotential(vIndex) {
+		const nnx=g_NNx, x0 = 0.5*nnx*g_dx;
+		if (vIndex==0) { // 0:parabolic
+			for (let i=0; i<nnx; i++) {
+				const x = i*g_dx;
+				g_vvext[i] = Math.min(0.5*(x-x0)*(x-x0),20.0);
+			}
+		} else if (vIndex==1) { // 1:well
+			for (let i=0; i<nnx; i++) {
+				const x = i*g_dx;
+				g_vvext[i] = (Math.abs(x-x0)<4.0) ? 0.0 : 20.0;
+			}
+		} else if (vIndex==2) { // 2:well
+			for (let i=0; i<nnx; i++) {
+				const x = i*g_dx;
+				g_vvext[i] = (Math.abs(x-x0)<4.0) ? -1.0 : 0.0;
+			}
+		}
+	}
+	
+	function setNumberOfElectron( ne ) {
+		g_numberOfElectron = ne;
+		g_iterCount = 0;	
+	}
+	
+	function setMixing( mix ) {
+		g_mixing = mix;
+	}
+	
+	function setBroadening( broadening ) {
+		g_broadening = broadening;
+	}
+	
+	
+	// --------------------  iterate LDA  --------------------
+	
+	function iterateLDA(stateMax,iterMax) {
+		g_numberOfOrbit = stateMax;
+		const errorDecisionOrbit = Math.floor((g_numberOfElectron-1)/2);
+		setElectronDensity();
+		setEffectivePotential();
+		solveKohnSham(g_numberOfOrbit,iterMax);
+		sortState(g_numberOfOrbit);
+		setOccupation(g_numberOfOrbit,g_numberOfElectron);
+		g_iterationError = g_sdEnergy[errorDecisionOrbit] - g_energyMem;
+		g_energyMem = g_sdEnergy[errorDecisionOrbit];
+	}
+	
+	//--- (2) set electron density rho -from sdState[], occupation[]
+	
+	function setElectronDensity() {
+		const nnx=g_NNx;
+		for (let i=0; i<nnx; i++) {
+			g_rho[i] *= (1.0-g_mixing);
+			for (let ie=0; ie<g_numberOfOrbit; ie++) {
+				if (g_occupation[ie]<=0.0) continue;
+				g_rho[i] += g_mixing*g_occupation[ie]*(g_sdState[ie][i]*g_sdState[ie][i])/g_lylz;
+			}
+		}
+	}
+	
+	//--- (3) set effective potential -from electron density
+	
+	function setEffectivePotential() {
+		const nnx=g_NNx;
+		poisson(20); // setVh
+		setVxc();
+		for (let i=0; i<nnx; i++) {
+			g_vv[i] = g_vvext[i]+g_vvh[i]+g_vvx[i]+g_vvc[i];
+		}
+	}
+	
+	function poisson(iterMax) { // solve (d^2/dr^2) V = 4 pai rho
+		const nnx=g_NNx, h2 = 4.0*Math.PI*g_dx*g_dx; 
+		const w = (1.0/2.0)*1.8; // 1/2 * SOR omega(1.0<omega<2.0)
+		for (let iter=0; iter<iterMax; iter++) {
+			for (let i=1; i<nnx-1; i++) {
+				g_vvh[i] = g_vvh[i]+w*(g_vvh[i+1]+g_vvh[i-1]-2.0*g_vvh[i] +h2*g_rho[i]);
+			}
+		}
+	}
+	
+	/*
+	function compensateVh() {
+		const nnx=g_NNx;
+		let vhs = 0.0, vxcs = 0.0;
+		for (let i=0; i<nnx; i++) {
+			vhs += g_vvh[i];
+			vxcs += g_vvx[i] + g_vvc[i];
+		}
+		const vm = (vhs+vxcs)/nnx;
+		for (let i=0; i<nnx; i++) {
+			g_vvh[i] -= vm;
+		}
+	}
+	*/
+	
+	// LDA :  J. P. Perdew and A. Zunger; Phys. Rev., B23, 5048 (1981)
+	function setVxc() {
+		const nnx=g_NNx;
+		const c1 = -0.984745022;
+		for (let i=0; i<nnx; i++) {
+			const rh = g_rho[i];
+			const rh3 = Math.pow(rh,0.33333333);
+			g_vvx[i] = c1*rh3;
+			const rs = 0.6204/(rh3+1.0e-20);
+			if (rs>=1.0) {
+				const sqrtrs = Math.sqrt(rs);
+				const ec = -0.1423/(1.0+1.0529*sqrtrs+0.3334*rs);
+				g_vvc[i] = ec*(1.0+1.22838*sqrtrs+0.4445*rs)/(1.0+1.0529*sqrtrs+0.3334*rs);
+			} else {
+				g_vvc[i] = -0.05837-0.0084*rs +(0.0311+0.00133*rs)*Math.log(rs);
+			}
+		}
+	}
+	
+	function eeCorrelation(rh) {
+		const r = 0.6204/(Math.pow(rh,0.33333333)+1.0e-20);
+		let ec;
+		if (r>=1.0) {
+			ec = -0.1423/(1.0+1.0529*Math.sqrt(r)+0.3334*r);
+		} else {
+			ec = -0.0480-0.0116*r+(0.0311+0.0020*r)*Math.log(r);
+		}
+		return ec;
+	}
+	
+	//--- (4) solve Kohn-Sham equation
+	
+	function solveKohnSham(stateMax, iterMax) {
+		for (let i=0; i<iterMax; i++) {
+			for (let ist=0; ist<stateMax; ist++) {
+				g_sdEnergy[ist] = steepestDescent(ist, g_dampingFactor);
+			}
+			GramSchmidt(stateMax);
+			g_iterCount += 1;
+		}
+	}
+	
+	function steepestDescent(ist,damp) {
+		const nnx=g_NNx, h2=2*g_dx*g_dx;
+		const ei = energyOfState(ist);
+		const p = g_sdState[ist];
+		for (let i=1; i<nnx-1; i++) {
+			g_wrk[i] = (2*p[i]-p[i+1]-p[i-1])/h2 + (g_vv[i]-ei)*p[i];
+		}
+		for (let i=1; i<nnx-1; i++) {
+			g_sdState[ist][i] = g_sdState[ist][i]-damp*g_wrk[i];
+		}
+		normalizeState(ist);
+		return ei;
+	}
+	
+	function energyOfState(ist) {
+		const nnx=g_NNx, h2=2*g_dx*g_dx, p=g_sdState[ist];
+		let s=0.0,sn=0.0;
+		for (let i=1; i<nnx-1; i++) {
+			s += p[i]*((2*p[i]-p[i+1]-p[i-1])/h2 + g_vv[i]*p[i]);
+			sn += p[i]*p[i];
+		}
+		return s/sn;
+	}
+	
+	function GramSchmidt(stateMax) {
+		const nnx=g_NNx;
+		normalizeState(0);
+		for (let istate=1; istate<stateMax; istate++) {
+			for (let ist=0; ist<istate; ist++) {
+				const s = innerProduct(ist,istate);
+				for (let i=1; i<nnx-1; i++) {
+					g_sdState[istate][i] = g_sdState[istate][i] - s*g_sdState[ist][i];
+				}
+			}
+			normalizeState(istate);
+		}
+	}
+	
+	//--- (5) sort state
+	
+	function sortState(stateMax) {
+		const nnx=g_NNx;
+		for (let ist=stateMax-2; ist>=0; ist--) {
+			if (g_sdEnergy[ist]>g_sdEnergy[ist+1]+0.00001) {
+				for (let i=0; i<nnx; i++) {
+					const w = g_sdState[ist][i];
+					g_sdState[ist][i] = g_sdState[ist+1][i];
+					g_sdState[ist+1][i] = w;
+				}
+				const w = g_sdEnergy[ist];
+				g_sdEnergy[ist] = g_sdEnergy[ist+1];
+				g_sdEnergy[ist+1] = w;
+			}
+		}
+	}
+	
+	//--- (6) set occupation
+	
+	function setOccupation(maxState, nElectron) {
+		let eUpper = g_sdEnergy[maxState-1]+1.0;
+		let eLower = g_sdEnergy[0]-1.0;
+		for (let i=0; i<maxState; i++) {
+			if(g_sdEnergy[i]>eUpper) eUpper = g_sdEnergy[i];
+			if(g_sdEnergy[i]<eLower) eLower = g_sdEnergy[i];
+		}
+		while (eUpper-eLower>1.0e-12) {
+			const eFermi = (eUpper+eLower)/2.0;
+			const ntrial = trialOcc(maxState, eFermi);
+			if (ntrial<nElectron) {
+				eLower = eFermi;
+			} else {
+				eUpper = eFermi;
+			}
+		}
+		const eFermi = (eUpper+eLower)/2.0;
+		for (let i=0; i<maxState; i++) {
+			g_occupation[i] = 2.0*FermiDirac(g_sdEnergy[i], eFermi);
+			if (g_occupation[i]<0.0001) g_occupation[i] = 0.0;
+			if (2.0-g_occupation[i]<0.0001) g_occupation[i] = 2.0;
+		}
+	}
+	
+	function trialOcc(maxState,eFermi) {
+		let s = 0.0;
+		for (let i=0;i<maxState;i++) {
+			s += 2.0*FermiDirac(g_sdEnergy[i], eFermi);
+		}
+		return s;
+	}
+	
+	function FermiDirac(ee, ef) {
+		let et = g_broadening;
+		return ( 1.0/(Math.exp((ee-ef)/et)+1.0) );
+	}
+	
+	
+	// --------------------  utility  --------------------
+	
+	function innerProduct(ist,jst) {
+		const nnx=g_NNx;
+		let s=0.0;
+		for (let i=1; i<nnx-1; i++) {
+			s = s + g_sdState[ist][i]*g_sdState[jst][i];
+		}
+		return s*g_dx;
+	}
+	
+	function normalizeState(ist) {
+		const nnx=g_NNx;
+		let s=0.0;
+		for (let i=1; i<nnx-1; i++) {
+			s = s + g_sdState[ist][i]*g_sdState[ist][i]*g_dx;
+		}
+		const a = Math.sqrt(1/s);
+		for (let i=1; i<nnx-1; i++) {
+			g_sdState[ist][i] = a*g_sdState[ist][i];
+		}
+	}
+	
+	function totalEnergy() {
+		const nnx=g_NNx;
+		let s=0.0, sei=0.0;
+		for (let i=0; i<g_numberOfOrbit; i++) {
+			sei += g_occupation[i]*g_sdEnergy[i];
+		}
+		for (let i=1; i<nnx-1; i++) {
+			s += (-0.5*g_vvh[i]-0.25*g_vvx[i]+eeCorrelation(g_rho[i])-g_vvc[i])*g_rho[i];
+		}
+		s = s*g_dx;
+		return sei+s;
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		init:			setInitialCondition,	// setInitialCondition( stateMax, vIndex, nElectron )
+		evolve:			iterateLDA,				// iterateLDA( stateMax, iterMax )
+		
+		setNe:			setNumberOfElectron, 	// setNumberOfElectron( ne )
+		setMixing:		setMixing,				// setMixing( mix )
+		setBroadening:	setBroadening,			// setBroadening( broadening )
+		
+		getAUinSI:		function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:	function() { return [ g_NNx, g_dx ]; },
+		getNow:			function() { return [ g_iterCount, totalEnergy() ]; },
+		
+		getOccupation:	function(ist) { return g_occupation[ist]; },
+		getStEnergy:	function(ist) { return g_sdEnergy[ist]; },
+		getState:		function(ist,i) { return g_sdState[ist][i]; },
+		getDensity:		function(i) { return g_rho[i]; },
+		getVext:		function(i) { return g_vvext[i]; },
+		getVeff:		function(i) { return g_vv[i]; },
+		getVh:			function(i) { return g_vvh[i]; },
+		getVx:			function(i) { return g_vvx[i]; },
+		getVc:			function(i) { return g_vvc[i]; },
+	};
+	
+})(); // ====================  sampleLDA1D end  ====================
+
+
+const js022 = (function(){ // ====================  js Module  ====================
+	
+	const theModule = sampleLDA1D;
+	const xCanvasSize = 480;	// in pixel
+	const yCanvasSize = 480;	// in pixel
+	let canvas;					// canvas2d
+	let ctx;
+	
+	let v_stateMax = 10;
+	let v_vIndex = 0; // 0:parabolic, 1:well, 2:well2
+	let v_nElectron = 4;
+	let v_iterMax = 2;
+	
+	let p_NNx, p_dx; // = theModule.getSysParam();
+	
+	let dispMode = 1;
+	let resetFlag = true;
+	let pauseFlag = false;
+	let stepFlag = false;
+	let neChanged = false;
+	
+	function main() {
+		resetFlag = true;
+		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
+		initDom();
+		
+		animate();
+		
+		function setCanvas( canvasID, width, height ) {
+			canvas = document.getElementById( canvasID );
+			canvas.width  = width;
+			canvas.height = height;
+			ctx = canvas.getContext('2d');
+			ctx.font = "16px 'sans-serif'";
+			ctx.textBaseline = "bottom";
+			ctx.textAlign = "left";
+			ctx.lineWidth = 1;
+		}
+	}
+	
+	
+	function animate() {
+		
+		if ( resetFlag ) {
+			resetFlag = false;
+			theModule.init( v_stateMax, v_vIndex, v_nElectron ); // ( nn, BoxSizeInNM, contTemp )
+			[ p_NNx, p_dx ] = theModule.getSysParam();
+		}
+		
+		if ( neChanged ) {
+			neChanged = false;
+			theModule.setNe(v_nElectron);
+		}
+		
+		if ( !pauseFlag ) {
+			theModule.evolve( v_stateMax, v_iterMax );
+		} else if ( pauseFlag && stepFlag ) {
+			stepFlag = false;
+			theModule.evolve( v_stateMax, v_iterMax );
+		}
+		
+		draw( ctx, dispMode );
+		
+		requestAnimationFrame(animate);
+	}
+	
+	
+	// --------------------  draw  --------------------
+	
+	const gColor = { orb:"#dddd00", dens:"#dd88dd",
+					Vext:"#00dd00", Veff:"#0088ff", Vh:"#4444ff", Vxc:"#8800ff", Vx:"#aa00ff",Vc:"#8888ff" };
+	
+	function draw( ctx, dispMode ) {
+		const NNx = p_NNx, dx = p_dx;
+		const xBoxPos = 30, yBoxPos = 20, xBoxSize = 256, yBoxSize = 440;
+		const xp = 30, yp = 20, xScale = xBoxSize/NNx, xtabp = 320, y0 =320;
+		
+		// clear
+		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
+		
+		const pmag = 100.0, emag = 15.0, rmag = 20000.0;
+		ctx.strokeStyle = "#888800";
+		ctx.strokeRect( xBoxPos, yBoxPos, xBoxSize, yBoxSize );
+		drawLine( ctx, xp-20, y0, xp+xBoxSize+20, y0, "#444444" ); // base line
+		
+		if ( dispMode==0 ) {
+			drawFunc( ctx, NNx, xp, y0, xScale, gColor.Vext, function(i) {return emag*theModule.getVext(i); }); // Vext
+			ctx.fillStyle = gColor.Vext; ctx.fillText("Vext(x)", xp+170, yBoxPos+60);
+			for (let ist=0; ist<v_stateMax; ist++) {
+				const col = "hsl("+ist*30+",100%,50%)";
+				drawFunc( ctx, NNx, xp, y0, xScale, col,
+					function(i) {return theModule.getState(ist,i)*pmag+theModule.getStEnergy(ist)*emag; } // orbit
+				);
+			}
+		} else if ( dispMode==1 ) {
+			ctx.fillStyle = gColor.dens; ctx.fillText("density(x)", xp+170, yBoxPos+40);
+			ctx.fillStyle = gColor.Vext; ctx.fillText("Vext(x)", xp+170, yBoxPos+60);
+			drawRho( ctx, NNx, xp, y0, xScale, gColor.dens );
+			drawFunc( ctx, NNx, xp, y0, xScale, gColor.Vext, function(i) {return emag*theModule.getVext(i); }); // Vext
+		} else if ( dispMode==2 ) {
+			ctx.fillStyle = gColor.dens; ctx.fillText("density(x)", xp+170, yBoxPos+40);
+			ctx.fillStyle = gColor.Vext; ctx.fillText("Vext(x)", xp+170, yBoxPos+60);
+			ctx.fillStyle = gColor.Veff; ctx.fillText("Veff(x)", xp+170, yBoxPos+80);
+			ctx.fillStyle = gColor.Vh; ctx.fillText("Vh(x) x 10", xp+170, yBoxPos+100);
+			ctx.fillStyle = gColor.Vxc; ctx.fillText("Vxc(x) x 10", xp+170, yBoxPos+120);
+			drawFunc( ctx, NNx, xp, y0, xScale, gColor.dens, function(i) {return rmag*theModule.getDensity(i); });
+			drawFunc( ctx, NNx, xp, y0, xScale, gColor.Vext, function(i) {return emag*theModule.getVext(i); });
+			drawFunc( ctx, NNx, xp, y0, xScale, gColor.Veff, function(i) {return emag*theModule.getVeff(i); });
+			drawFunc( ctx, NNx, xp, y0, xScale, gColor.Vh, function(i) {return 10.0*emag*theModule.getVh(i); });
+			drawFunc( ctx, NNx, xp, y0, xScale, gColor.Vxc, 
+				function(i) {return 10.0*emag*(theModule.getVx(i)+theModule.getVc(i)); });
+		}
+		
+		// state energy table
+		ctx.fillStyle = "#888888";
+		ctx.fillText("orbit   energy(au)", xtabp, 40);
+		for (let ist=0; ist<v_stateMax; ist++) {
+			const col = `hsl(${ ist*30 },100%,50%)`;
+			ctx.fillStyle = col;
+			ctx.fillText(`|${ist}>   ${(theModule.getStEnergy(ist)).toFixed(6)}`, xtabp, 240-ist*20); // energy
+		}
+		ctx.fillStyle = "#888888";
+		ctx.fillText("orbit  occupation", xtabp, 280);
+		for (let ist=0; ist<5; ist++) {
+			const occ = theModule.getOccupation(ist);
+			ctx.fillStyle = `hsl(${ 240-120*occ },70%,70%)`;
+			ctx.fillText(`|${ist}>   ${(theModule.getOccupation(ist)).toFixed(6)}`, xtabp, 380-ist*20); // energy
+		}
+		
+		// caption
+		let iterCount, totalEnergy; [ iterCount, totalEnergy ] = theModule.getNow();
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`box size : ${NNx*dx}(au)`, xtabp, yCanvasSize-60);
+		ctx.fillText(`iteration = ${iterCount}`, xtabp, yCanvasSize-40);
+		ctx.fillText(`Energy = ${totalEnergy.toFixed(6)}`, xtabp, yCanvasSize-20);
+	}
+	
+	function drawFunc( ctx, nnx, xp, y0, xScale, color, func ) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		for (let i=0; i<nnx; i++) {
+			ctx.lineTo(i*xScale+xp,y0-func(i));
+		}
+		ctx.stroke();
+	}
+	
+	function drawRho( ctx, nnx, xp, y0, xScale, color ) {
+		const rmag=20000.0,emag=15.0;
+		
+		ctx.fillStyle = color;
+		for (let i=0; i<nnx-1; i++) {
+			const vi = theModule.getVext(i), vip = theModule.getVext(i+1);
+			const ri = theModule.getDensity(i), rip = theModule.getDensity(i+1);
+			ctx.beginPath();
+			ctx.lineTo(i*xScale+xp,y0-vi*emag);
+			ctx.lineTo(i*xScale+xp,y0-vi*emag-ri*rmag);
+			ctx.lineTo((i+1)*xScale+xp,y0-vip*emag-rip*rmag);
+			ctx.lineTo((i+1)*xScale+xp,y0-vip*emag);
+			ctx.closePath();
+			ctx.fill();
+		}
+	}
+	
+	function drawLine( ctx, x1, y1, x2, y2, color ) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	}
+	
+	
+	// --------------------  control  --------------------
+	
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function reset() { resetFlag = true; }
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = ( pauseFlag==false ); 
+		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==true ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() { stepFlag = true; }
+	
+	function setTheme() {  // select theme
+		v_vIndex = 0 + document.getElementById("slct_theme").selectedIndex;
+		resetFlag = true;
+	}
+	
+	function setNelectron() {  // select theme
+		var ne = 0 + document.getElementById("slct_Nelectron").selectedIndex;
+		v_nElectron = ne;
+		neChanged = true;
+	}
+	
+	function setDispMode() {  // select dispMode
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+	}
+	
+	/*
+	function setOrbit() {  // select dispOrbit
+		dispOrbit = 0 + document.getElementById("slct_orbit").selectedIndex;
+	}
+	*/
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		reset:			reset,			// reset()
+		pause:			pause,			// pause()
+		step:			step,			// step()
+		
+		setTheme:		setTheme,		// setTheme()
+		setNelectron:	setNelectron,	// setNelectron()
+		setDispMode:	setDispMode,	// setDispMode()
+		//setOrbit:		setOrbit,		// setOrbit()
+	};
+	
+})(); // ====================  js022 module end  ====================
+
+
+// event
+const js = js022;
+window.addEventListener('load', js.main );
+
+
+// %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%%
+
+</script>
+
+<style type="text/css">
+    body { text-align:left; color:#000000; background-color:#fff8dd; }
+</style>
+
+</head>
+
+<body>
+<p>[js022] Real Space DFT - Local Density Approxmation 1D</p>
+<canvas ID="canvas_box" style="background-color: #000000;" WIDTH="480" HEIGHT="480"></canvas>
+<br>
+
+<label>theme:</label>
+<select id="slct_theme" onChange="js.setTheme()">
+<option selected>electrons in parabollic V=0.5x^2</option>
+<option>electrons in well V=0(|x|<4.0) =20.0(else)</option>
+<option>electrons in well V=-1(|x|<4.0) =20.0(else)</option>
+</select>
+<br>
+
+<label>number of electron:</label>
+<select id="slct_Nelectron" onChange="js.setNelectron()">
+<option>0</option><option>1</option><option>2</option><option>3</option><option selected>4</option>
+<option>5</option><option>6</option><option>7</option><option>8</option>
+</select>
+    <span style="margin-right: 140px;"></span>
+<button onClick="js.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="js.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="js.step()">step</button>
+<br>
+
+<label>disp mode:</label>
+<select id="slct_dispMode" onChange="js.setDispMode()">
+<option>orbits + Vext</option>
+<option selected>density + Vext</option>
+<option>density + Vext,Veff,Vh,Vxc </option>
+</select>
+<!--
+    <span style="margin-right: 20px;"></span>
+<label>orbit:</label>
+<select id="slct_orbit" onChange="js.setOrbit()"> 
+<option selected>0</option><option>1</option><option>2</option><option>3</option><option>4</option>
+<option>5</option><option>6</option><option>7</option><option>8</option><option>9</option>
+</select>
+-->
+<br>
+
+<p id="text_caption" ></p>
+<hr width="480" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
