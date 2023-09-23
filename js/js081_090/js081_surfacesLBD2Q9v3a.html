@@ -1,0 +1,1257 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>js081_surfaceLBD2Q9</title>
+<script type="text/javascript">
+
+// %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%%
+
+'use strict';
+
+/* --------------------
+//
+//  js081_surfaceLBD2Q9
+//    Copyright(C) 2018-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2018.01.06 created, last updated on 2018.11.29
+//    ver 0.0.1  2019.01.22 v1, last updated on 2021.08.10
+//    ver 0.0.2  2021.11.05 v2, last updated on 2021.11.05
+//    ver 0.0.3  2023.04.23 v3, last updated on 2023.09.04
+//
+// -------------------- Lattice Boltzmann Method - D2Q9 model  --- fluid dynamics
+//
+// - method: lattice Boltzmann Method 
+//    D2Q9 model - velocity distribution in lattice i,j:
+//       velocity base vectors:
+//          e[0]=[ 0, 0], e[1]=[ 1, 0], e[2]=[ 0, 1], e[3]=[-1, 0], e[4]=[ 0,-1],
+//          e[5]=[ 1, 1], e[6]=[-1, 1], e[7]=[-1,-1], e[8]=[ 1,-1]
+//       velocity distribution at lattice i,j: fv[i][j][k]*e[k], k=0,1,2,...,8
+//
+//      (1) set lattice:
+//          density: rho[i][j],
+//          flow velocity: ux[i][j],uy[i][j]
+//          velosity distribution: f[i][j][k] (k=0,1,2,...,8)
+//
+//      (2) streaming  f(r+ek*dt,t+dt) = f(r,t)
+//         ftx[i][j][0] <-- ftp[i][j][0]      // 0:(0,0)
+//         ftx[i][j][1] <-- ftp[i-1][j][1]    // 1:E(1,0)
+//         ftx[i][j][2] <-- ftp[i][j-1][2]    // 2:N(0,1)
+//         ftx[i][j][3] <-- ftp[i+1][j][3]    // 3:W(-1,0)
+//         ftx[i][j][4] <-- ftp[i][j+1][4]    // 4:S(0,-1)
+//         ftx[i][j][5] <-- ftp[i-1][j-1][5]  // 5:NE(1,1)
+//         ftx[i][j][6] <-- ftp[i+1][j-1][6]  // 6:NW(-1,1)
+//         ftx[i][j][7] <-- ftp[i+1][j+1][7]  // 7:SW(-1,-1)
+//         ftx[i][j][8] <-- ftp[i-1][j+1][8]  // 8:SE(1,-1)
+//
+//      (3) scattering  f(r,t+dt) = f(r,t+dt) - omega*(f(r,t+dt)-feq))
+//         rho = sum(f[i][j][k], k=0,1,2,...,8)
+//         vx = sum(e[k][0]*f[i][j][k], k=0,1,2,...,8)/rho
+//         vy = sum(e[k][1]*f[i][j][k], k=0,1,2,...,8)/rho
+//         feq[k]: equilibrium velocity distribution (rho*u = sum(feq[k]*e[k],k=0,...,8)
+//                 feq[k] = w[k]*rho(r)*(1+3*(e[k].u)+4.5*(e[k].u)^2-1.5u^2) (D2Q9 at c=dx/dt=1)
+//         f[i][j][k] = f[i][j][k] - omega*(f[i][j][k]-feq[k])
+//           omega = 1/tau = 1/(3*kineticViscosity+0.5),(2D,dx=1,dt=1). tau:relaxation time
+//
+//         at boundary
+//           wall: bounce-back ( E <--> W, N <--> S, NE <--> SW, NW <--> SE )
+//           velocity boundary: set rho,ux,uy and feq
+//
+//      goto (2)
+//
+//  phase separation: water - watar vapor
+//    - interparticle atractive force
+//      (fx,fy) = -G*psi(i,j)*sum(wk*psi(i+e[k][0],j+e[k][1]),k=1,2,..,8)
+//        where
+//        interaction potential psi(rh):
+//          psi(rh) = psi_0*exp(-rho_0/rh)
+//        interaction strength G
+//        weight wk: wk=1/9(k=1,2,3,4), wk=1/36(k=5,6,7,8)
+//
+//    - external force in LBM
+//      (vxeq,vyeq) = (vx,vy) + tau*dt*(fx,fy)/rho
+//      equilibrium velocity distribution feq <-- rho,vxeq,vyeq
+//
+//      G = -120.0, psi_0 = 200.0, rho_0 = 4.0 for water vapor
+//      (data: M.C.Sukop; "Lattice Boltzmann Modeling" Springer 2007 p.81)
+//
+//  fliud-surface force (adsorption force) F_ads:
+//    (fads_x,fads_y) = -G_ads*psi(i,j)*sum(wk*s(i+e[k][0],j+e[k][1]),k=1,2,..,8)
+//                          s(ii,jj) = 1 ((ii,jj) is wall) else 0
+//                    
+//    set psi(i,j) = G_ads/G in Wall,and calculate internal force, 
+//    we obtain internal force + adsorption force.
+//
+// --------------------
+*/
+
+const surfaceLBD2Q9 = (function(){ // ====================  surfaceLBD2Q9 Module  ====================
+	
+	const g_nxMax = 360;		// maximum array x-size of field
+	const g_nyMax = 360;		// maximum array y-size of field
+	
+	let g_sysTime = 0.0;		// system time
+	let g_dt = 1.0;				// time step
+	let g_dx = 1.0;				// x-division
+	let g_dy = 1.0;				// y-division
+	let g_tpp = 0;				// present time v9[tpp][i][j], tpp = 0 or 1 
+	let g_tnx = 1;				// next    time v9[tnx][i][j], tnx = 1 or 0
+	let g_status = 'STABLE';	// system status (in string)
+	
+	let g_themeNum = 0;			// theme mnumber 0 - 6
+	let g_themeStr = "theme";	// theme eg. "gas expansion"
+	let g_NNx = 180;			// array x-size of field
+	let g_NNy = 180;			// array y-size of field
+	let g_drawScale = 2;		// draw scale
+	let g_vxBoundary = 0.1;		// periodic condition : vx=0.1 (sound speed = 1.0) at x=0
+	let g_vyBoundary = 0.0;		// periodic condition : vy=0.0 (sound speed = 1.0) at x=0
+	
+	let g_gravity = 0.0;		// gravity
+	let g_ggg = -120.0;			// interaction strength G
+	let g_rho_0 = 200.0;		// interaction potential psi(rh) = psi_0*exp(-rho_0/rh)
+	let g_psi_0 = 4.0;			// interaction potential psi_0 = psi(0)
+	
+	let g_xProbe = 360/2;		// probe position x
+	let g_yProbe = 180/2;		// probe position y
+	
+	//              0    1    2    3    4    5    6    7    8
+	const g_feq = [ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 ]; // equilibrium velocity distribution
+	const g_kind = dimInt2( g_nxMax, g_nyMax );	// kind[ix][iy] 0:free space,1:wall,2:velocity boundary
+	const g_v9 = dim4( 2, g_nxMax, g_nyMax, 9 );// velocity distribution v9[tpp/tnx][ix][iy][0-8]
+	const g_rho = dim2( g_nxMax, g_nyMax );		// density rho[ix][iy]
+	const g_ux = dim2( g_nxMax, g_nyMax );		// x-component of flow velocity (sound speed = 1.0)
+	const g_uy = dim2( g_nxMax, g_nyMax );		// y-component of flow velocity (sound speed = 1.0) 
+	const g_psi = dim2( g_nxMax, g_nyMax );		// interaction potential psi(rh) = psi_0*exp(-rho_0/rh)
+	const g_fx = dim2( g_nxMax, g_nyMax );		// x-component of interaction force
+	const g_fy = dim2( g_nxMax, g_nyMax );		// y-component of interaction force
+	
+	
+	function dim2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Float64Array( nj );
+		}
+		return a;
+	}
+	
+	function dimInt2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Int32Array( nj );
+		}
+		return a;
+	}
+	
+	function dim4( ni, nj, nk, nl ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = [];
+			for (let j=0; j<nj; j++) {
+				a[i][j] = [];
+				for (let k=0; k<nk; k++) {
+					a[i][j][k] = new Float64Array( nl );
+				}
+			}
+		}
+		return a;
+	}
+	
+	
+	// --------------------  set theme and user parameter  --------------------
+	
+	const g_themeParam = [
+		// 0:themeStr             1:NNx 2:NNy 3:sc 4:nue 5:vxFan 6:rhoMag
+		["init 1.0*rho_0 (200)",  180,  180,  2,   0.16, 0.000,  2.0  ],
+		["init 0.7*rho_0 (140)",  180,  180,  2,   0.16, 0.000,  2.0  ],
+		["init 1.5*rho_0 (300)",  180,  180,  2,   0.16, 0.000,  2.0  ],
+		["fliud-surface",         180,  120,  2,   0.16, 0.000,  2.0  ],
+		["120x120",               120,  120,  3,   0.16, 0.000,  2.0  ]
+	];
+
+	const g_userParam = {
+		powderON : false,
+		probeON : false,
+		nue : 0.16,
+		vxFlow : 0.0,
+		rhoMag : 1.0,
+		wallRho :100.0
+	};
+	
+	function setThemeAndUserParam(theme) {
+		g_themeNum = theme;
+		g_themeStr = g_themeParam[theme][0];
+		g_NNx = g_themeParam[theme][1];
+		g_NNy = g_themeParam[theme][2];
+		g_drawScale = g_themeParam[theme][3];
+		g_userParam.nue = g_themeParam[theme][4];
+		g_userParam.vxFlow = g_themeParam[theme][5];
+		g_userParam.rhoMag = g_themeParam[theme][6];
+	}
+	
+	
+	// --------------------  set initial condition  --------------------
+	
+	function setInitialCondition( theme ) {
+		clearPsi();
+		g_status = 'STABLE';
+		g_sysTime = 0.0;
+		setThemeAndUserParam(theme);
+		g_vxBoundary = g_userParam.vxFlow;
+		setInitialLattice(theme);
+		setWallPsi(g_userParam.wallRho);
+		powder.setInitialPosition(); // powder
+		g_xProbe = 360/2; g_yProbe = 180/2;
+	}
+	
+	function setInitialLattice(theme) {
+		const nnx=g_NNx, nny=g_NNy;
+		let rhThema;
+		g_gravity = 0.0;
+		if (theme==0) {
+			rhThema = g_rho_0;
+		} else if (theme==1) {
+			rhThema = 0.7*g_rho_0;
+		} else if (theme==2) {
+			rhThema = 1.5*g_rho_0;
+		} else if (theme==3) {
+			g_gravity = 0.00001;
+			rhThema = 0.9*g_rho_0;
+		}
+		let vx=0.0, vy=0.0;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				g_kind[i][j] = 0;
+				const rh = rhThema+(Math.random()-0.5);
+				setEquiLattice(g_v9[g_tpp][i][j], rh, vx, vy, i, j);
+			}
+		}
+		if (theme==3) {
+			for (let i=0; i<nnx; i++) {
+				setWall(i,0);
+			}
+		}
+	}
+	
+	function setWall(i,j) {
+		g_kind[i][j] = 1; // wall
+		for (let k=0; k<9; k++) {
+			g_v9[g_tpp][i][j][k] = 0.0;
+		}
+	}
+	
+	function setWallPsi(rh) {
+		const nnx=g_NNx, nny=g_NNy;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				if (g_kind[i][j]==1) {
+					g_psi[i][j] = g_psi_0*Math.exp(-g_rho_0/rh);
+				}
+			}
+		}
+	}
+	
+	function clearPsi() {
+		let nnx=g_NNx, nny=g_NNy;
+
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				g_psi[i][j] = 0.0;
+			}
+		}
+	}
+	
+	
+	// --------------------  time evolution  --------------------
+	
+	function timeEvolution( nCalc, wallRh ) {
+		if (g_status=='STABLE') {
+			setWallPsi(wallRh);
+			for (let i=0; i<nCalc; i++) {
+				streaming();
+				scattering(g_userParam.nue); //nue: kinetic viscosity
+				if (g_userParam.powderON) powder.move(); // powder
+				if (g_status != 'STABLE') break;
+				g_sysTime += g_dt;
+				g_tpp = g_tnx;
+				g_tnx = (g_tnx+1)%2;
+			}
+		}
+		return g_status;
+	}
+	
+	// --- (2) streaming
+	
+	function streaming() {
+		const nnx=g_NNx, nny=g_NNy;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				const ip = (i+1)%nnx; 
+				const im = (i-1+nnx)%nnx;
+				const jp = (j+1)%nny;
+				const jm = (j-1+nny)%nny;
+				const fij = g_v9[g_tnx][i][j];
+				fij[0] = g_v9[g_tpp][i][j][0];   // 0:(0,0)
+				fij[1] = g_v9[g_tpp][im][j][1];  // 1:E(1,0)
+				fij[2] = g_v9[g_tpp][i][jm][2];  // 2:N(0,1) 
+				fij[3] = g_v9[g_tpp][ip][j][3];  // 3:W(-1,0)
+				fij[4] = g_v9[g_tpp][i][jp][4];  // 4:S(0,-1)
+				fij[5] = g_v9[g_tpp][im][jm][5]; // 5:NE(1,1)
+				fij[6] = g_v9[g_tpp][ip][jm][6]; // 6:NW(-1,1)
+				fij[7] = g_v9[g_tpp][ip][jp][7]; // 7:SW(-1,-1)
+				fij[8] = g_v9[g_tpp][im][jp][8]; // 8:SE(1,-1)
+			}
+		}
+	}
+	
+	// --- (3) scattering
+	
+	function scattering(kineticViscosity) {
+		const nnx=g_NNx, nny=g_NNy, w1=1.0/9.0, w2=1.0/36.0;
+		const omega = 1.0/(3.0*kineticViscosity+0.5); // omega = 1/tau, tau: relaxation time
+		const tau = (1.0/omega);
+		const g = (1.0/omega)*g_gravity; // --- gravity
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				const fij = g_v9[g_tnx][i][j];
+				if (g_kind[i][j]==0) { // free space: set rho,ux,uy,psi
+					const rh = fij[0]+fij[1]+fij[2]+fij[3]+fij[4]+fij[5]+fij[6]+fij[7]+fij[8];
+					if (rh>0) {
+						const vx = (fij[1]-fij[3]+fij[5]-fij[6]-fij[7]+fij[8])/rh;
+						const vy = (fij[2]-fij[4]+fij[5]+fij[6]-fij[7]-fij[8])/rh;
+						g_rho[i][j] = rh;
+						g_ux[i][j] = vx;
+						g_uy[i][j] = vy;
+						g_psi[i][j] = g_psi_0*Math.exp(-g_rho_0/rh);
+					} else {
+						g_status = "UNSTABLE at i="+i+",j="+j+",rho="+rh.toFixed(3)+"<br>"+
+									"change condition and press reset";
+						return;
+					}
+				} else if (g_kind[i][j]==1) { // wall: bounce-back boundary
+					let m;
+					fij[0] = 0.0;
+					m = fij[1]; fij[1] = fij[3]; fij[3] = m; // 1:E(1,0) 3:W(-1,0)
+					m = fij[2]; fij[2] = fij[4]; fij[4] = m; // 2:N(0,1) 4:S(0,-1)
+					m = fij[5]; fij[5] = fij[7]; fij[7] = m; // 5:NE(1,1) 7:SW(-1,-1)
+					m = fij[6]; fij[6] = fij[8]; fij[8] = m; // 6:NW(-1,1) 8:SE(1,-1)
+				} else if (g_kind[i][j]==2) { // velocity boundary
+					setEquiLattice(fij, 1.0, g_vxBoundary, g_vyBoundary, i, j);
+				}
+			}
+		}
+		
+		for (let i=0; i<nnx; i++) {
+			const ip = (i+1)%nnx;
+			const im = (i-1+nnx)%nnx;
+			for (let j=0; j<nny; j++) {
+				const jp = (j+1)%nny;
+				const jm = (j-1+nny)%nny;
+				const fij = g_v9[g_tnx][i][j];
+				if (g_kind[i][j]==0) { // free space;set fx[][],fy[][],feq
+					let ffx = 0.0, ffy = 0.0;
+					ffx += w1*1*g_psi[ip][j ];   // 1:E(1,0)
+					//ffx += w1*0*g_psi[i ][jp]; // 2:N(0,1)
+					ffx += w1*(-1)*g_psi[im][j ];// 3:W(-1,0)
+					//ffx += w1*0*g_psi[i ][jm]; // 4:S(0,-1)
+					ffx += w2*1*g_psi[ip][jp];   // 5:NE(1,1)
+					ffx += w2*(-1)*g_psi[im][jp];// 6:NW(-1,1)
+					ffx += w2*(-1)*g_psi[im][jm];// 7:SW(-1,-1)
+					ffx += w2*1*g_psi[ip][jm];   // 8:SE(1,-1)
+
+					//ffy += w1*0*g_psi[ip][j ]; // 1:E(1,0)
+					ffy += w1*1*g_psi[i ][jp];   // 2:N(0,1)
+					//ffy += w1*0*g_psi[im][j ]; // 3:W(-1,0)
+					ffy += w1*(-1)*g_psi[i ][jm];// 4:S(0,-1)
+					ffy += w2*1*g_psi[ip][jp];   // 5:NE(1,1)
+					ffy += w2*1*g_psi[im][jp];   // 6:NW(-1,1)
+					ffy += w2*(-1)*g_psi[im][jm];// 7:SW(-1,-1)
+					ffy += w2*(-1)*g_psi[ip][jm];// 8:SE(1,-1)
+
+					ffx = -g_ggg*g_psi[i][j]*ffx;
+					ffy = -g_ggg*g_psi[i][j]*ffy;
+					g_fx[i][j] = ffx;
+					g_fy[i][j] = ffy;
+					const rh = g_rho[i][j];
+					const vx = g_ux[i][j];
+					const vy = g_uy[i][j];
+					const vxeq = vx + tau*ffx/rh;
+					const vyeq = vy + tau*ffy/rh - g;
+					setEquilibriumV9(g_feq, rh, vxeq, vyeq);
+					for (let k=0; k<9; k++) {
+						fij[k] -= omega*(fij[k]-g_feq[k]);
+					}
+				}
+			}
+		}
+	}
+	
+	function setEquiLattice(veq, rh, vx, vy, i, j) {
+		g_rho[i][j] = rh;
+		g_ux[i][j] = vx;
+		g_uy[i][j] = vy;
+		setEquilibriumV9(veq, rh, vx, vy);
+	}
+	
+	function setEquilibriumV9(veq, rh, vx, vy) {
+		// feq[k] = wk*rho*(1+3*(ek.u)+4.5*(ek.u)^2-1.5u^2) (D2Q9 at c=dx/dt=1)
+		const w0rh = rh*4.0/9.0, w1rh = rh/9.0, w2rh = rh/36.0;
+		const ux3 = 3.0*vx, uy3 = 3.0*vy;
+		const uxx = vx*vx, uyy = vy*vy;
+		const uxy2 = 2.0*vx*vy;
+		const u2 = uxx + uyy;
+		const c0 = 1.0 - 1.5*u2;
+		veq[0] = w0rh*(c0                            ); // 0(0,0)
+		veq[1] = w1rh*(c0 + ux3       + 4.5*uxx      ); // E(1,0)
+		veq[2] = w1rh*(c0       + uy3 + 4.5*uyy      ); // N(0,1)
+		veq[3] = w1rh*(c0 - ux3       + 4.5*uxx      ); // W(-1,0)
+		veq[4] = w1rh*(c0       - uy3 + 4.5*uyy      ); // S(0,-1)
+		veq[5] = w2rh*(c0 + ux3 + uy3 + 4.5*(u2+uxy2)); //NE(1,1)
+		veq[6] = w2rh*(c0 - ux3 + uy3 + 4.5*(u2-uxy2)); //NW(-1,1)
+		veq[7] = w2rh*(c0 - ux3 - uy3 + 4.5*(u2+uxy2)); //SW(-1,-1)
+		veq[8] = w2rh*(c0 + ux3 - uy3 + 4.5*(u2-uxy2)); //SE(1,-1)
+	}
+	
+	// -------------------- utility
+	
+	function vorticity(i, j) {
+		if (i==0 || i==g_NNx-1 || j==0 || j==g_NNy-1) return 0.0;
+		return (g_uy[i+1][j]-g_uy[i-1][j])/(2*g_dx)-(g_ux[i][j+1]-g_ux[i][j-1])/(2*g_dy);
+	}
+	
+	function speed(i,j) {
+		const uxij= g_ux[i][j], uyij= g_uy[i][j];
+		return Math.sqrt( uxij*uxij+uyij*uyij );
+	}
+	
+	function totalRho() {
+		const nnx=g_NNx, nny=g_NNy;
+		let s=0.0;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				if (g_kind[i][j]==0) s += g_rho[i][j];
+			}
+		}
+		return s;
+	}
+	
+	function meanRho() {
+		const nnx=g_NNx, nny=g_NNy;
+		let n=0, s=0.0;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				if (g_kind[i][j]==0) {
+					n++;
+					s += g_rho[i][j];
+				}
+			}
+		}
+		return s/n;
+	}
+	
+	
+	// --------------------  powder (LB2D)  --------------------
+	
+	// external: g_NNx,g_NNy,g_dx,g_dy,g_dt,g_ux[][],g_uy[][],g_kind[][]
+	
+	const powder = {};   // namespace of powder module
+	powder.n = 300;    // n: number of powder
+	powder.x = [];     // x-position of i-th powder
+	powder.y = [];     // y-position of i-th powder
+	
+	powder.setInitialPosition = function() {
+		const nn=powder.n, px=powder.x, py=powder.y;
+		for (let i=0; i<nn; i++) {
+			px[i] = (g_NNx-2)*Math.random()+1;
+			py[i] = (g_NNy-2)*Math.random()+1;
+		}
+	};
+	
+	powder.move = function() {
+		const nnx=g_NNx, nny=g_NNy, nn=powder.n, ta=g_dt*(1.0/g_dx), px=powder.x, py=powder.y;
+		for (let i=0; i<nn; i++) {
+			const ix = Math.floor(px[i]);
+			const iy = Math.floor(py[i]);
+			px[i] += g_ux[ix][iy]*ta;
+			py[i] += g_uy[ix][iy]*ta;
+			if (px[i]>=nnx) px[i] -= nnx;
+			if (px[i]<0) px[i] += nnx;
+			if (py[i]>=nny) py[i] -= nny;
+			if (py[i]<0) py[i] += nny;
+			if (g_kind[ix][iy]==1) {
+				px[i] = (nny-2)*Math.random()+1;
+				py[i] = (nny-2)*Math.random()+1;
+			} else if (g_kind[ix][iy]==2) {
+				if ( Math.random()<0.001 ) {
+					px[i] = (nny-2)*Math.random()+1;
+					py[i] = (nny-2)*Math.random()+1;
+				}
+			}
+		}
+	};
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		init:			setInitialCondition,	// setInitialCondition( theme )
+		evolve:			timeEvolution,			// timeEvolution( nCalc, wallRh )
+		
+		setPowderFlag:	function( sw ) { g_userParam.powderON = sw; },
+		setProbeFlag:	function( sw ) { g_userParam.probeON = sw; },
+		
+		getSysParam:	function() { return [ g_NNx, g_NNy, g_dx, g_dt, powder.n,  ]; },
+		getParam:		function() { return [ g_drawScale, g_userParam.nue, g_userParam.vxFlow, g_userParam.rhoMag ]; },
+		getInteractionInfo: function() { return [ g_ggg, g_rho_0, g_psi_0 ]; },
+		getNow:			function() { return [ g_sysTime, g_status, g_themeStr, meanRho(), g_gravity ]; },
+		getCellKind:	function(i,j) { return g_kind[i][j]; }, // kind[ix][iy] 0:free space,1:wall,2:velocity boundary
+		getFlow:		function(i,j) { return [ g_ux[i][j], g_uy[i][j] ]; },
+		getDensity:		function(i,j) { return g_rho[i][j]; },	
+		getVorticity:	vorticity,				// vorticity(i,j)
+		getSpeed:		speed,					// speed(i,j)
+		getPowderPos:	function(ipow) { return [ powder.x[ipow], powder.y[ipow] ]; },
+	};
+	
+})(); // ====================  surfaceLBD2Q9 end  ====================
+
+
+const js081 = (function(){ // ====================  js Module  ====================
+	
+	const theModule = surfaceLBD2Q9;
+	const xCanvasSize = 480;	// in pixel
+	const yCanvasSize = 480;	// in pixel
+	let canvas;					// canvas2d
+	let ctx;					// = canvas.getContext('2d');
+	
+	let v_theme = 3; // 3:liquid-solid contact
+	let v_nCalc = 6; // 6 (calc/frame)
+	let v_wallRh = 100.0;
+	
+	let p_NNx, p_NNy, p_dx, p_dt, p_nPowder; // <-- theModule.getSysParam()
+	let p_drawScale, p_nue, p_vxFlow, p_rhoMag; // <-- theModule.getParam()
+	let p_ggg, p_rho_0, p_psi_0; // <-- theModule.getInteractionInfo()
+	
+	let xBoxSize = 420;
+	let dispMode = 4; // 4: grid2D density ratio
+	let resetFlag = true;
+	let pauseFlag = false;
+	let stepFlag = false;
+	//let inStepFlag = false;
+	
+	function main() {
+		resetFlag = true;
+		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
+		initDom();
+		viewHome();
+		
+		animate();
+		
+		function setCanvas( canvasID, width, height ) {
+			canvas = document.getElementById( canvasID );
+			canvas.width  = width;
+			canvas.height = height;
+			ctx = canvas.getContext('2d');
+			ctx.font = "16px 'sans-serif'";
+			ctx.textBaseline = "bottom";
+			ctx.textAlign = "left";
+			ctx.lineWidth = 1;
+			g3d.setMouseOnCanvas( canvas ); // 3D graphics
+		}
+	}
+	
+	
+	function animate() {
+		
+		if ( resetFlag ) {
+			resetFlag = false;
+			theModule.init( v_theme ); // ( nn, BoxSizeInNM, contTemp )
+			[ p_NNx, p_NNy, p_dx, p_dt, p_nPowder ] = theModule.getSysParam();
+			[ p_drawScale, p_nue, p_vxFlow, p_rhoMag ] = theModule.getParam();
+			[ p_ggg, p_rho_0, p_psi_0 ] = theModule.getInteractionInfo();
+			// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
+			g3d.init( p_NNx, p_NNy, p_NNy/2, p_dx, xCanvasSize, yCanvasSize, xBoxSize, 20 );
+			g3d.drawWallGrid2D.threshold = 0.0;
+			g3d.drawWallVectorField2D.threshold = 0.0;
+		}
+		
+		if ( !pauseFlag ) {
+			theModule.evolve( v_nCalc, v_wallRh );
+		} else if ( pauseFlag && stepFlag ) {
+			stepFlag = false;
+			theModule.evolve( v_nCalc, v_wallRh );
+			//inStepFlag = true;
+		}
+		
+		draw( ctx, dispMode );
+		
+		requestAnimationFrame(animate);
+	}
+	
+	
+	// --------------------  draw  --------------------
+	
+	function draw( ctx, dispMode ) {
+		
+		const densMag = 200, rmag = 8.0*p_rhoMag;
+		//const densityFunc = function(i,j) { return densMag*(theModule.getDensity(i,j)-1.0); };
+		const dRatioFunc = function(i,j) { return rmag*(theModule.getDensity(i,j)/p_rho_0-1.0); };
+		const densityFunc = dRatioFunc;
+		const wallFunc = function(i,j) { return (theModule.getCellKind(i,j)==1); };
+		const vorticityColorFunc = function(i,j) {
+			const hue = Math.floor(36120.0 - 5000.0*theModule.getVorticity(i,j)) % 360;
+			return `hsl(${hue},100%,50%)`;
+		}
+		
+		const xp = 60, yp = 30, sc = p_drawScale;
+		
+		// clear
+		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
+		
+		if (dispMode==0) {
+			dispText( "density(x,y)" );
+			drawImgField( ctx, 0, 0, xp, yp, sc );
+		} else if (dispMode==1) {
+			dispText( "density(x,y) + powder" );
+			drawImgField( ctx, 0, 2, xp, yp, sc );
+		} else if (dispMode==2) { // vorticity + powder
+			dispText( "vorticity(x,y) + powder" );
+			drawImgField( ctx, 1, 2, xp, yp, sc );
+		} else if (dispMode==3) { // speed + flow
+			dispText( "(speed(x,y)-vx0) + powder" );
+			drawImgField( ctx, 2, 2, xp, yp, sc );
+			
+		} else if (dispMode==4) {
+			dispText( "grid: density(x,y)" );
+			// g3d.drawWallGrid2D( ctx, rotAngle, wallFunc, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawWallGrid2D( ctx, 0.0, wallFunc, densityFunc, 0.5, 2 );
+			
+		} else if (dispMode==5) {
+			dispText( "grid: vorticity(x,y)" );
+			// g3d.drawWallGrid2D( ctx, rotAngle, wallFunc, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawWallGrid2D( ctx, 0.0, wallFunc, densityFunc, vorticityColorFunc, 2 );
+			
+		} else if (dispMode==6) {
+			dispText( "vector grid: flow(x,y) + z:density" );
+			const vFunc = function(i,j) {
+				let vx, vy, mag=50.0;
+				[ vx, vy ] = theModule.getFlow(i,j);
+				return [ vx*mag, vy*mag ];
+			}
+			// g3d.drawWallVectorField2D(ctx, rotAngle, wallFunc, zFunc, vFunc, colorMode, inc [, showBox] )
+			g3d.drawWallVectorField2D(ctx, 0.0, wallFunc, densityFunc, vFunc, 0, 2 );
+
+		} else if (dispMode==7) {
+			dispText( "grid: density(x,y) + powder" );
+			// g3d.drawWallGrid2D( ctx, rotAngle, wallFunc, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawWallGrid2D( ctx, 0.0, wallFunc, densityFunc, 0.5, 2 );
+			//drawPowder3D(ctx, nPowder, rmag );
+			drawPowder3D(ctx, p_nPowder, rmag );
+			let scale, xPos, yPos; [ scale, xPos, yPos ] = g3d.scxpypFunc();
+			g3d.plotNearEdge(ctx, scale, xPos, yPos, "#999900" ); // override near edge of the box
+			
+		} else if (dispMode==8) {
+			dispText( "grid: z:density(x,y), color:vorticity(x,y) + powder" );
+			// g3d.drawWallGrid2D( ctx, rotAngle, wallFunc, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawWallGrid2D( ctx, 0.0, wallFunc, densityFunc, vorticityColorFunc, 2 );
+			//drawPowder3D(ctx, nPowder, rmag );
+			drawPowder3D(ctx, p_nPowder, rmag );
+			let scale, xPos, yPos; [ scale, xPos, yPos ] = g3d.scxpypFunc();
+			g3d.plotNearEdge(ctx, scale, xPos, yPos, "#999900" ); // override near edge of the box
+		}
+		
+		let sysTime, status, themeStr, meanRho, gravity;
+		[ sysTime, status, themeStr, meanRho, gravity ] = theModule.getNow();
+		const xBox = p_NNx*p_dx, yBox = p_NNy*p_dx;
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`periodic box = ${xBox} x ${yBox},    time = ${sysTime.toFixed(1)}`, xp, yCanvasSize-30);
+		ctx.fillText(`nue = ${p_nue.toFixed(2)},   rho_0 = ${p_rho_0},   gravity = ${gravity}`, xp, yCanvasSize-10);
+		// Re = (vxFlow/nue)*objectLength
+
+		let msg = "the system is "+status+".<br>";
+		if ( status!='STABLE' ) {
+			msg = msg+"<span style='color:red'> !!!  press reset button.<span><br>";
+		}
+		msg += "gas-liquid phase separation : interaction strength G ="+p_ggg+"<br>"
+			+ "potential psi(rh)=psi_0*exp(-rho_0/rho), (psi_0=4.0)<br>"	
+		document.getElementById("text_caption").innerHTML =	msg;
+		
+		
+		function dispText( str ) {
+			ctx.fillStyle = "#888888";
+			ctx.fillText( str, xp, yCanvasSize-50 );
+		}
+	}
+	
+	
+	// --- draw image field
+	
+	function drawImgField( ctx, FieldMode, addon, xp, yp, sc ) {
+		const nnx=p_NNx, nny=p_NNy;
+
+		ctx.strokeStyle = "rgb(80, 80, 80)"; // box
+		ctx.strokeRect(xp-1,yp-1,p_NNx*sc+2,p_NNy*sc+2);
+
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				if (theModule.getCellKind(i,j)==1) continue;
+				let hue;
+				if (FieldMode==0) { // density
+					//hue = Math.floor(36120.0 - 120.0*p_rhoMag*(theModule.getDensity(i,j)-1.0)) % 360;
+					hue = Math.floor(36120.0 - 30.0*p_rhoMag*(theModule.getDensity(i,j)/p_rho_0-1.0)) % 360;
+				} else if (FieldMode==1) { // vorticity
+					hue = Math.floor(36120.0 - 5000.0*theModule.getVorticity(i,j)) % 360;
+				} else if (FieldMode==2) { // speed
+					let vx, vy;
+					[ vx, vy ] = theModule.getFlow(i,j);
+					hue = Math.floor(36120.0 - 1200.0*(Math.sqrt(vx*vx+vy*vy)-1.0)) % 360;
+				}
+				ctx.fillStyle = `hsl(${hue},100%,50%)`;
+				ctx.fillRect(i*sc+xp,(nny-j-1)*sc+yp,sc,sc);
+			}
+		}
+		if (addon==1) drawFlow( ctx, 100.0, xp, yp, sc );
+		if (addon==2) drawPowder( ctx, p_nPowder, xp, yp, sc );
+	}
+	
+	function drawFlow( ctx, mag, xp, yp, sc ) {
+		const nnx=p_NNx, nny=p_NNy;
+
+		ctx.lineWidth = 1;
+		for (let i=0; i<nnx; i+=4) {
+			for (let j=0; j<nny; j+=4) {
+				if ( theModule.getCellKind(i,j)==0 ) { // 0:free space, 1:wall
+					let vx, vy;
+					[ vx, vy ] = theModule.getFlow(i,j);
+					const color = (vx>=0) ? "#6666ff" : "#ff4488";
+					const x = (i+0.5)*sc, y = (nny-j-0.5)*sc;
+					g3d.drawLine( ctx, xp+x, yp+y, xp+x+vx*mag, yp+y-vy*mag, color );
+				}
+			}
+		}
+	}
+	
+	function drawPowder(ctx, nPowder, xp, yp, sc ) {
+		const nny=p_NNy;
+
+		ctx.fillStyle = "#ff80ff";
+		for (let i=0; i<nPowder; i++) {
+			let x, y;
+			[ x, y ] = theModule.getPowderPos(i);
+			ctx.fillRect( xp+x*sc, yp+(nny-y)*sc, 2, 2 );
+		}
+	}
+	
+	
+	function drawPowder3D(ctx, nPowder, rmag ) {
+		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
+		const nny=p_NNy, hh = 1.0;
+
+		const r = 2, color = "#ff80ff";
+		for (let i=0; i<nPowder; i++) {
+			let x, y;
+			[ x, y ] = theModule.getPowderPos(i);
+			const ii = Math.floor(x), jj = Math.floor(y)
+			const xx = x*hh, yy = (nny - y)*hh
+			const z = rmag*(theModule.getDensity(ii,jj)/p_rho_0-1.0) + g3d.cz0;
+			g3d.drawRotatedDisc( ctx, xx, yy, z, r, color, sc,xp,yp)
+		}
+	}
+	
+	
+	// --------------------  graphics 3D (field) module  --------------------
+	//
+	// ver 0.0.1  2018.12.16  last updated on 2023.03.01
+	// ver 0.0.2  2023.03.03  last updated on 2023.06.01
+	
+	let g_NNx, g_NNy, g_NNz, g_dx, g_dy, g_dz, g_xCanvasSize, g_yCanvasSize, g_xBoxSize, g_yShift;
+	
+	const g3d = {};				// namespace of graphic 3D module
+	
+	g3d.mouseDownFlag = 0;		// 1:on mouse down, 0:else
+	g3d.x_mouse = 0;			// x-position of mouse
+	g3d.y_mouse = 0;			// y-position of mouse
+	g3d.x0_mouse = 0;			// drag-started x-position of mouse
+	g3d.y0_mouse = 0;			// drag-started y-position of mouse
+	g3d.zoom = 1.0;
+	
+	g3d.xMax = 0.0;				// x-length of box
+	g3d.yMax = 0.0;				// y-length of box
+	g3d.zMax = 0.0;				// z-length of box
+	g3d.cx0 = 0.0;				// x-component of rotate center
+	g3d.cy0 = 0.0;				// y-component of rotate center
+	g3d.cz0 = 0.0;				// z-component of rotate center
+	g3d.Ax = -Math.PI/15.0;		// rotate angle around x-axis
+	g3d.Ay = -Math.PI/15.0;		// rotate angle around y-axis
+	g3d.ddAy = 0.0;				// Ay change rate for auto-rotate: eg. dday=0.5*Math.PI/180
+	g3d.cosAx = 0.0;			// cosAx=Math.cos(Ax)
+	g3d.sinAx = 0.0;			// sinAx=Math.sin(Ax)
+	g3d.cosAy = 0.0;			// cosAy=Math.cos(Ay)
+	g3d.sinAy = 0.0;			// sinAy=Math.sin(Ay)
+	
+	g3d.xApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.yApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.zApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.pxApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.pyApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.pzApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.boxApex = [[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1], [1,0,1], [0,1,1], [1,1,1] ];
+	g3d.boxEdge = [[0,1,9], [0,2,9], [0,4,9], [1,3,9], [1,5,9], [2,3,9], 
+					[2,6,9], [3,7,9], [4,5,9], [4,6,9], [5,7,9], [6,7,9] ];
+	
+	//--- set mouse on canvas
+	
+	// g3d.setMouseOnCanvas( canvas );
+	g3d.setMouseOnCanvas = function( canvas ) {
+		canvas.addEventListener('mousemove', g3d.mouse_move);
+		canvas.addEventListener('mousedown', g3d.mouse_down);
+		canvas.addEventListener('mouseup', g3d.mouse_up);
+		canvas.addEventListener("mousewheel", g3d.mouseWheel);
+	};
+	
+	g3d.mouse_move = function(e) {
+		const pi = Math.PI;
+
+		if (g3d.mouseDownFlag==1) {
+			g3d.x_mouse = e.clientX;
+			g3d.y_mouse = e.clientY;
+			g3d.Ay = g3d.Ay + 0.5*(g3d.x_mouse-g3d.x0_mouse)*pi/180;
+			if (g3d.Ay<-pi) g3d.Ay += 2*pi;
+			if (g3d.Ay>pi) g3d.Ay += -2*pi;
+			//g3d.Ax = g3d.Ax + 0.5*(g3d.y_mouse-g3d.y0_mouse)*pi/180;
+			g3d.Ax = g3d.Ax - 0.5*(g3d.y_mouse-g3d.y0_mouse)*pi/180;
+			if (g3d.Ax<-0.5*pi) g3d.Ax = -0.5*pi;
+			if (g3d.Ax>0.5*pi) g3d.Ax = 0.5*pi;
+			g3d.x0_mouse = g3d.x_mouse;
+			g3d.y0_mouse = g3d.y_mouse;
+		}
+	};
+	
+	g3d.mouse_down = function(e) {
+		if (g3d.mouseDownFlag==0) {
+			g3d.x0_mouse = e.clientX;
+			g3d.y0_mouse = e.clientY;
+			g3d.x_mouse = g3d.x0_mouse;
+			g3d.y_mouse = g3d.y0_mouse;
+			g3d.mouseDownFlag = 1;
+		}
+	};
+	
+	g3d.mouse_up = function(e) {
+		if (g3d.mouseDownFlag==1) {
+			g3d.mouseDownFlag = 0;
+		}
+	};
+	
+	g3d.mouseWheel = function(e) {
+		g3d.deltaY = e.deltaY;
+		if ( g3d.deltaY > 0 ) g3d.zoom *= 0.95;
+		else if ( g3d.deltaY < 0 ) g3d.zoom *= 1.05;
+		if ( g3d.zoom<0.5 ) g3d.zoom = 0.5;
+		if ( g3d.zoom>2.0 ) g3d.zoom = 2.0;
+	};
+	
+	//--- 3D graphics aid
+	
+	// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
+	g3d.init = function( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift ) {
+		g_NNx = NNx; g_NNy = NNy; g_NNz = NNz;
+		g_dx = dx; g_dy = dx; g_dz = dx;
+		g_xCanvasSize = xCanvasSize; g_yCanvasSize = yCanvasSize;
+		g_xBoxSize = (xBoxSize==undefined) ? 300 : xBoxSize;
+		g_yShift = (yShift==undefined) ? 20 : yShift;
+		g3d.setSize();
+	}
+	
+	g3d.setSize = function() {
+		g3d.xMax = g_NNx*g_dx;		// x-length of box
+		g3d.yMax = g_NNy*g_dy;		// y-length of box
+		g3d.zMax = g_NNz*g_dz;		// z-length of box
+		g3d.cx0 = 0.5*g3d.xMax;		// x-component of rotate center
+		g3d.cy0 = 0.5*g3d.yMax;		// y-component of rotate center
+		g3d.cz0 = 0.5*g3d.zMax;		// z-component of rotate center
+	};
+	
+	// g3d.setRotateAngle( AxInDegree, AyInDegree );
+	g3d.setRotateAngle = function( AxInDegree, AyInDegree ) {
+		g3d.Ax = AxInDegree*Math.PI/180.0;
+		g3d.Ay = AyInDegree*Math.PI/180.0;
+	};
+	
+	// g3d.scxpypFunc();
+	g3d.scxpypFunc = function() {
+		const xBoxSize = g_xBoxSize;
+		const xCenter = g_xCanvasSize/2, yCenter = g_yCanvasSize/2-g_yShift, yBoxSize = (xBoxSize/g_NNx)*g_NNy;
+		const xp = xCenter - (xBoxSize/2)*g3d.zoom, yp = yCenter - (yBoxSize/2)*g3d.zoom; // g3d param
+		const sc = xBoxSize/(g_NNx*g_dx)*g3d.zoom;
+		return [ sc, xp, yp ];
+	}
+	
+	g3d.set3DRotateXY = function(rotateRateOfAyInDegree) {
+		g3d.ddAy = rotateRateOfAyInDegree*Math.PI/180.0;
+		g3d.Ay= g3d.Ay + g3d.ddAy; // auto-rotate : if (ddAy==0.0), stop
+		if (g3d.Ay>Math.PI) g3d.Ay = g3d.Ay - 2.0*Math.PI;
+		if (g3d.Ay<-Math.PI) g3d.Ay = g3d.Ay + 2.0*Math.PI;
+		g3d.setBox();           // set box apex
+		g3d.setRotateXY(g3d.Ax,g3d.Ay); // set rotate param
+		g3d.rotateApexXY();     // box Apex rotate--> pxApex[i],pyApex[i],pzApex[i]
+		g3d.markFarEdge();      // boxEdge[iEdge][2]=1:far side edge or 0:near side edge
+	};
+	
+	g3d.setBox = function() {
+		for (let i=0; i<8; i++) {
+			g3d.xApex[i] = g3d.boxApex[i][0]*g3d.xMax;
+			g3d.yApex[i] = g3d.boxApex[i][1]*g3d.yMax;
+			g3d.zApex[i] = g3d.boxApex[i][2]*g3d.zMax;
+		}
+	};
+	
+	g3d.setRotateXY = function(angleX,angleY) {
+		g3d.cosAx = Math.cos(angleX);
+		g3d.sinAx = Math.sin(angleX);
+		g3d.cosAy = Math.cos(angleY);
+		g3d.sinAy = Math.sin(angleY);
+		g3d.cx0 = 0.5*g3d.xMax;
+		g3d.cy0 = 0.5*g3d.yMax;
+		g3d.cz0 = 0.5*g3d.zMax;
+	};
+	
+	g3d.rotateApexXY = function() { // rotate box apex
+		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
+		
+		for (let i=0; i<8; i++) {
+			g3d.pxApex[i] = cosAy*(g3d.xApex[i]-cx0)+sinAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cx0;
+			g3d.pyApex[i] = cosAx*(g3d.yApex[i]-cy0)-sinAx*(g3d.zApex[i]-cz0) + cy0;
+			g3d.pzApex[i] =-sinAy*(g3d.xApex[i]-cx0)+cosAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cz0;
+		}
+	};
+	
+	g3d.markFarEdge = function() {
+		//seek far apex --> iMin
+		let zMin = g3d.pzApex[0];
+		let iMin = 0;
+		for (let i=1; i<8; i++) {
+			if (zMin>g3d.pzApex[i]) {
+				zMin = g3d.pzApex[i];
+				iMin = i;
+			}
+		}
+		//mark far edge
+		for (let iEdge=0; iEdge<12; iEdge++) {
+			g3d.boxEdge[iEdge][2] = 0;
+			if (g3d.boxEdge[iEdge][0]==iMin || g3d.boxEdge[iEdge][1]==iMin) g3d.boxEdge[iEdge][2] = 1;
+		}
+	};
+	
+	g3d.drawRotatedDisc = function(ctx, x,y,z,r,color,sc,xp,yp) {
+		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
+		
+		const x1 = cosAy*(x-cx0)+sinAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cx0
+		const y1 = cosAx*(y-cy0)-sinAx*(z-cz0) + cy0
+		//z1 =-sinAy*(x-cx0)+cosAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cz0
+		g3d.drawDisc(ctx, x1*sc+xp,y1*sc+yp,r,color);
+	};
+	
+	g3d.drawRotatedLine = function(ctx, x1,y1,z1,x2,y2,z2,color,sc,xp,yp) {
+		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
+		
+		const x1p = cosAy*(x1-cx0)+sinAy*(sinAx*(y1-cy0)+cosAx*(z1-cz0)) + cx0
+		const y1p = cosAx*(y1-cy0)-sinAx*(z1-cz0) + cy0
+		const x2p = cosAy*(x2-cx0)+sinAy*(sinAx*(y2-cy0)+cosAx*(z2-cz0)) + cx0
+		const y2p = cosAx*(y2-cy0)-sinAx*(z2-cz0) + cy0
+		g3d.drawLine(ctx, x1p*sc+xp,y1p*sc+yp,x2p*sc+xp,y2p*sc+yp,color);
+	};
+	
+	g3d.plotNearEdge = function(ctx, sc,xp,yp,color) {
+		for (let iEdge=0; iEdge<12; iEdge++) {
+			if (g3d.boxEdge[iEdge][2]==0) { //far edge mark = 1
+				g3d.plotEdge(ctx, iEdge,sc,xp,yp,color);
+			}
+		}
+	};
+	
+	g3d.plotFarEdge = function(ctx, sc,xp,yp,color) {
+		for (let iEdge=0; iEdge<12; iEdge++) {
+			if (g3d.boxEdge[iEdge][2]==1) { //far edge mark = 1
+				g3d.plotEdge(ctx, iEdge,sc,xp,yp,color);
+			}
+		}
+	};
+	
+	g3d.plotEdge = function(ctx, iEdge,sc,xp,yp,color) {
+		let iApex = g3d.boxEdge[iEdge][0];
+		const x1=g3d.pxApex[iApex]*sc+xp, y1=g3d.pyApex[iApex]*sc+yp;
+		iApex = g3d.boxEdge[iEdge][1];
+		const x2=g3d.pxApex[iApex]*sc+xp, y2=g3d.pyApex[iApex]*sc+yp;
+		g3d.drawLine(ctx, x1, y1, x2, y2, color);
+	};
+	
+	g3d.drawLine = function(ctx, x1, y1, x2, y2, color) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	};
+	
+	g3d.drawDisc = function(ctx, x, y, r, color) {
+		ctx.fillStyle = color;
+		ctx.beginPath();
+		ctx.arc(x, y, r, 0, 2*Math.PI, false);
+		ctx.fill();
+	};
+	
+	// --------------------  end of graphics 3D (field) module  --------------------
+	
+	// g3d_extension grid2d  created 2023.06.17, last updated 2023.06.17
+	// g3d.drawWallGrid2D( ctx, rotAngle, wallFunc, zFunc, colorFactor, inc [, showBox] )
+	g3d.drawWallGrid2D = function ( ctx, rotAngle, wallFunc, zFunc, colorFactor, inc, showBox ) {
+		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
+		const nnx = g_NNx, nny = g_NNy, threshold = g3d.drawWallGrid2D.threshold;
+		
+		g3d.set3DRotateXY(rotAngle);
+		if ( (showBox & 1)>0 || showBox==undefined ) g3d.plotFarEdge(ctx, sc,xp,yp,"#444400"); // dark yellow
+		for (let jj=0; jj<nny; jj+=inc) {
+			let j=jj;if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
+			for (let ii=0; ii<nnx; ii++) {
+				let i=ii;if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
+				if (i<0 || i+1>nnx-1) continue;
+							
+				if ( wallFunc(i,nny-j-1) ) {
+					const  x = i*g_dx, y = j*g_dx, z = 0, z1 = 2*g3d.cz0;
+					g3d.drawRotatedLine(ctx, x,y,z,x,y,z1,'#888888',sc,xp,yp);
+					continue;
+				}
+				
+				const f = zFunc(i,nny-j-1);
+				const x = i*g_dx, y = j*g_dy, z = f + g3d.cz0;
+				const f1 = zFunc(i+1,nny-j-1);
+				const x1 = (i+1)*g_dx, y1 = j*g_dy, z1 = f1 + g3d.cz0;
+				let colr;
+				if ( typeof(colorFactor)=='number' ) {
+					const th = (18120 - Math.floor(colorFactor*180.0*(f+f1)/g3d.cz0))%360;
+					const a = Math.abs((f+f1)/g3d.cz0);
+					colr = (a>threshold) ? `hsl(${th},100%,50%)` : "#444444" ;
+				} else if ( typeof(colorFactor)=='string' ) {
+					colr = colorFactor;
+				} else if ( typeof(colorFactor)=='function' ) {
+					colr = colorFactor(i,nny-j-1);
+				}
+				g3d.drawRotatedLine(ctx, x,y,z,x1,y1,z1,colr,sc,xp,yp);
+			}
+		}
+		for (let ii=0; ii<nnx; ii+=inc) {
+			let i=ii;if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
+			for (let jj=0; jj<nny; jj++) {
+				let j=jj;if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
+				if (j<0 || j+1>nny-1) continue;
+				
+				if ( wallFunc(i,nny-j-1) ) {
+					continue;
+				}
+				
+				const f = zFunc(i,nny-j-1);
+				const x = i*g_dx, y = j*g_dy, z = f + g3d.cz0;
+				const f1 = zFunc(i,nny-j-2);
+				const x1 = i*g_dx, y1 = (j+1)*g_dy, z1 = f1 + g3d.cz0;
+				let colr;
+				if ( typeof(colorFactor)=='number' ) {
+					const th = (18120 - Math.floor(colorFactor*180.0*(f+f1)/g3d.cz0))%360;
+					const a = Math.abs((f+f1)/g3d.cz0);
+					colr = (a>threshold) ? `hsl(${th},100%,50%)` : "#444444" ;
+				} else if ( typeof(colorFactor)=='string' ) {
+					colr = colorFactor;
+				} else if ( typeof(colorFactor)=='function' ) {
+					colr = colorFactor(i,nny-j-1);
+				}
+				g3d.drawRotatedLine(ctx, x,y,z,x1,y1,z1,colr,sc,xp,yp);
+			}
+		}
+		if ( (showBox & 2)>0 || showBox==undefined ) g3d.plotNearEdge(ctx, sc,xp,yp,"#999900"); //yellow
+		
+		ctx.font = "12px 'sans-serif'";
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`Ax=${(g3d.Ax*180/Math.PI).toFixed(1)}, Ay=${(g3d.Ay*180/Math.PI).toFixed(1)}`, 10, 15);
+		ctx.font = "16px 'sans-serif'";
+	};
+	g3d.drawWallGrid2D.threshold = 0.005;
+	
+	// g3d_extension gvextor field  created 2023.06.17, last updated 2023.06.17
+	// g3d.drawWallVectorField2D(ctx, rotAngle, wallFunc, zFunc, vFunc, colorMode, inc [, showBox] )
+	g3d.drawWallVectorField2D = function(ctx, rotAngle, wallFunc, zFunc, vFunc, colorMode, inc, showBox ) {
+		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, dx=g_dx, threshold = g3d.drawWallVectorField2D.threshold;
+	
+		g3d.set3DRotateXY(rotAngle);
+		if ( (showBox & 1)>0 || showBox==undefined ) g3d.plotFarEdge(ctx, sc,xp,yp,"#444400"); // dark yellow
+		for (let ii=0; ii<nnx; ii+=inc) {
+			let i=ii; if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
+			for (let jj=0; jj<nny; jj+=inc) {
+				let j=jj; if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
+				
+				if ( wallFunc(i,nny-j-1) ) {
+					const  x = i*dx, y = j*dx, z = 0, z1 = 2*g3d.cz0;
+					g3d.drawRotatedLine(ctx, x,y,z,x,y,z1,'#888888',sc,xp,yp);
+					continue;
+				}
+				
+				const f = zFunc(i,nny-j-1);
+				const x = i*dx, y = j*dx, z = f + g3d.cz0;
+				let vx, vy;
+				[ vx, vy ] = vFunc(i,nny-j-1);
+				if ( vx*vx+vy*vy < threshold ) continue;
+				const x1 = x + vx, y1 = y -vy, z1 = z;
+				let colr;
+				if ( colorMode==0 ) {
+					const hue = Math.floor((Math.atan2(vy,vx))*180.0/Math.PI+180.0);
+					colr = `hsl(${hue},100%,50%)`;
+				} else if ( colorMode==1 ) {
+					colr = (vx>0) ? "#3333ff" : "#ff3333";
+				}
+				g3d.drawRotatedLine(ctx, x,y,z,x1,y1,z1,colr,sc,xp,yp);
+			}
+		}
+		if ( (showBox & 2)>0 || showBox==undefined ) g3d.plotNearEdge(ctx, sc,xp,yp,"#999900"); //yellow
+		
+		ctx.font = "12px 'sans-serif'";
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`Ax=${(g3d.Ax*180/Math.PI).toFixed(1)}, Ay=${(g3d.Ay*180/Math.PI).toFixed(1)}`, 10, 15);
+		ctx.font = "16px 'sans-serif'";
+	};
+	g3d.drawWallVectorField2D.threshold = 0.5;
+	
+	
+	// --------------------  control  --------------------
+	
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function reset() { resetFlag = true; }
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = ( pauseFlag==false ); 
+		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==true ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() { stepFlag = true; }
+	
+	function setTheme() {  // select theme
+		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
+		resetFlag = true;
+	}
+	
+	function setWallRho() {
+		v_wallRh = Number(document.getElementById("range_wallRho").value);
+		document.getElementById("text_wallRho").innerHTML = " " + v_wallRh;
+	}
+	
+	function setDispMode() {  // select dispMode
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+	}
+	
+	function setSpeed() {
+		v_nCalc = 1 + document.getElementById("slct_speed").selectedIndex;
+	}
+	
+	function viewHome() {
+		g3d.setRotateAngle(12,-12);
+		g3d.zoom = 1.0;
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		reset:			reset,			// reset()
+		pause:			pause,			// pause()
+		step:			step,			// step()
+		
+		setTheme:		setTheme,		// setTheme()
+		setWallRho:		setWallRho,		// setWallRho()
+		setDispMode:	setDispMode,	// setDispMode()
+		setSpeed:		setSpeed,		// setSpeed()
+		viewHome:		viewHome,		// viewHome()
+	};
+	
+})(); // ====================  js081 module end  ====================
+
+
+// event
+const js = js081;
+window.addEventListener('load', js.main );
+
+
+// %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%%
+
+</script>
+
+<style type="text/css">
+    body { text-align:left; color:#000000; background-color:#fff8dd; }
+</style>
+
+</head>
+
+<body>
+<p>[js081] liquid surface- contact angle - LBM (D2Q9 model)</p>
+<canvas ID="canvas_box" style="background-color: #000000;" WIDTH="480" HEIGHT="480"></canvas>
+<br>
+
+<label>theme:</label>
+<select id="slct_theme" onChange="js.setTheme()">
+<option>init rho = rho_0 (200)</option><option>init rho = 0.7*rho_0 (140)</option>
+<option>init rho = 1.5*rho_0 (300)</option><option selected>liquid-solid contact</option>
+</select>
+    <span style="margin-right: 90px;"></span>
+<button onClick="js.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="js.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="js.step()">step</button>
+<br>
+
+<label>wall psi(rh), rh =</label><label id="text_wallRho"> 100</label>
+<input type="range" id="range_wallRho" min="0" max="500" value="100" step="10" 
+style="width:250px" list="tickmarks" oninput="js.setWallRho()">
+<datalist id="tickmarks"><option value="0"><option value="100"><option value="200">
+<option value="300"><option value="400"><option value="500"></datalist>
+<br>
+
+<label>disp mode:</label>
+<select id="slct_dispMode" onChange="js.setDispMode()">
+<option>density ratio(x,y)</option><option>density ratio(x,y) + powder</option>
+<option>volticity(x,y) + powder</option><option>(speed(x,y)-vx0) + powder</option>
+<option selected>grid density ratio(x,y)</option><option>grid color:vorticity(x,y) z:density ratio(x,y)</option>
+<option>flow(x,y) z:density ratio(x,y)</option>
+<option>grid density ratio(x,y) + powder</option><option>grid vorticity(x,y) + powder</option>
+</select>
+    <span style="margin-right: 20px;"></span>
+<label>nCalc/frame:</label>
+<select id="slct_speed" onChange="js.setSpeed()">
+<option>1</option><option>2</option><option>3</option><option>4</option>
+<option>5</option><option selected>6</option><option>7</option><option>8</option>
+<option>9</option><option>10</option>
+</select>
+<br>
+
+<button onClick="js.viewHome()">return to initial view</button>
+<br>
+
+<hr width="480" align="left" color="#a0a0a0">
+<p id="text_caption" ></p>
+<hr width="480" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+

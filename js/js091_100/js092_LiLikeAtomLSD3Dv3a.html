@@ -1,0 +1,1488 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>js092_LiLikeAtomLSD3D</title>
+<script type="text/javascript">
+
+// %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%%
+
+'use strict';
+
+/* --------------------
+//
+//  js092_LiLikeAtomLSD3D
+//    Copyright(C) 2018-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2018.03.03 created, last updated on 2018.12.02
+//    ver 0.0.1  2019.01.24 v1, last updated on 2021.08.29
+//    ver 0.0.2  2021.11.06 v2, last updated on 2021.11.06
+//    ver 0.0.3  2023.05.02 v3, last updated on 2023.09.06
+//
+// -------------------- RS-DFT - LSD(local spin density approximation) 3D
+//
+// - real space density functional theory - local spin density approximation
+// - solve Kohn-Sham equation - successive approximation
+// - Vxc : LSD(local spin density approximation)
+//         J. P. Perdew and A. Zunger; Phys. Rev., B23, 5048 (1981)
+//
+//  many electron system --> one electron approximation with spin Up/Down
+//    one electron ,  others -> consider as effective potential Veff
+//    Kohn-Sham equation {(-d^2/dr^2)+Veff(r)} |i> = e_i |i>,  VeffS(r)=Vext+VH+VxcS
+//      electron charge density rhoUp/rhoDown with spin Up/Down
+//      VeffUp,VeffDown: one electron feels effective potential with spin Up/Down
+//      Vext: external Potential
+//      VH  : Hartree potential (electron charge -> electro-static potential)
+//      VxcUp,VxcDown :electron exchange and correlation potential (LSD:Perdew-Zunger)
+//    solve Khon-Sham equation: successive approximation
+//      solve Kohn-Sham -> electron state,occupation -> electron spin density ->VeffUp,VeffDown
+//
+//  procedure
+//   (1) given: trial state{|i>,S}, occ[i]
+//
+//   (2) set electron density rhoUp[][][],rhoDown[][][] <-- ui,S, occ[i]
+//   (3) set effective potential VeffUp[][][],VeffDown[][][]
+//         set Hartree potential Vh[][][] <-- rhoUp,rhoDown (solve Poisson's equation)
+//         set exchange corration potential
+//           VxcUp[][][], VxcDown[][][] <-- LSD(rho) Perdew and Zunger
+//         set effective potential
+//           VeffUp[][][] = Vext + Vh + VxcUp
+//           VeffDown[][][] = Vext + Vh + VxcDown
+//
+//   (4) solve Khon-Sham equation
+//     4-1 steepest descent - elolve next state { uiS(t) } --> { uiS(t+dt) }
+//           set Ei = < uiS | H | uiS >
+//           (from  a [uiS(t+dt) - uiS(t)]/dt = - (H-Ei) uiS(t), )
+//           uiS(t+dt) = uiS(t) - damp((H-Ei) uiS(t)), (damp = dt/a)
+//     4-1 orthogonalize { uiS }  : Gram-Schmidt
+//
+//   (5) sort state { uiS } by Ei
+//
+//   (6) set occupation occ[i] <- Ei, numberOfElectron, broadening
+//
+//    goto (2)
+//
+// --------------------
+*/
+
+const LiLikeAtomLSD3D = (function(){ // ====================  LiLikeAtomLSD3D Module  ====================
+	
+	const g_Pi = (Math.PI);					// g_Pi nearly= 3.141592653589793
+	const g_auLength = 5.29177211e-11;		// (m) 1(au) = auLength (m), (au: atomic unit hBar=1,e=1,me=1,a0=1)
+	const g_auTime = 2.418884326e-17;		// (s) 1(au) = auTime (s)
+	const g_auEnergy = 4.35974465e-18;		// (J) 1(au) = auEnergy (J)
+	const g_au2eV = 27.211386;				// (eV) 1(au) = 27.211386 (eV)
+	const g_nMax = 80;						// maximum of g_NNx or g_NNy or g_NNz
+	const g_stMax = 20;						// maximum number of state
+	const g_orbMax = 10;					// dim orbit max
+	
+	let g_iterCount = 0;					// LSD iteration count
+	let g_dx = 1.0/2.0;						// (au) x-division
+	let g_dy = g_dx;						// (au) y-division
+	let g_dz = g_dx;						// (au) z-division
+	let g_NNx = 32;							// max number of lattice
+	let g_NNy = g_NNx;						// max number of lattice
+	let g_NNz = g_NNx;						// max number of lattice
+	
+	let g_chargeMixingFactor = 0.2;			// in use setElectronDensity(g_numberOfState,g_chargeMixingFactor)
+	let g_levelBroadening = 0.010;			// in use FermiDirac(g_levelBroadening)
+	let g_dampingFactor = 0.2*g_dx*g_dx;	// in use solveKohnSham(g_numberOfState, g_dampingFactor)
+	let g_numberOfState = 12;				// numberOfOrbit = Math.floor((g_numberOfState+1)/2.0)
+	let g_numberOfElectron = 3.0;			// g_numberOfElectron = g_Znuc + g_dNOE
+	let g_dNOE = 0.0;						// (au) g_dNOE = +ion:-1.0  ionize:-0.5  atom:0.0  -ion:1.0
+	let g_Znuc = 3.0;						// (au) nuclear charge
+ 	let g_systemTotalEnergy = 0.0;			// (au) system total energy
+	
+	const g_vvUp = dim3( g_nMax );			// effective potential for up spin electron
+	const g_vvDown = dim3( g_nMax );		// effective potential for down spin electron
+	const g_vvext = dim3( g_nMax );			// external potential
+	const g_vvh = dim3( g_nMax );			// Hartree potential
+	const g_vvxcUp = dim3( g_nMax );		// electron exchange and correlation potential for up spin electron
+	const g_vvxcDown = dim3( g_nMax );		// electron exchange and correlation potential for down spin electron
+	const g_rhoUp = dim3( g_nMax );			// electron charge density of up spin
+	const g_rhoDown = dim3( g_nMax );		// electron charge density of down spin
+	
+	const g_state = dimInt2( g_stMax, 2 );	// g_state[orbitNo][spin] : orbitNo=0...orbitMax-1, spin=1:up or -1:down
+	const g_sdEnergy = dim1( g_stMax );		// (au) state energy
+	const g_sdState = dim4( g_orbMax, g_nMax ); // g_sdState[orbitMax][g_NNx][g_NNy][g_NNz] 
+	const g_occ = [ 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 
+					0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 ];
+	const g_nuc = [ //[[qq,x,y,z], ... , [0.0,0.0,0.0,0.0]]
+		[ 3.0, 8.0 , 8.0 , 8.0  ],
+		[ 0.0, 0.0 , 0.0 , 0.0  ]];
+	
+	const g_resTable = [ [1.0, 16],[1.0, 20], [2.0/3.0, 24],[2.0/3.0, 30], [1.0/2.0, 32],[1.0/2.0, 40], 
+							[2.0/5.0, 40],[2.0/5.0, 50], [1.0/3.0, 48],[1.0/3.0, 60], [1.0/4.0, 64],[1.0/4.0, 80],
+							[1.0/5.0, 80],[1.0/5.0, 100] ];
+	
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+	
+	function dimInt2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Int32Array( nj );
+		}
+		return a;
+	}
+	
+	function dim3( n ) {
+		let a = [];
+		for (let i=0; i<n; i++) {
+			a[i] = [];
+			for (let j=0; j<n; j++) {
+				a[i][j] = new Float64Array( n );
+			}
+		}
+		return a;
+	}
+	
+	function dim4( nst, n ) {
+		let a = [];
+
+		for (let i=0; i<nst; i++) {
+			a[i] = dim3( n );
+		}
+		return a;
+	}
+	
+	
+	// --------------------  set initial condition  --------------------
+	
+	function setInitialCondition( res, stateMax, zNu, dne ) {
+		setResolution(res);
+		g_numberOfState = stateMax;
+		setInitialState(g_numberOfState);
+		clearRho(); // required when res is changed (values other than 0 remain on the box boundary)
+		setNOEandPotential(zNu,dne);
+	}
+	
+	function setResolution(res) {
+		// g_resTable = [ [1.0, 16],[1.0, 20], [2.0/3.0, 24],[2.0/3.0, 30], [1.0/2.0, 32],[1.0/2.0, 40], 
+		//					[2.0/5.0, 40],[2.0/5.0, 50], [1.0/3.0, 48],[1.0/3.0, 60], [1.0/4.0, 64],[1.0/4.0, 80],
+		//					[1.0/5.0, 80],[1.0/5.0, 100] ];
+		[ g_dx, g_NNx ] = g_resTable[res];
+		g_dy = g_dx; g_dz = g_dx;
+		g_NNy = g_NNx; g_NNz = g_NNx;
+		g_dampingFactor = 0.2*g_dx*g_dx;
+		clearPotential();
+	}
+	
+	function clearPotential() {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				for (let k=0; k<nnz; k++) {
+					g_vvUp[i][j][k] = 0.0;
+					g_vvDown[i][j][k] = 0.0;
+					g_vvext[i][j][k] = 0.0;
+					g_vvh[i][j][k] = 0.0;
+					g_vvxcUp[i][j][k] = 0.0;
+					g_vvxcDown[i][j][k] = 0.0;
+				}
+			}
+		}
+	}
+	
+	function setInitialState(stateMax) {
+		const orbitMax = Math.floor((stateMax+1)/2);
+		setInitialOrbit(orbitMax);
+		for (let ie=0; ie<stateMax; ie++) {
+			g_state[ie][0] = Math.floor(ie/2);
+			g_state[ie][1] = 1-2*(ie%2); // set spin
+		}
+	}
+	
+	function setInitialOrbit(orbitMax) {
+		const i4=Math.floor(g_NNx/4), nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+		for (let iob=0; iob<orbitMax; iob++) {
+			for (let i=0; i<nnx; i++) {
+				for (let j=0; j<nny; j++) {
+					for (let k=0; k<nnz; k++) {
+						g_sdState[iob][i][j][k] = 0.0;
+					}
+				}
+			}
+			for (let i=i4; i<nnx-i4; i++) {
+				for (let j=i4; j<nny-i4; j++) {
+					for (let k=i4; k<nnz-i4; k++) {
+						g_sdState[iob][i][j][k] = Math.random()-0.5;
+					}
+				}
+			}
+			normalize(g_sdState[iob]);
+		}
+	}
+	
+	function clearRho() {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				for (let k=0; k<nnz; k++) {
+					g_rhoUp[i][j][k] = 0.0;
+					g_rhoDown[i][j][k] = 0.0;
+				}
+			}
+		}
+	}
+	
+	function setNOEandPotential(zNu,dne) { 
+		// g_dNOE = +ion: -1, ionizationEnergy: -0.5, atom; 0.0, -ion: +1.0
+		g_iterCount = 0;
+		g_Znuc = zNu;
+		g_dNOE = dne;
+		g_numberOfElectron = g_Znuc+g_dNOE;
+		setPotential(g_numberOfElectron,g_Znuc);
+	}
+	
+	function setPotential(NOE,zzNuc) { // NOE: number of electron 
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+		const x0 = 0.5*nnx*g_dx, y0 = 0.5*nny*g_dy, z0 = 0.5*nnz*g_dz;
+		for (let i=0; i<nnx; i++) {
+			const x = i*g_dx;
+			for (let j=0; j<nny; j++) {
+				const y = j*g_dy;
+				for (let k=0; k<nnz; k++) {
+					const z = k*g_dz;
+					let r = Math.sqrt((x-x0)*(x-x0)+(y-y0)*(y-y0)+(z-z0)*(z-z0));
+					if (r<0.5*g_dx) r=0.5*g_dx;
+					g_vvext[i][j][k] = -zzNuc/r;
+					g_vvh[i][j][k] = NOE/r;
+				}
+			}
+		}
+	}
+	
+	
+	// --------------------  iterate LSD  --------------------
+	
+	function iterateLSD( mix, broad ) {
+		g_iterCount += 1;
+		g_chargeMixingFactor = mix;
+		g_levelBroadening = broad;
+		setElectronDensity(g_numberOfState,g_chargeMixingFactor); // (2)
+		setEffectivePotential(); // (3)
+		solveKohnSham(g_numberOfState, g_dampingFactor); // (4)
+		sortState(g_numberOfState); // (5)
+		setOccupation(g_numberOfState,g_numberOfElectron); // (6)
+		g_systemTotalEnergy = totalEnergy();
+	}
+	
+	// --- (2) set electron density : g_rhoUp, g_rhoDown
+	
+	function setElectronDensity(stateMax,mixing) {
+		const nnx=g_NNx, nny=g_NNy,nnz=g_NNz;
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					g_rhoUp[i][j][k] *= (1.0-mixing);
+					g_rhoDown[i][j][k] *= (1.0-mixing);
+					for (let ie=0; ie<stateMax; ie++) {
+						const ib = g_state[ie][0];
+						if (g_occ[ie]<=0.0) break;
+						if (g_state[ie][1]==1) { // spin up
+							g_rhoUp[i][j][k] += mixing*g_occ[ie]*(g_sdState[ib][i][j][k]*g_sdState[ib][i][j][k]);
+						} else if (g_state[ie][1]==-1) { // spin up
+							g_rhoDown[i][j][k] += mixing*g_occ[ie]*(g_sdState[ib][i][j][k]*g_sdState[ib][i][j][k]);
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// --- (3) set effective potential : g_vvUp, g_vvDown
+	
+	function setEffectivePotential() {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+		poisson(10); // set VH
+		setVxc(); // set Vxc
+		
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					g_vvUp[i][j][k] = g_vvext[i][j][k]+g_vvh[i][j][k]+g_vvxcUp[i][j][k];
+					g_vvDown[i][j][k] = g_vvext[i][j][k]+g_vvh[i][j][k]+g_vvxcDown[i][j][k];
+				}
+			}
+		}
+	}
+	
+	function poisson(iterMax) { // setVH: solve (d^2/dr^2) VH = 4 pai rho
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, h2=4.0*g_Pi*g_dx*g_dx, w=0.3; // w=(1/6)*SOR_omega, SOR_omega = 1.8
+		const vvh=g_vvh;
+		for (let iter=1; iter<iterMax; iter++) {
+			for (let i=1; i<nnx-1; i++) {
+				for (let j=1; j<nny-1; j++) {
+					for (let k=1; k<nnz-1; k++) {
+						vvh[i][j][k] = vvh[i][j][k]+w*(vvh[i+1][j][k]+vvh[i-1][j][k]+vvh[i][j+1][k]
+							+vvh[i][j-1][k]+vvh[i][j][k+1]+vvh[i][j][k-1]-6.0*vvh[i][j][k]
+							+h2*(g_rhoUp[i][j][k]+g_rhoDown[i][j][k]));
+					}
+				}
+			}
+		}
+	} 
+	
+	function setVxc() {
+		const nnx=g_NNx,nny=g_NNy,nnz=g_NNz;
+		let drh = 0.01, ddz=0.01;
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					const rh = g_rhoUp[i][j][k]+g_rhoDown[i][j][k]+1.0e-20;
+					const z = (g_rhoUp[i][j][k]-g_rhoDown[i][j][k])/rh;
+					const exc = epsxc(rh,z);
+					const vxc = exc + rh*(epsxc(rh+drh,z)-exc)/drh;
+					let dedz = 0.0;
+					if (z+ddz<1.0) {
+						dedz = (epsxc(rh,z+ddz)-exc)/ddz;
+					} else {
+						dedz = (exc-epsxc(rh,z-ddz))/ddz;
+					}
+					g_vvxcUp[i][j][k] = vxc+dedz*(1-z);
+					g_vvxcDown[i][j][k] = vxc-dedz*(1+z);
+				}
+			}
+		}
+	}
+	
+	// LSD Vxc: J.P. Perdew, A. Zunger; Phys. Rev. B 23 5048 (1981) 
+	function epsxc(rh, zz) {
+		const rh3 = Math.pow(rh,0.33333333);
+		const rs = 0.6204/(rh3+1.0e-20);
+		const eexp = -0.738559*rh3;
+		const eexf = 1.25992*eexp;
+		let eecp=0.0, eecf=0.0;
+		if (rs>=1.0) {
+			const sqrtrs = Math.sqrt(rs);
+			eecp = -0.1423/(1.0+1.0529*sqrtrs+0.3334*rs);
+			eecf = -0.0843/(1.0+1.3981*sqrtrs+0.2611*rs);
+		} else {
+			const lnrs = Math.log(rs);
+			eecp = 0.0311*lnrs-0.048+0.002*rs*lnrs-0.0116*rs;
+			eecf = 0.01555*lnrs-0.0269+0.0007*rs*lnrs-0.0048*rs;
+		}
+		const excp = eexp+eecp;
+		const excf = eexf+eecf;
+		const fz = (Math.pow(1+zz,1.33333333)+Math.pow(1-zz,1.33333333)-2.0)/0.519842;
+		return ( excp+(excf-excp)*fz );
+	}
+	
+	// LSD Vxc: U. von Barth and L. Hedin; J. Phys. C 5 1629 (1972)
+	function epsxcBH(rh, zz) {
+		let z;
+		const rs = 0.6204/(Math.pow(rh,0.33333333)+1.0e-20);
+		const eexp = -0.738559*Math.pow(rh,0.33333333);
+		const eexf = 1.25992*eexp;
+		z = rs/30.0;
+		let eecp = -0.0252*((1.0+z*z*z)*Math.log(1.0+1.0/z)+z/2.0-z*z-1.0/3.0);
+		z = rs/75.0;
+		let eecf = -0.0127*((1.0+z*z*z)*Math.log(1.0+1.0/z)+z/2.0-z*z-1.0/3.0);
+		const excp = eexp+eecp;
+		const excf = eexf+eecf;
+		const fz = (Math.pow(1+zz,1.33333333)+Math.pow(1-zz,1.33333333)-2.0)/0.519842;
+		return ( excp+(excf-excp)*fz );
+	}
+	
+	
+	// --- (4) solve Kohn-Sham Equation
+	
+	function solveKohnSham(stateMax, damp) {
+		for (let ist=0; ist<stateMax; ist++) {
+			g_sdEnergy[ist] = steepestDescent(g_sdState[g_state[ist][0]], g_state[ist][1], damp);
+		}
+		GramSchmidt(stateMax);
+	}
+	
+	// (4-1) steepest descent : steepest descent method: |i(next)> = |i> - damp{H-E}|i>
+	
+	function steepestDescent(psi, spn, dump) { // psi[][][]
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, h2=2.0*g_dx*g_dx;
+		let ei = 0.0;
+		if (spn==1) {
+			ei = energyOf(psi,g_vvUp);
+			for (let i=1; i<nnx-1; i++) {
+				for (let j=1; j<nny-1; j++) {
+					for (let k=1; k<nnz-1; k++) {
+						psi[i][j][k] -= dump*((6.0*psi[i][j][k]-psi[i+1][j][k]-psi[i-1][j][k]-psi[i][j+1][k]
+							-psi[i][j-1][k]-psi[i][j][k+1]-psi[i][j][k-1])/h2 + (g_vvUp[i][j][k]-ei)*psi[i][j][k]);
+					}
+				}
+			}
+			normalize(psi);
+		} else if (spn==-1) {
+			ei = energyOf(psi,g_vvDown);
+			for (let i=1; i<nnx-1; i++) {
+				for (let j=1; j<nny-1; j++) {
+					for (let k=1; k<nnz-1; k++) {
+						psi[i][j][k] -= dump*((6.0*psi[i][j][k]-psi[i+1][j][k]-psi[i-1][j][k]-psi[i][j+1][k]
+							-psi[i][j-1][k]-psi[i][j][k+1]-psi[i][j][k-1])/h2 + (g_vvDown[i][j][k]-ei)*psi[i][j][k]);
+					}
+				}
+			}
+			normalize(psi);
+		}
+		return (ei);
+	}
+	
+	function energyOf(psi,v) { // psi[][][], v[][][]
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, h2=2.0*g_dx*g_dx, dv=g_dx*g_dy*g_dz;
+		let s = 0.0, sn=0.0;
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					s += psi[i][j][k]*((6.0*psi[i][j][k]-psi[i+1][j][k]-psi[i-1][j][k]-psi[i][j+1][k]
+						-psi[i][j-1][k]-psi[i][j][k+1]-psi[i][j][k-1])/h2 + v[i][j][k]*psi[i][j][k])*dv;
+					sn += psi[i][j][k]*psi[i][j][k]*dv;
+				}
+			}
+		}
+		return ( s/sn );
+	}
+	
+	// (4-2) Gram–Schmidt orthonormalization
+	
+	function GramSchmidt(stateMax) {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+		normalize(g_sdState[0]);
+		for (let istate=1; istate<stateMax; istate++) {
+			for (let ist=0; ist<istate; ist++) {
+				if (g_state[ist][1]==g_state[istate][1]) { // ist and istate have the same spin ?
+					const s = innerProduct(g_sdState[g_state[ist][0]],g_sdState[g_state[istate][0]]);
+					for (let i=1; i<nnx-1; i++) {
+						for (let j=1; j<nny-1; j++) {
+							for (let k=1; k<nnz-1; k++) {
+								g_sdState[g_state[istate][0]][i][j][k] -= s*g_sdState[g_state[ist][0]][i][j][k];
+							}
+						}
+					}
+				}
+			}
+			normalize(g_sdState[g_state[istate][0]]);
+		}
+	}
+	
+	function innerProduct(f, g) { // f[][][], g[][][]
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, dv=g_dx*g_dy*g_dz;
+		let s = 0.0;
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					s += f[i][j][k]*g[i][j][k]*dv;
+				}
+			}
+		}
+		return s;
+	}
+	
+	function normalize(ph) { // ph[][][]
+		const nnx=g_NNx,nny=g_NNy,nnz=g_NNz, dv=g_dx*g_dy*g_dz;
+		let s = 0.0;
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					s += ph[i][j][k]*ph[i][j][k]*dv;
+				}
+			}
+		}
+		const a = Math.sqrt(1.0/s);
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					ph[i][j][k] = a*ph[i][j][k];
+				}
+			}
+		}
+	}
+	
+	// --- (5) sort g_state
+	
+	function sortState(stateMax) {
+		let iw, w;
+		for (let ist=stateMax-2; ist>=0; ist--) {
+			if (g_sdEnergy[ist]>g_sdEnergy[ist+1]+0.0001) {
+				iw = g_state[ist][0]; g_state[ist][0]=g_state[ist+1][0]; g_state[ist+1][0]=iw;
+				iw = g_state[ist][1]; g_state[ist][1]=g_state[ist+1][1]; g_state[ist+1][1]=iw;
+				w = g_sdEnergy[ist]; g_sdEnergy[ist]=g_sdEnergy[ist+1];g_sdEnergy[ist+1]=w;
+			}
+		}
+	}
+	
+	// --- (6) set Occupation
+	
+	function setOccupation(stateMax, nElectron) {
+
+		let eUpper = g_sdEnergy[stateMax-1]+1.0;
+		let eLower = g_sdEnergy[0]-1.0;
+		for (let i=0;i<stateMax;i++) {
+			if(g_sdEnergy[i]>eUpper) eUpper = g_sdEnergy[i];
+			if(g_sdEnergy[i]<eLower) eLower = g_sdEnergy[i];
+		}
+		
+		while (eUpper-eLower>1.0e-12) {
+			const eFermi = (eUpper+eLower)/2.0;
+			const ntrial = trialOcc(stateMax, eFermi);
+			if (ntrial<nElectron) {
+				eLower = eFermi;
+			} else {
+				eUpper = eFermi;
+			}
+		}
+		const eFermi = (eUpper+eLower)/2.0;
+		
+		for (let i=0; i<stateMax; i++) {
+			g_occ[i] = 1.0*FermiDirac(g_sdEnergy[i], eFermi);
+			if (g_occ[i]<0.0001) g_occ[i] = 0.0;
+			if (1.0-g_occ[i]<0.0001) g_occ[i] = 1.0;
+		}
+	}
+	
+	function trialOcc(stateMax, eFermi) {
+		let s = 0.0;
+		for (let i=0; i<stateMax; i++) {
+			s += 1.0*FermiDirac(g_sdEnergy[i], eFermi);
+		}
+		return s;
+	}
+	
+	function FermiDirac(ee, ef) {
+		const et = levelWidth(g_levelBroadening);
+		return ( 1.0/(Math.exp((ee-ef)/et)+1.0) );
+	}
+	
+	function levelWidth(broadening) {
+		let kT = 0.05-0.0004*g_iterCount;
+		if (kT<broadening) kT = broadening;
+		return kT;
+	}
+	
+	
+	// --- statistics
+	
+	function meanKinetic(ph) { // ph[][][]
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, h2=g_dx*g_dx;
+		let p = 0.0;
+		for (let i=1;i<nnx-1;i++) {
+			for (let j=1;j<nny-1;j++) {
+				for (let k=1;k<nnz-1;k++) {
+					const d2ph = (ph[i+1][j][k]+ph[i-1][j][k]+ph[i][j+1][k]+ph[i][j-1][k]
+							+ph[i][j][k+1]+ph[i][j][k-1]-6.0*ph[i][j][k])/h2;
+					p += ph[i][j][k]*d2ph;
+				}
+			}
+		}
+		return ( -0.5*p*g_dx*g_dy*g_dz );
+	}
+	
+	function meanValue(ph,a) { // ph[][][], a[][][]
+		const nnx=g_NNx,nny=g_NNy,nnz=g_NNz;
+		let s=0.0;
+		for (let i=1;i<nnx-1;i++) {
+			for (let j=1;j<nny-1;j++) {
+				for (let k=1;k<nnz-1;k++) {
+					s += a[i][j][k]*ph[i][j][k]*ph[i][j][k];
+				}
+			}
+		}
+		return ( s*g_dx*g_dy*g_dz );
+	}
+	
+	function totalEnergy() {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, nos=g_numberOfState;
+		
+		let sei = 0.0;
+		for (let i=0;i<nos;i++) {
+			if (g_occ[i]<=0.0) break;
+			sei += g_occ[i]*g_sdEnergy[i];
+		}
+		
+		let enn = 0.0;
+		for (let i=0; i<100; i++) {
+			if (g_nuc[i][0]<=0.0) break;
+			for (let j=i+1; j<100; j++) {
+				if (g_nuc[j][0]<=0.0) break;
+				const x = g_nuc[i][1]-g_nuc[j][1];
+				const y = g_nuc[i][2]-g_nuc[j][2];
+				const z = g_nuc[i][3]-g_nuc[j][3];
+				enn += g_nuc[i][0]*g_nuc[j][0]/Math.sqrt(x*x+y*y+z*z);
+			}
+		}
+		
+		let s = 0.0;
+		for (let i=1;i<nnx-1;i++) {
+			for (let j=1;j<nny-1;j++) {
+				for (let k=1;k<nnz-1;k++) {
+					s += (-0.5*g_vvh[i][j][k]-0.25*g_vvxcUp[i][j][k])*g_rhoUp[i][j][k];
+					s += (-0.5*g_vvh[i][j][k]-0.25*g_vvxcDown[i][j][k])*g_rhoDown[i][j][k];
+				}
+			}
+		}
+		s = s*g_dx*g_dy*g_dz;
+		
+		return ( sei + enn + s );
+	}
+	
+	
+	// --------------------  cloud  --------------------
+	
+	const g_cloud = dim3(g_NNx,g_NNy,g_NNz);
+	const g_srnd = [];
+	
+	function setCloud(iState) {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz,dv=g_dx*g_dy*g_dz;
+		
+		set_srnd();
+		
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					g_cloud[i][j][k] = 0;
+				}
+			}
+		}
+		let s = 0, ip = 0
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					const stijk = g_sdState[iState][i][j][k];
+					const dens = stijk*stijk;
+					s += dens*dv;
+					while (s>g_srnd[ip] && ip<1000) {
+						g_cloud[i][j][k] += 1;
+						ip += 1;
+					}
+				}
+			}
+		}
+	}
+	
+	function set_srnd() {
+		g_srnd[0] = Math.random();
+		for (let i=1; i<1001; i++) {
+			g_srnd[i] = g_srnd[i-1] + Math.random();
+		}
+		for (let i=0; i<1000; i++) {
+			g_srnd[i] = g_srnd[i]/g_srnd[1000];
+		}
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		init:			setInitialCondition,	// setInitialCondition( res, stateMax, zNu, dne )
+		evolve:			iterateLSD,				// iterateLSD( mix, broad )
+		
+		setAtom: 		setNOEandPotential, 	// setNOEandPotential(zNu,dne)
+		setCloud:		setCloud,				// setCloud( ist )
+		
+		getAUinSI:		function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:	function() { return [ g_NNx, g_NNy, g_NNz, g_dx ]; },
+		getNow:			function() { return [ g_iterCount, totalEnergy() ]; },
+		getStateEnOcc:	function(ist) { return [ g_sdEnergy[ist], g_occ[ist] ]; },
+		getOrbitAndSpin:function(ist) { return [ g_state[ist][0], g_state[ist][1] ]; }, // [ orb, spin ]
+		getState:		function(ist,i,j,k) { return g_sdState[ist][i][j][k]; },
+		getDensity:		function(i,j,k) { return g_rhoUp[i][j][k]+g_rhoDown[i][j][k]; },
+		getDensityUp:	function(i,j,k) { return g_rhoUp[i][j][k]; },
+		getDensityDown:	function(i,j,k) { return g_rhoDown[i][j][k]; },
+		getVext:		function(i,j,k) { return g_vvext[i][j][k]; },
+		getVeffUp:		function(i,j,k) { return g_vvUp[i][j][k]; },
+		getVeffDown:	function(i,j,k) { return g_vvDown[i][j][k]; },
+		getVh:			function(i,j,k) { return g_vvh[i][j][k]; },
+		getVxcUp:		function(i,j,k) { return g_vvxcUp[i][j][k]; },
+		getVxcDown:		function(i,j,k) { return g_vvxcDown[i][j][k]; },
+		getCloud:		function(i,j,k) { return g_cloud[i][j][k]; },
+	};
+	
+})(); // ====================  LiLikeAtomLSD3D end  ====================
+
+
+const js092 = (function(){ // ====================  js Module  ====================
+	
+	const theModule = LiLikeAtomLSD3D;
+	const themeStr = [ " ", "H" , "He", "Li", "Be", "B" , "C" , "N" , "O" , "F" , "Ne" ];
+	const xCanvasSize = 480;	// in pixel
+	const yCanvasSize = 480;	// in pixel
+	let canvas;					// canvas2d
+	let ctx;
+	
+	let v_res = 4;			// 0:dx=1,L=16, 1:dx=1,L=20,  2:dx=2/3,L=16 3:dx=2/3,L=20 
+							// 4:dx=1/2,L=16, 5:dx=1/2,L=20,  6:dx=2/5,L=16, 7:dx=2/5,L=20,
+							// 8:dx=1/3,L=16, 9:dx=1/3,L=20,  10:dx=1/4,L=16, 11:dx=1/4,L=20,
+							// 12:dx=1/5,L=16
+	const v_stateMax = 12; 
+	let v_zNu = 3;			// 1:H, 2:He, 3:Li, 4:Be, 5:B, 6:C, 7:N, 8:O, 9:F, 10:Ne
+	let v_dne = 0.0;		// -1.0:+ion,  -0.5:ionization,  0.0:atom, +1.0:-ion
+	let v_mix = 0.5;		// mixing electron density: rhoNext = (1-mix)*rho + mix*sum( occupation[i]*|orbit[i]|^2 )
+	let v_broad = 0.01;		// (au) level broadening (0.01au ~ 300K room temperature)
+	
+	let p_NNx, p_NNy, p_NNz, p_dx; // = theModule.getSysParam();
+	
+	let dispMode = 1;
+	let dispState = 0;
+	let resetFlag = true;
+	let pauseFlag = false;
+	let stepFlag = false;
+	let inStepFlag = false;
+	let setPotentialFlag = false;
+	
+	function main() {
+		resetFlag = true;
+		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
+		initDom();
+		viewHome();
+		
+		animate();
+		
+		function setCanvas( canvasID, width, height ) {
+			canvas = document.getElementById( canvasID );
+			canvas.width  = width;
+			canvas.height = height;
+			ctx = canvas.getContext('2d');
+			ctx.font = "16px 'sans-serif'";
+			ctx.textBaseline = "bottom";
+			ctx.textAlign = "left";
+			ctx.lineWidth = 1;
+			g3d.setMouseOnCanvas( canvas ); // 3D graphics
+		}
+	}
+	
+	
+	function animate() {
+		
+		if ( resetFlag ) {
+			resetFlag = false;
+			theModule.init( v_res, v_stateMax, v_zNu, v_dne );
+			[ p_NNx, p_NNy, p_NNz, p_dx ] = theModule.getSysParam();
+			// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
+			g3d.init( p_NNx, p_NNy, p_NNz, p_dx, xCanvasSize, yCanvasSize, 300, 20 );
+			g3d.drawField3D.threshold = 0.7;
+			
+		}
+		
+		if ( setPotentialFlag ) {
+			setPotentialFlag = false;;
+			theModule.setAtom( v_zNu, v_dne );
+		}
+		
+		if ( !pauseFlag ) {
+			theModule.evolve( v_mix, v_broad );
+		} else if ( pauseFlag && stepFlag ) {
+			stepFlag = false;
+			theModule.evolve( v_mix, v_broad );
+			inStepFlag = true;
+		}
+		
+		draw( ctx, dispMode );
+		
+		requestAnimationFrame(animate);
+	}
+	
+	
+	// --------------------  draw  --------------------
+	
+	const gColor = { orb:"#dddd00", dens:"#dd88dd",
+					Vext:"#00dd00", Veff:"#0088ff", Vh:"#4444ff", Vxc:"#8800ff", Vx:"#aa00ff",Vc:"#8888ff" };
+	
+	function draw( ctx, dispMode ) {
+	
+		const jc = p_NNy/2, kc = p_NNz/2;
+		const xp = 30, yp = 20, xtabp = 320;
+		
+		let auLength, auTime, auEnergy, au2eV, iterCount, totalEnergy;
+		[ auLength, auTime, auEnergy, au2eV ] = theModule.getAUinSI();
+		[ iterCount, totalEnergy ] = theModule.getNow();
+		
+		// clear
+		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
+		
+		const dispOrbit = theModule.getOrbitAndSpin(dispState)[0];
+		if (dispMode==0) { // state table
+			drawStateTable( ctx, 60, 30 );
+		} else if (dispMode==1) { // 3D - density(x,y,z)
+			dispText( "density(x,y,z)" );
+			g3d.drawField3D.threshold = 0.5;
+			const densFunc = function(i,j,k) { return 100.0*theModule.getDensity(i,j,k); };
+			// g3d.drawField3D( ctx, rotAngle, fieldFunc, colorMode )
+			g3d.drawField3D( ctx, 0.0, densFunc, 1 );
+			g3d.drawField3D.threshold = 0.7;
+		} else if (dispMode==2) { // 3D - densityUp(x,y,z)
+			dispText( "densityUp(x,y,z)" );
+			g3d.drawField3D.threshold = 0.5;
+			const densFunc = function(i,j,k) { return 100.0*theModule.getDensityUp(i,j,k); };
+			// g3d.drawField3D( ctx, rotAngle, fieldFunc, colorMode )
+			g3d.drawField3D( ctx, 0.0, densFunc, 1 );
+			g3d.drawField3D.threshold = 0.7;
+		} else if (dispMode==3) { // 3D - densityDown(x,y,z)
+			dispText( "densityDown(x,y,z)" );
+			g3d.drawField3D.threshold = 0.5;
+			const densFunc = function(i,j,k) { return 100.0*theModule.getDensityDown(i,j,k); };
+			// g3d.drawField3D( ctx, rotAngle, fieldFunc, colorMode )
+			g3d.drawField3D( ctx, 0.0, densFunc, 1 );
+			g3d.drawField3D.threshold = 0.7;
+		}  else if (dispMode==4) { // 3D - state: orbit(x,y,z) + spin
+			dispText( stateStr( dispState ) );
+			const orbitFunc = function(i,j,k) { return 50.0*theModule.getState(dispOrbit, i,j,k); };
+			// g3d.drawField3D( ctx, rotAngle, fieldFunc, colorMode )
+			g3d.drawField3D( ctx, 0.0, orbitFunc, 1 );
+		} else if (dispMode==5) { // 3D - density(x,y,z)
+			g3d.drawField3D.threshold = 0.1;
+			dispText( stateStr( dispState ) );
+			if ( !pauseFlag || inStepFlag ) theModule.setCloud(dispOrbit);
+			inStepFlag = false;
+			const cloudFunc = function(i,j,k) { return 1.0*theModule.getCloud(i,j,k); };
+			// g3d.drawField3D( ctx, rotAngle, fieldFunc, colorMode )
+			g3d.drawField3D( ctx, 0.0, cloudFunc, 1 );
+			g3d.drawField3D.threshold = 0.7;
+			
+		} else if (dispMode==6) { // 2D - density(x,y,0)
+			dispText( "grid2d density(x,y,0)" );
+			const densXYFunc = function(i,j) { return 5.0*theModule.getDensity(i,j,kc); };
+			// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawGrid2D( ctx, 0.0, densXYFunc, 0.5, 1 );
+		} else if (dispMode==7) { // 2D - densityUp(x,y,0)
+			dispText( "grid2d densityUp(x,y,0)" );
+			const densXYFunc = function(i,j) { return 5.0*theModule.getDensityUp(i,j,kc); };
+			// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawGrid2D( ctx, 0.0, densXYFunc, 0.5, 1 );
+		} else if (dispMode==8) { // 2D - densityUp(x,y,0)
+			dispText( "grid2d densityDown(x,y,0)" );
+			const densXYFunc = function(i,j) { return 5.0*theModule.getDensityDown(i,j,kc); };
+			// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawGrid2D( ctx, 0.0, densXYFunc, 0.5, 1 );
+		} else if (dispMode==9) { // 2D - orbit(x,y,0)
+			dispText( stateStr( dispState ) );
+			const orbitXYFunc = function(i,j) { return 10.0*theModule.getState(dispOrbit,i,j,kc); };
+			// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawGrid2D( ctx, 0.0, orbitXYFunc, 0.5, 1 );
+			
+		} else if (dispMode==10) { // 3D view - Vext(x,y)
+			dispText( "grid2d external potential: Vext(x,y,0)" );
+			const zFunc = function(i,j) { return 0.5*theModule.getVext(i,j,kc); };
+			// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawGrid2D( ctx, 0.0, zFunc, gColor.Vext, 1 );
+		} else if (dispMode==11) { // 3D view - VeffUp(x,y)
+			dispText( "grid2d effective potential: VeffUp(x,y,0)" );
+			const zFunc = function(i,j) { return 0.5*theModule.getVeffUp(i,j,kc); };
+			// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawGrid2D( ctx, 0.0, zFunc, gColor.Veff, 1 );
+		} else if (dispMode==12) { // 3D view - VeffDown(x,y)
+			dispText( "grid2d effective potential: VeffDown(x,y,0)" );
+			const zFunc = function(i,j) { return 0.5*theModule.getVeffDown(i,j,kc); };
+			// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawGrid2D( ctx, 0.0, zFunc, gColor.Veff, 1 );
+		} else if (dispMode==13) { // 3D view - Vh(x,y)
+			dispText( "grid2d Hartree potential: Vh(x,y,0)" );
+			const zFunc = function(i,j) { return 0.5*theModule.getVh(i,j,kc); };
+			// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawGrid2D( ctx, 0.0, zFunc, gColor.Vh, 1 );
+		} else if (dispMode==14) { // 3D view - VxcUp(x,y)
+			dispText( "grid2d exchange and correlation potential: VxcUp(x,y,0)" );
+			const zFunc = function(i,j) { return 0.5*(theModule.getVxcUp(i,j,kc)); };
+			// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawGrid2D( ctx, 0.0, zFunc, gColor.Vxc, 1 );
+		} else if (dispMode==15) { // 3D view - VxcDown(x,y)
+			dispText( "grid2d exchange and correlation potential: VxcDown(x,y,0)" );
+			const zFunc = function(i,j) { return 0.5*(theModule.getVxcDown(i,j,kc)); };
+			// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
+			g3d.drawGrid2D( ctx, 0.0, zFunc, gColor.Vxc, 1 );
+		}
+		
+		// caption
+		const xMax = p_NNx*p_dx, yMax = p_NNy*p_dx, zMax = p_NNz*p_dx; 
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`box = ${ xMax } x ${ yMax } x ${ zMax } (au)`, 20, yCanvasSize-30);
+		ctx.fillText(`Z = ${v_zNu},  ne =${v_zNu+v_dne}`, 260, yCanvasSize-30);
+		ctx.fillText(`iteration= ${ iterCount }`, 20, yCanvasSize-10);
+		ctx.fillText(` Energy= ${ totalEnergy.toFixed(6) }`, 260, yCanvasSize-10);
+
+		
+		function dispText( str ) {
+			ctx.fillStyle = "#888888";
+			ctx.fillText( str, 20, yCanvasSize-50 );
+		}
+	}
+	
+	function stateStr( state ) { 
+		let orb, spin, energy, occ;
+		[ orb, spin ] = theModule.getOrbitAndSpin(state);
+		[ energy, occ ] = theModule.getStateEnOcc(state);
+		const spinStr = (spin==1) ? "up" : "down";
+		return `state:| ${state} >, energy:${energy.toFixed(6)}(au), occ:${occ.toFixed(4)}, spin:${spinStr}`;
+	}
+	
+	function drawStateTable( ctx, px, py ) { 
+					
+		// clear canvas
+		ctx.fillStyle = "#888888";
+		ctx.fillRect( 5, 5, xCanvasSize-10, yCanvasSize-80 );
+
+		ctx.fillStyle = "rgb(0,0,0)";
+		ctx.fillText("State Table", px+50, py);
+		ctx.fillText("No.", px, py+20);
+		ctx.fillText(" state E", px+30, py+20);
+		ctx.fillText("occ", px+130, py+20);
+		ctx.fillText("orbit", px+210, py+20);
+		ctx.fillText("spin", px+310, py+20);
+		ctx.fillStyle = "#555555";
+		ctx.fillText("the orbit number has no meaning ( inner use )", px, py+300 );
+		for (let ist=0; ist<12; ist++) {
+			let orb, spin, energy, occ;
+			[ orb, spin ] = theModule.getOrbitAndSpin(ist);
+			[ energy, occ ] = theModule.getStateEnOcc(ist);
+			const ppy = py+40+(11-ist)*20;
+			ctx.fillStyle = `hsl(${240-occ*240},100%,50%)`;
+			ctx.fillText(ist, px, ppy);
+			ctx.fillText(energy.toFixed(6), px+30, ppy);
+			ctx.fillText(occ.toFixed(4), px+130, ppy);
+			ctx.fillText("orbitNo."+orb, px+210, ppy);
+			ctx.fillText(((spin==1) ? "up" : "down"), px+310, ppy);
+		}
+	}
+	
+	
+	// --------------------  graphics 3D (field) module  --------------------
+	//
+	// ver 0.0.1  2018.12.16  last updated on 2023.03.01
+	// ver 0.0.2  2023.03.03  last updated on 2023.06.01
+	
+	let g_NNx, g_NNy, g_NNz, g_dx, g_dy, g_dz, g_xCanvasSize, g_yCanvasSize, g_xBoxSize, g_yShift;
+	
+	const g3d = {};				// namespace of graphic 3D module
+	
+	g3d.mouseDownFlag = 0;		// 1:on mouse down, 0:else
+	g3d.x_mouse = 0;			// x-position of mouse
+	g3d.y_mouse = 0;			// y-position of mouse
+	g3d.x0_mouse = 0;			// drag-started x-position of mouse
+	g3d.y0_mouse = 0;			// drag-started y-position of mouse
+	g3d.zoom = 1.0;
+	
+	g3d.xMax = 0.0;				// x-length of box
+	g3d.yMax = 0.0;				// y-length of box
+	g3d.zMax = 0.0;				// z-length of box
+	g3d.cx0 = 0.0;				// x-component of rotate center
+	g3d.cy0 = 0.0;				// y-component of rotate center
+	g3d.cz0 = 0.0;				// z-component of rotate center
+	g3d.Ax = -Math.PI/15.0;		// rotate angle around x-axis
+	g3d.Ay = -Math.PI/15.0;		// rotate angle around y-axis
+	g3d.ddAy = 0.0;				// Ay change rate for auto-rotate: eg. dday=0.5*Math.PI/180
+	g3d.cosAx = 0.0;			// cosAx=Math.cos(Ax)
+	g3d.sinAx = 0.0;			// sinAx=Math.sin(Ax)
+	g3d.cosAy = 0.0;			// cosAy=Math.cos(Ay)
+	g3d.sinAy = 0.0;			// sinAy=Math.sin(Ay)
+	
+	g3d.xApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.yApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.zApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.pxApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.pyApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.pzApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.boxApex = [[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1], [1,0,1], [0,1,1], [1,1,1] ];
+	g3d.boxEdge = [[0,1,9], [0,2,9], [0,4,9], [1,3,9], [1,5,9], [2,3,9], 
+					[2,6,9], [3,7,9], [4,5,9], [4,6,9], [5,7,9], [6,7,9] ];
+	
+	//--- set mouse on canvas
+	
+	// g3d.setMouseOnCanvas( canvas );
+	g3d.setMouseOnCanvas = function( canvas ) {
+		canvas.addEventListener('mousemove', g3d.mouse_move);
+		canvas.addEventListener('mousedown', g3d.mouse_down);
+		canvas.addEventListener('mouseup', g3d.mouse_up);
+		canvas.addEventListener("mousewheel", g3d.mouseWheel);
+	};
+	
+	g3d.mouse_move = function(e) {
+		const pi = Math.PI;
+
+		if (g3d.mouseDownFlag==1) {
+			g3d.x_mouse = e.clientX;
+			g3d.y_mouse = e.clientY;
+			g3d.Ay = g3d.Ay + 0.5*(g3d.x_mouse-g3d.x0_mouse)*pi/180;
+			if (g3d.Ay<-pi) g3d.Ay += 2*pi;
+			if (g3d.Ay>pi) g3d.Ay += -2*pi;
+			//g3d.Ax = g3d.Ax + 0.5*(g3d.y_mouse-g3d.y0_mouse)*pi/180;
+			g3d.Ax = g3d.Ax - 0.5*(g3d.y_mouse-g3d.y0_mouse)*pi/180;
+			if (g3d.Ax<-0.5*pi) g3d.Ax = -0.5*pi;
+			if (g3d.Ax>0.5*pi) g3d.Ax = 0.5*pi;
+			g3d.x0_mouse = g3d.x_mouse;
+			g3d.y0_mouse = g3d.y_mouse;
+		}
+	};
+	
+	g3d.mouse_down = function(e) {
+		if (g3d.mouseDownFlag==0) {
+			g3d.x0_mouse = e.clientX;
+			g3d.y0_mouse = e.clientY;
+			g3d.x_mouse = g3d.x0_mouse;
+			g3d.y_mouse = g3d.y0_mouse;
+			g3d.mouseDownFlag = 1;
+		}
+	};
+	
+	g3d.mouse_up = function(e) {
+		if (g3d.mouseDownFlag==1) {
+			g3d.mouseDownFlag = 0;
+		}
+	};
+	
+	g3d.mouseWheel = function(e) {
+		g3d.deltaY = e.deltaY;
+		if ( g3d.deltaY > 0 ) g3d.zoom *= 0.95;
+		else if ( g3d.deltaY < 0 ) g3d.zoom *= 1.05;
+		if ( g3d.zoom<0.5 ) g3d.zoom = 0.5;
+		if ( g3d.zoom>2.0 ) g3d.zoom = 2.0;
+	};
+	
+	//--- 3D graphics aid
+	
+	// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
+	g3d.init = function( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift ) {
+		g_NNx = NNx; g_NNy = NNy; g_NNz = NNz;
+		g_dx = dx; g_dy = dx; g_dz = dx;
+		g_xCanvasSize = xCanvasSize; g_yCanvasSize = yCanvasSize;
+		g_xBoxSize = (xBoxSize==undefined) ? 300 : xBoxSize;
+		g_yShift = (yShift==undefined) ? 20 : yShift;
+		g3d.setSize();
+	}
+	
+	g3d.setSize = function() {
+		g3d.xMax = g_NNx*g_dx;		// x-length of box
+		g3d.yMax = g_NNy*g_dy;		// y-length of box
+		g3d.zMax = g_NNz*g_dz;		// z-length of box
+		g3d.cx0 = 0.5*g3d.xMax;		// x-component of rotate center
+		g3d.cy0 = 0.5*g3d.yMax;		// y-component of rotate center
+		g3d.cz0 = 0.5*g3d.zMax;		// z-component of rotate center
+	};
+	
+	// g3d.setRotateAngle( AxInDegree, AyInDegree );
+	g3d.setRotateAngle = function( AxInDegree, AyInDegree ) {
+		g3d.Ax = AxInDegree*Math.PI/180.0;
+		g3d.Ay = AyInDegree*Math.PI/180.0;
+	};
+	
+	// g3d.scxpypFunc();
+	g3d.scxpypFunc = function() {
+		const xBoxSize = g_xBoxSize;
+		const xCenter = g_xCanvasSize/2, yCenter = g_yCanvasSize/2-g_yShift, yBoxSize = (xBoxSize/g_NNx)*g_NNy;
+		const xp = xCenter - (xBoxSize/2)*g3d.zoom, yp = yCenter - (yBoxSize/2)*g3d.zoom; // g3d param
+		const sc = xBoxSize/(g_NNx*g_dx)*g3d.zoom;
+		return [ sc, xp, yp ];
+	}
+	
+	g3d.set3DRotateXY = function(rotateRateOfAyInDegree) {
+		g3d.ddAy = rotateRateOfAyInDegree*Math.PI/180.0;
+		g3d.Ay= g3d.Ay + g3d.ddAy; // auto-rotate : if (ddAy==0.0), stop
+		if (g3d.Ay>Math.PI) g3d.Ay = g3d.Ay - 2.0*Math.PI;
+		if (g3d.Ay<-Math.PI) g3d.Ay = g3d.Ay + 2.0*Math.PI;
+		g3d.setBox();           // set box apex
+		g3d.setRotateXY(g3d.Ax,g3d.Ay); // set rotate param
+		g3d.rotateApexXY();     // box Apex rotate--> pxApex[i],pyApex[i],pzApex[i]
+		g3d.markFarEdge();      // boxEdge[iEdge][2]=1:far side edge or 0:near side edge
+	};
+	
+	g3d.setBox = function() {
+		for (let i=0; i<8; i++) {
+			g3d.xApex[i] = g3d.boxApex[i][0]*g3d.xMax;
+			g3d.yApex[i] = g3d.boxApex[i][1]*g3d.yMax;
+			g3d.zApex[i] = g3d.boxApex[i][2]*g3d.zMax;
+		}
+	};
+	
+	g3d.setRotateXY = function(angleX,angleY) {
+		g3d.cosAx = Math.cos(angleX);
+		g3d.sinAx = Math.sin(angleX);
+		g3d.cosAy = Math.cos(angleY);
+		g3d.sinAy = Math.sin(angleY);
+		g3d.cx0 = 0.5*g3d.xMax;
+		g3d.cy0 = 0.5*g3d.yMax;
+		g3d.cz0 = 0.5*g3d.zMax;
+	};
+	
+	g3d.rotateApexXY = function() { // rotate box apex
+		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
+		
+		for (let i=0; i<8; i++) {
+			g3d.pxApex[i] = cosAy*(g3d.xApex[i]-cx0)+sinAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cx0;
+			g3d.pyApex[i] = cosAx*(g3d.yApex[i]-cy0)-sinAx*(g3d.zApex[i]-cz0) + cy0;
+			g3d.pzApex[i] =-sinAy*(g3d.xApex[i]-cx0)+cosAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cz0;
+		}
+	};
+	
+	g3d.markFarEdge = function() {
+		//seek far apex --> iMin
+		let zMin = g3d.pzApex[0];
+		let iMin = 0;
+		for (let i=1; i<8; i++) {
+			if (zMin>g3d.pzApex[i]) {
+				zMin = g3d.pzApex[i];
+				iMin = i;
+			}
+		}
+		//mark far edge
+		for (let iEdge=0; iEdge<12; iEdge++) {
+			g3d.boxEdge[iEdge][2] = 0;
+			if (g3d.boxEdge[iEdge][0]==iMin || g3d.boxEdge[iEdge][1]==iMin) g3d.boxEdge[iEdge][2] = 1;
+		}
+	};
+	
+	g3d.drawRotatedDisc = function(ctx, x,y,z,r,color,sc,xp,yp) {
+		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
+		
+		const x1 = cosAy*(x-cx0)+sinAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cx0
+		const y1 = cosAx*(y-cy0)-sinAx*(z-cz0) + cy0
+		//z1 =-sinAy*(x-cx0)+cosAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cz0
+		g3d.drawDisc(ctx, x1*sc+xp,y1*sc+yp,r,color);
+	};
+	
+	g3d.drawRotatedLine = function(ctx, x1,y1,z1,x2,y2,z2,color,sc,xp,yp) {
+		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
+		
+		const x1p = cosAy*(x1-cx0)+sinAy*(sinAx*(y1-cy0)+cosAx*(z1-cz0)) + cx0
+		const y1p = cosAx*(y1-cy0)-sinAx*(z1-cz0) + cy0
+		const x2p = cosAy*(x2-cx0)+sinAy*(sinAx*(y2-cy0)+cosAx*(z2-cz0)) + cx0
+		const y2p = cosAx*(y2-cy0)-sinAx*(z2-cz0) + cy0
+		g3d.drawLine(ctx, x1p*sc+xp,y1p*sc+yp,x2p*sc+xp,y2p*sc+yp,color);
+	};
+	
+	g3d.plotNearEdge = function(ctx, sc,xp,yp,color) {
+		for (let iEdge=0; iEdge<12; iEdge++) {
+			if (g3d.boxEdge[iEdge][2]==0) { //far edge mark = 1
+				g3d.plotEdge(ctx, iEdge,sc,xp,yp,color);
+			}
+		}
+	};
+	
+	g3d.plotFarEdge = function(ctx, sc,xp,yp,color) {
+		for (let iEdge=0; iEdge<12; iEdge++) {
+			if (g3d.boxEdge[iEdge][2]==1) { //far edge mark = 1
+				g3d.plotEdge(ctx, iEdge,sc,xp,yp,color);
+			}
+		}
+	};
+	
+	g3d.plotEdge = function(ctx, iEdge,sc,xp,yp,color) {
+		let iApex = g3d.boxEdge[iEdge][0];
+		const x1=g3d.pxApex[iApex]*sc+xp, y1=g3d.pyApex[iApex]*sc+yp;
+		iApex = g3d.boxEdge[iEdge][1];
+		const x2=g3d.pxApex[iApex]*sc+xp, y2=g3d.pyApex[iApex]*sc+yp;
+		g3d.drawLine(ctx, x1, y1, x2, y2, color);
+	};
+	
+	g3d.drawLine = function(ctx, x1, y1, x2, y2, color) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	};
+	
+	g3d.drawDisc = function(ctx, x, y, r, color) {
+		ctx.fillStyle = color;
+		ctx.beginPath();
+		ctx.arc(x, y, r, 0, 2*Math.PI, false);
+		ctx.fill();
+	};
+	
+	// --------------------  end of graphics 3D (field) module  --------------------
+	
+	// g3d_extension field3D  created 2023.06.04, last updated 2023.06.04
+	// g3d.drawField3D( ctx, rotAngle, fieldFunc, colorMode )
+	g3d.drawField3D = function(ctx, rotAngle, fieldFunc, colorMode ) {
+		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, dx=g_dx, hh=g_dx*sc;
+		const threshold = g3d.drawField3D.threshold;
+	
+		g3d.set3DRotateXY(rotAngle);
+		g3d.plotFarEdge(ctx, sc,xp,yp,"#444400"); // dark yellow
+		for (let ii=0; ii<nnx; ii++) {
+			let i=ii; if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
+			for (let jj=0; jj<nny; jj++) {
+				let j=jj; if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
+				for (let kk=0; kk<nnz; kk++) {
+					let k=kk; if (g3d.pzApex[4]-g3d.pzApex[0]<0) k=nnz-kk-1;
+					
+					const f = fieldFunc(i,nny-j-1,k);
+					const r = Math.min(Math.pow(Math.abs(f),0.333),0.6*hh);
+					if ( r>threshold ) {
+						let th, colr;
+						if ( colorMode==0 ) { // 0:red(f>0) or blue(f<0)
+							colr = (f>0) ? "#ff0000" : "#0000ff";
+						} else if ( colorMode==1 ) { //
+							th = 120.0-30.0*r*Math.sign(f);
+							if (th>270.0) th = 270.0;
+							if (th<-30.0) th = -30.0;
+							colr = `hsl(${th},100%,50%)`;
+						} else if ( colorMode==2 ) { // small hsl3-arg.
+							th = 120.0-30.0*r*Math.sign(f);
+							if (th>270.0) th = 270.0;
+							if (th<-30.0) th = -30.0;
+							colr = `hsl(${th},60%,30%)`;
+						}
+						g3d.drawRotatedDisc( ctx, i*dx, j*dx, k*dx, r*g3d.zoom, colr, sc, xp, yp );
+					}
+				}
+			}
+		}
+		g3d.plotNearEdge( ctx, sc, xp, yp, "#999900"); //yellow
+		
+		ctx.font = "12px 'sans-serif'";
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`Ax=${(g3d.Ax*180/Math.PI).toFixed(1)}, Ay=${(g3d.Ay*180/Math.PI).toFixed(1)}`, 10, 15);
+		ctx.font = "16px 'sans-serif'";
+	};
+	g3d.drawField3D.threshold = 0.7;
+	
+	// g3d_extension grid2d  created 2023.06.01, last updated 2023.06.04
+	// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
+	g3d.drawGrid2D = function ( ctx, rotAngle, zFunc, colorFactor, inc, showBox ) {
+		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
+		const nnx = g_NNx, nny = g_NNy, threshold = g3d.drawGrid2D.threshold;
+		
+		g3d.set3DRotateXY(rotAngle);
+		if ( (showBox & 1)>0 || showBox==undefined ) g3d.plotFarEdge(ctx, sc,xp,yp,"#444400"); // dark yellow
+		for (let jj=0; jj<nny; jj+=inc) {
+			let j=jj;if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
+			for (let ii=0; ii<nnx; ii++) {
+				let i=ii;if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
+				if (i<0 || i+1>nnx-1) continue;
+				const f = zFunc(i,nny-j-1);
+				const x = i*g_dx, y = j*g_dy, z = f + g3d.cz0;
+				const f1 = zFunc(i+1,nny-j-1);
+				const x1 = (i+1)*g_dx, y1 = j*g_dy, z1 = f1 + g3d.cz0;
+				let colr;
+				if ( typeof(colorFactor)=='number' ) {
+					const th = (18120 - Math.floor(colorFactor*180.0*(f+f1)/g3d.cz0))%360;
+					const a = Math.abs((f+f1)/g3d.cz0);
+					colr = (a>threshold) ? `hsl(${th},100%,50%)` : "#444444" ;
+				} else if ( typeof(colorFactor)=='string' ) {
+					colr = colorFactor;
+				} else if ( typeof(colorFactor)=='function' ) {
+					colr = colorFactor(i,nny-j-1);
+				}
+				g3d.drawRotatedLine(ctx, x,y,z,x1,y1,z1,colr,sc,xp,yp);
+			}
+		}
+		for (let ii=0; ii<nnx; ii+=inc) {
+			let i=ii;if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
+			for (let jj=0; jj<nny; jj++) {
+				let j=jj;if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
+				if (j<0 || j+1>nny-1) continue;
+				const f = zFunc(i,nny-j-1);
+				const x = i*g_dx, y = j*g_dy, z = f + g3d.cz0;
+				const f1 = zFunc(i,nny-j-2);
+				const x1 = i*g_dx, y1 = (j+1)*g_dy, z1 = f1 + g3d.cz0;
+				let colr;
+				if ( typeof(colorFactor)=='number' ) {
+					const th = (18120 - Math.floor(colorFactor*180.0*(f+f1)/g3d.cz0))%360;
+					const a = Math.abs((f+f1)/g3d.cz0);
+					colr = (a>threshold) ? `hsl(${th},100%,50%)` : "#444444" ;
+				} else if ( typeof(colorFactor)=='string' ) {
+					colr = colorFactor;
+				} else if ( typeof(colorFactor)=='function' ) {
+					colr = colorFactor(i,nny-j-1);
+				}
+				g3d.drawRotatedLine(ctx, x,y,z,x1,y1,z1,colr,sc,xp,yp);
+			}
+		}
+		if ( (showBox & 2)>0 || showBox==undefined ) g3d.plotNearEdge(ctx, sc,xp,yp,"#999900"); //yellow
+		
+		ctx.font = "12px 'sans-serif'";
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`Ax=${(g3d.Ax*180/Math.PI).toFixed(1)}, Ay=${(g3d.Ay*180/Math.PI).toFixed(1)}`, 10, 15);
+		ctx.font = "16px 'sans-serif'";
+	};
+	g3d.drawGrid2D.threshold = 0.005;
+	
+	
+	// --------------------  control  --------------------
+	
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+		document.getElementById("slct_state").disabled = true;
+	}
+	
+	function reset() { resetFlag = true; }
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = ( pauseFlag==false ); 
+		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==true ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() { stepFlag = true; }
+	
+	function setRes() {  // select resolution
+		v_res = 0 + document.getElementById("slct_res").selectedIndex;
+		resetFlag = true;
+	}
+	
+	function setTheme() {  // select v_zNu
+		v_zNu = 1 + document.getElementById("slct_theme").selectedIndex;
+		setPotentialFlag = true;
+	}
+	
+	function setdne() {  // select v_dzNu
+		const selectdne = 0 + document.getElementById("slct_dne").selectedIndex;
+		let dne = 0.0;
+		if (selectdne==0) { dne = -1.0; }      // +ion
+		else if (selectdne==1) { dne = -0.5; } // ionization potential
+		else if (selectdne==2) { dne = 0.0; }  // atom
+		else if (selectdne==3) { dne = 1.0; }  // -ion
+		v_dne = dne;
+		setPotentialFlag = true;
+	}
+	
+	function setChargeMixing() {  // range mixing
+		v_mix = Number(document.getElementById("range_mixing").value);
+		document.getElementById("text_mixing").innerHTML = " " + v_mix.toFixed(3);
+	}
+	
+	function setLevelBroadening() {  // range broadening
+		v_broad = Number(document.getElementById("range_broadening").value);
+		document.getElementById("text_broadening").innerHTML = " " + v_broad.toFixed(3);
+	}
+	
+	function setDispMode() {  // select dispMode
+		const dom = document.getElementById("slct_state");
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+		dom.disabled = (dispMode==4 || dispMode==5 || dispMode==9 ) ? false : true;
+	}
+
+	function setState() {  // select dispState
+		dispState = 0 + document.getElementById("slct_state").selectedIndex;
+	}
+	
+	function viewHome() {
+		g3d.setRotateAngle(72,-12);
+		g3d.zoom = 1.0;	
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:				main,				// main()
+		
+		reset:				reset,				// reset()
+		pause:				pause,				// pause()
+		step:				step,				// step()
+		
+		setRes:				setRes,				// setRes()
+		setTheme:			setTheme,			// setTheme()
+		setdne:				setdne,			// setdne()
+		setChargeMixing:	setChargeMixing,	// setChargeMixing()
+		setLevelBroadening:	setLevelBroadening,	// setLevelBroadening()
+		setDispMode:		setDispMode,		// setDispMode()
+		setState:			setState,			// setState()
+		viewHome:			viewHome,			// viewHome()
+	};
+	
+})(); // ====================  js092 end  ====================
+
+// event
+const js = js092;
+window.addEventListener('load', js.main );
+
+
+// %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%%
+
+</script>
+
+<style type="text/css">
+    body { text-align:left; color:#000000; background-color:#fff8dd; }
+</style>
+
+</head>
+
+<body>
+<p>[js092] light atom - local spin density approximation - RS-DFT-LSD3D</p>
+<canvas ID="canvas_box" style="background-color: #000000;" WIDTH="480" HEIGHT="480"></canvas>
+<br>
+
+<label>resolution:</label>
+<select id="slct_res" onChange="js.setRes()">
+<option>dx=1,L=16</option><option>dx=1,L=20</option>
+<option>dx=2/3,L=16</option><option>dx=2/3,L=20</option>
+<option selected>dx=1/2,L=16</option><option>dx=1/2,L=20</option>
+<option>dx=2/5,L=16</option><option>dx=2/5,L=20</option>
+<option>dx=1/3,L=16</option><option>dx=1/3,L=20</option>
+<option>dx=1/4,L=16</option><option>dx=1/4,L=20</option>
+<option>dx=1/5,L=16</option>
+</select>
+    <span style="margin-right: 40px;"></span>
+<label>atom:</label>
+<select id="slct_theme" onChange="js.setTheme()">
+<option>H </option><option>He</option><option selected>Li</option>
+<option>Be</option><option>B </option><option>C </option><option>N </option>
+<option>O </option><option>F </option><option>Ne</option></select>
+    <span style="margin-right: 20px;"></span>
+<label>status:</label>
+<select id="slct_dne" onChange="js.setdne()">
+<option>+ion</option><option>ionization</option><option selected>atom</option>
+<option>-ion</option>
+</select>
+<br>
+
+    <span style="margin-right: 20px;"></span>
+<button onClick="js.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="js.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="js.step()">step</button>
+<br>
+
+<label>mixing:</label><label id="text_mixing"> 0.500</label>
+<input type="range" id="range_mixing" min="0.00" max="0.9" value="0.50" step="0.01" 
+style="width:360px" list="tickmarks_mx" oninput="js.setChargeMixing()">
+<datalist id="tickmarks_mx"><option value="0.2"><option value="0.4"><option value="0.6">
+<option value="0.8"></datalist>
+<br>
+
+<label>broad :</label><label id="text_broadening"> 0.010</label>
+<input type="range" id="range_broadening" min="0.001" max="0.1" value="0.01" step="0.001" 
+style="width:360px" list="tickmarks_br" oninput="js.setLevelBroadening()">
+<datalist id="tickmarks_br"><option value="0.02"><option value="0.04"><option value="0.06">
+<option value="0.08"><option value="0.1"></datalist>
+<br>
+
+<label>disp mode:</label>
+<select id="slct_dispMode" onChange="js.setDispMode()">
+<option>state table</option><option selected>3d density(x,y,z)</option>
+<option>3d densityUp(x,y,z)</option><option>3d densityDown(x,y,z)</option>
+<option>3d orbit(x,y,z)</option><option>3d cloud(|orbit|^2)</option>
+<option>grid2d density(x,y,0)</option><option>grid2d densityUp(x,y,0)</option>
+<option>grid2d densityDown(x,y,0)</option><option>grid2d orbit(x,y,0)</option>
+<option>grid2d Vext(x,y,0)</option><option>grid2d VeffUp(x,y,0)</option>
+<option>grid2d VeffDown(x,y,0)</option><option>grid2d Vh(x,y,0)</option>
+<option>grid2d VxcUp(x,y,0)</option><option>grid2d VxcDown(x,y,0)</option>
+</select>
+    <span style="margin-right: 20px;"></span>
+<label>state:</label>
+<select id="slct_state" onChange="js.setState()"> 
+<option selected>0</option><option>1</option><option>2</option><option>3</option><option>4</option>
+<option>5</option><option>6</option><option>7</option><option>8</option><option>9</option>
+<option>10</option><option>11</option>
+</select>
+<br>
+
+<button onClick="js.viewHome()">return to initial view</button>
+<br>
+
+<p id="text_caption" ></p>
+<hr width="480" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+

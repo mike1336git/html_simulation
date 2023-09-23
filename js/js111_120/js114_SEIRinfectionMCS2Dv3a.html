@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>js114_SEIRinfectionMCS2D</title>
+<script type="text/javascript">
+
+// %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%%
+
+'use strict';
+
+/* --------------------
+//
+//  js114_SEIRinfectionMCS2D
+//    Copyright(C) 2020-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2020.12.26 created, last updated on 2021.02.18
+//    ver 0.0.1  2020.10.18 v1, last updated on 2021.10.19
+//    ver 0.0.2  2021.11.08 v2, last updated on 2021.11.08
+//    ver 0.0.3  2023.05.19 v3, last updated on 2023.09.13
+//
+// -------------------- SEIR infection model - monte-Cerlo simulation
+//
+//  S-E-I-R model
+//
+//      [S] --- beta*I ---> [E] --- sigma ---> [I]--- gamma ---> [R] 
+//
+//
+//    S-E-I-R model -- differential equation
+//      dS/dt = -beta*S*I
+//      dE/dt = beta*S*I - sigma*E
+//      dI/dt = sigma*E - gamma*I
+//      dR/dt = gamma*I
+//    where
+//      S: susceptible
+//      E: exposed
+//      I: infectious
+//      R: removed (recover + dead)
+//      N = S + E + I + R = constant 
+//      beta: infection rate (1/day)
+//      sigma: incidence rate (1/day) ~ 1/(mean incubation period)
+//      gamma: recovery rate (1/day) ~ 1/(mean infected period)
+//      mue: birth rate = death rate (1/day) ~ 1/(mean life period)
+//
+//    basic reproduction number R0
+//      R0 = beta*S0/gamma
+//     (R0 ~ 2~3 for influenza)  -- infection model
+//
+//
+//
+// procedure in js code
+
+	let nContact = 0;
+	
+	function timeStep() {
+
+		let onset = 0;
+		for (let ipp=1; ipp<=nPop; ipp++) {
+			
+			// change walker status 
+			const st = status[ipp]; // status[ipp] 0:susceptible, 1:exposed, 2:infectius, 3:removed
+			if (st==1) { // 1:exposed  [E] --- sigma ---> [I]
+				if (Math.random()<sigma*dt) {
+					status[ipp] = 2; // 2:infectius
+					onset++;
+				}
+			} else if (st==2) {  // 2:infectius [I] --- gamma ---> [R]
+				if (Math.random()<gamma*dt) {
+					status[ipp] = 3; // 3:removed
+				}
+			}
+			
+			// move walker
+			moveWalker(ipp);
+		}
+		return onset;
+	}
+	
+	// evolve ipp-walker
+	function moveWalker(ipp) {
+
+		const dir = Math.floor(Math.random()*4);
+		
+		let ixx, iyy;
+		if (dir==0) { // east
+			ixx = (ix[ipp]+1)%NNx; iyy = iy[ipp];
+		} else if (dir==1) { // west
+			ixx = (ix[ipp]-1+NNx)%NNx; iyy = iy[ipp];
+		} else if (dir==2) { // north
+			ixx = ix[ipp]; iyy = (iy[ipp]+1)%NNy;
+		} else if (dir==3) { // south
+			ixx = ix[ipp]; iyy = (iy[ipp]-1+NNy)%NNy;
+		}
+		
+		const f = field[ixx][iyy]; // field[][] 1...NNp: particle, 0:free space, -1:wall
+		if (f==0) { // free space
+			// ipp-walker move
+			field[ix[ipp]][iy[ipp]] = 0;
+			ix[ipp] = ixx; iy[ipp] = iyy;
+			field[ix[ipp]][iy[ipp]] = ipp;
+		} else if (f>0) { // other particle
+			// contact
+			nContact++;
+			// status[ipp] 0:susceptible, 1:exposed, 2:infectius, 3:removed
+			if (status[ipp]==0 && status[f]==2) { // contact S ===> I
+				if (Math.random()<0.5*infectiusProb) {
+					status[ipp] = 1; // 1:exposed  [S] --- 0.5*infectiusProb ---> [I]
+				}
+			} else if (status[ipp]==2 && status[f]==0) { // contact I ===> S
+				if (Math.random()<0.5*infectiusProb) { 
+					status[f] = 1; // 1:exposed  [S] --- 0.5*infectiusProb ---> [I]
+				}
+			}
+		} else if (f==-1) { // wall
+			; // ipp-walker not move
+		}
+	}
+
+//
+//    basic reproduction number R0 of this model
+//      R0 = numberOfContactToSusceptibleWalkerPerDay*infectiusProb/gamma
+//         = ((SS0/(NNx*NNy))/dt)*infectiusProb/gamma
+//
+//
+// --------------------
+*/
+
+const SEIRinfectionMCS2D = (function(){ // ====================  SEIRinfectionMCS2D Module  ====================
+	
+	const g_nMax = 100000;					// walker array max
+	const g_ntMax = 21600;					// max times of data record array (step dt)
+	const g_dayvdt = 20;					// 1(day) = g_dayvdt*dt
+	
+	let g_NNp = 40000;						// number of walker
+	let g_NNx = 360;						// x-division of the field
+	let g_NNy = 360;						// y-division of the field
+	
+	let g_sysTime = 0.0;					// (day) system time
+	let g_dt = 1.0/g_dayvdt;				// (day) time step dt
+	let g_incubationPeriod = 5.0;			// (day) mean incubation period
+	let g_infectedPeriod = 10.0;			// (day) mean infected period
+	let g_infectiusProb = 0.04;				// infectius probability per one contact 
+	let g_sigma = 1.0/g_incubationPeriod;	// (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
+	let g_gamma = 1.0/g_infectedPeriod;		// (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
+	
+	let g_nPop = g_NNp;						// nPop = S+E+I+R number of walker
+	let g_susceptible = g_nPop-30;			// number of susceptible walker
+	let g_exposed = 30;						// number of exposed walker
+	let g_infectius = 0;					// number of infectius walker
+	let g_removed = 0;						// number of removed walker
+	let g_onsetPerson = 0;					// number of onset walker
+	let g_nContact = 0;						// total number of contact per dt ( nContact ~ NNp*(NNp/(NNx*NNy)) )
+	let g_removedRatio = 0.0;
+	let g_ss0 = g_susceptible;
+	
+	const g_field = dimInt2( g_NNx, g_NNy );	// g_field[i][j]  1...NNp:walker number,  0:free space, -1:wall
+	const g_status = dimInt1( g_nMax );			// g_status[i] 0:susceptible, 1:exposed, 2:infectius, 3:removed
+	const g_ix = dimInt1( g_nMax );				// g_ix[i] x-position of i-th walker
+	const g_iy = dimInt1( g_nMax );				// g_iy[i] y-position of i-th walker
+	
+	const g_pS = dimInt1( g_ntMax );			// (person) susceptible
+	const g_pE = dimInt1( g_ntMax );			// (person) exposed
+	const g_pI = dimInt1( g_ntMax );			// (person) infectius
+	const g_pR = dimInt1( g_ntMax );			// (person) removed
+	const g_pN = dimInt1( g_ntMax );			// (person) total = S+E+I+R
+	const g_onsetvdt = dimInt1( g_ntMax );		// (person) onset person per dt
+	const g_onsetvday = dimInt1( g_ntMax );		// (person) onset person per day
+	const g_nContactvdt = dimInt1( g_ntMax );	// number of contact per dt
+	
+	function dimInt1( n ) {
+		return new Int32Array( n );
+	}
+	
+	function dimInt2( ni, nj ) {
+		let a = [] ;
+		for (let i=0; i<ni; i++) {  
+			a[i] = new Int32Array( nj );
+		}
+		return a;
+	}
+	
+	
+	// --------------------  set initial condition  --------------------
+	
+	function setInitialCondition( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio ) {
+		
+		setParam( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio );
+		
+		g_sysTime = 0;						// (day) system time
+		
+		g_nPop = g_NNp;						// nPop = S + E + I + R
+		g_removed = Math.floor(g_nPop*g_removedRatio);	// number of removed walkers
+		g_exposed = 30;						// number of exposed walkers
+		g_susceptible = g_nPop - g_removed - g_exposed;	// number of susceptible walkers
+		g_infectius = 0;					// number of infectius walkers
+		g_onsetPerson = 0;					// number of onset walker
+		g_nContact = 0;						// number of contact per dt
+		g_ss0 = g_susceptible;				// S(0): initial number of susceptible walkers
+		
+		clearField();
+		clearPop();
+		setWalkers(g_nPop,g_exposed,g_removedRatio);
+	}
+	
+	function setParam( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio ) {
+		g_infectiusProb = v_infectiusProb;	// infectius probability per one contact
+		g_sigma = v_sigma;					// (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
+		g_gamma = v_gamma;					// (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
+		g_NNp = v_popDens;					// nPop = S+E+I+R number of walkers
+		g_removedRatio = v_removedRatio;	// initial removed ratio: removed(t==0) = removedRatio*N
+	}
+	
+	function clearField() {
+		const nnx=g_NNx, nny=g_NNy;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				g_field[i][j] = 0;
+			}
+		}
+	}
+	
+	function clearPop() {
+		const nt=g_ntMax;
+		for (let i=0; i<nt; i++) {
+			g_pS[i] = 0;
+			g_pE[i] = 0;
+			g_pI[i] = 0;
+			g_pR[i] = 0;
+			g_pN[i] = 0;
+			g_onsetvdt[i] = 0;
+			g_onsetvday[i] = 0;
+			g_nContactvdt[i] = 0;
+		}
+	}
+	
+	function setWalkers(nn, initExposedNum,removedRatio) {
+		const rr0 = nn*removedRatio;
+		// set susceptible nn walkers
+		for (let i=1; i<=nn; i++) {
+			let x, y;
+			do {
+				x = Math.floor(g_NNx*Math.random());
+				y = Math.floor(g_NNy*Math.random());
+			} while (g_field[x][y]!=0); // g_field[][]: free space: 0, walker:1...NNp-1
+			g_field[x][y] = i;
+			g_ix[i] = x;
+			g_iy[i] = y;
+
+			if (i<=rr0) {
+				g_status[i] = 3; // 3:removed
+			} else {
+				g_status[i] = 0; // 0:susceptible
+			}
+		}
+		// set exposed initExposedNum walkers
+		for (let i=0; i<initExposedNum; i++) {
+			let ipp;
+			do {
+				ipp = Math.floor(nn*Math.random()) + 1;
+			} while (g_status[ipp]!=0); // g_status[ipp] 0:susceptible, 1:exposed, 2:infectius, 3:removed
+			g_status[ipp] = 1; // 1:exposed
+		}
+	}
+	
+	
+	// --------------------  time evolution  --------------------
+	
+	function timeEvolution(nCalc) {
+		for (let i=0; i<nCalc; i++) {
+			const it = Math.floor(g_sysTime/g_dt);
+			memoSEIRN(it); // set g_pS[it],g_pE[it],g_pI[it],g_pR[it],g_pN[it]
+
+			g_sysTime += g_dt;
+			g_onsetPerson = timeStep();
+		}
+	}
+	
+	function timeStep() {
+		const nnp=g_NNp;
+		let onset = 0;
+		g_nContact = 0;
+		for (let ipp=1; ipp<=nnp; ipp++) {
+			const st = g_status[ipp]; // g_status[ipp] 0:susceptible, 1:exposed, 2:infectius, 3:removed
+			if (st==1) { // 1:exposed  [E] --- sigma ---> [I]
+				if (Math.random()<g_sigma*g_dt) {
+					g_status[ipp] = 2; // 2:infectius
+					onset++;
+				}
+			} else if (st==2) {  // 2:infectius [I] --- gamma ---> [R]
+				if (Math.random()<g_gamma*g_dt) {
+					g_status[ipp] = 3; // 3:removed
+				}
+			}
+			moveWalker(ipp);
+		}
+		return onset;
+	}
+	
+	function moveWalker(ipp) {
+		const dir = Math.floor(Math.random()*4);
+		let ixx, iyy;
+		if (dir==0) { // east
+			ixx = (g_ix[ipp]+1)%g_NNx; iyy = g_iy[ipp];
+		} else if (dir==1) { // west
+			ixx = (g_ix[ipp]-1+g_NNx)%g_NNx; iyy = g_iy[ipp];
+		} else if (dir==2) { // north
+			ixx = g_ix[ipp]; iyy = (g_iy[ipp]+1)%g_NNy;
+		} else if (dir==3) { // south
+			ixx = g_ix[ipp]; iyy = (g_iy[ipp]-1+g_NNy)%g_NNy;
+		}
+		const f = g_field[ixx][iyy]; // g_field[][] 1...NNp: particle, 0:free space, -1:wall
+		if (f==0) { // free space
+			// ipp-walker move
+			g_field[g_ix[ipp]][g_iy[ipp]] = 0;
+			g_ix[ipp] = ixx; g_iy[ipp] = iyy;
+			g_field[g_ix[ipp]][g_iy[ipp]] = ipp;
+		} else if (f>0) { // other particle
+			// contact
+			g_nContact++;
+			// g_status[ipp] 0:susceptible, 1:exposed, 2:infectius, 3:removed
+			if (g_status[ipp]==0 && g_status[f]==2) { // contact S ===> I
+				if (Math.random()<0.5*g_infectiusProb) {
+					g_status[ipp] = 1; // 1:exposed  [S] --- 0.5*infectiusProb ---> [I]
+				}
+			} else if (g_status[ipp]==2 && g_status[f]==0) { // contact I ===> S
+				if (Math.random()<0.5*g_infectiusProb) { 
+					g_status[f] = 1; // 1:exposed  [S] --- 0.5*infectiusProb ---> [I]
+				}
+			}
+		} else if (f==-1) { // wall
+			; // ipp-walker not move
+		}
+	}
+	
+	function memoSEIRN(i) {
+		const nt=g_ntMax, nnp=g_NNp;
+		
+		let ss = 0, ee = 0, ii = 0, rr = 0, nn = 0;
+		for (let ipp=1; ipp<=nnp; ipp++) {
+			const st = g_status[ipp];
+			if (st==0) {
+				ss++;
+			} else if (st==1) {
+				ee++;
+			} else if (st==2) {
+				ii++;
+			} else if (st==3) {
+				rr++;
+			}
+		}
+		g_susceptible = ss;
+		g_exposed = ee;
+		g_infectius = ii;
+		g_removed = rr;
+		g_nPop = ss + ee + ii + rr;
+		
+		if (i>=nt) return;
+		
+		g_pS[i] = g_susceptible;
+		g_pE[i] = g_exposed;
+		g_pI[i] = g_infectius;
+		g_pR[i] = g_removed;
+		g_pN[i] = g_nPop;
+		g_onsetvdt[i] = g_onsetPerson;
+		setPoday(i);
+		g_nContactvdt[i] = g_nContact;
+	}
+	
+	function setPoday(it) {
+		let s = 0;
+		for (let i=-19; i<=0; i++) {
+			const ii = it + i;
+			if (ii>=0) {
+				s += g_onsetvdt[ii];
+			}
+		}
+		g_onsetvday[it] = s;
+	}
+	
+	function iNow() { return Math.floor(g_sysTime/g_dt); }
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		init:			setInitialCondition,
+						// setInitialCondition( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio )
+		setParam:		setParam,			// setParam( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio)
+		evolve:			timeEvolution,		// timeEvolution( v_nCalc )
+		
+		getSysParam:	function() { return [ g_NNx, g_NNy, g_dt, g_NNp, g_ss0 ]; },
+		getNow:			function() { return [ g_sysTime, iNow(), g_nContact, g_susceptible ]; },
+		getNowSEIRN:	function() { return [ g_susceptible, g_exposed, g_infectius, g_removed, g_nPop ]; },
+		getSEIRN:		function(i) { return [ g_pS[i], g_pE[i], g_pI[i], g_pR[i], g_pN[i], g_onsetvday[i] ]; },
+		getS:			function(i) { return g_pS[i]; },
+		getE:			function(i) { return g_pE[i]; },
+		getI:			function(i) { return g_pI[i]; },
+		getR:			function(i) { return g_pR[i]; },
+		getN:			function(i) { return g_pN[i]; },
+		getNewCase:		function(i) { return g_onsetvday[i]; },
+		getWalker:		function(i) { return [ g_status[i], g_ix[i], g_iy[i] ]; },
+	};
+	
+})(); // ====================  SEIRinfectionMCS2D end  ====================
+
+
+const js114 = (function(){ // ====================  js Module  ====================
+	
+	const theModule = SEIRinfectionMCS2D;
+	const xCanvasSize = 480;	// in pixel
+	const yCanvasSize = 480;	// in pixel
+	let canvas;					// canvas2d
+	let ctx;					// = canvas.getContext('2d');
+	
+	let v_infectiusProb = 0.04;	// infectius probability per one contact ;
+	let v_sigma = 0.2;			// (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
+	let v_gamma = 0.1;			// (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
+	let v_popDens = 40000;		// = S+E+I+R number of walkers
+	let v_removedRatio = 0.0;	// for vaccinated ratio: inirial R(0) = removedRatio*nPop 
+	let v_nCalc = 1;
+	
+	let p_NNx, p_NNy, p_dt, p_NNp, p_S0; // <-- theModule.getSysParam()
+	
+	let dispMode = 0;
+	let timeRange = 360; // (day)
+	
+	let paramChanged = false;
+	let resetFlag = true;
+	let pauseFlag = false;
+	let stepFlag = false;
+	//let inStepFlag = false;
+	let outputFlag = false;
+	
+	function main() {
+		resetFlag = true;
+		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
+		initDom();
+		
+		animate();
+		
+		function setCanvas( canvasID, width, height ) {
+			canvas = document.getElementById( canvasID );
+			canvas.width  = width;
+			canvas.height = height;
+			ctx = canvas.getContext('2d', { willReadFrequently:true } );
+			ctx.font = "16px 'sans-serif'";
+			ctx.textBaseline = "bottom";
+			ctx.textAlign = "left";
+			ctx.lineWidth = 1;
+			g2d.init( canvas, xCanvasSize, yCanvasSize );
+		}
+	}
+	
+	
+	function animate() {
+		
+		if ( resetFlag ) {
+			resetFlag = false;
+			outputFlag = false;
+			theModule.init( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio );
+			[ p_NNx, p_NNy, p_dt, p_NNp, p_S0 ] = theModule.getSysParam();
+
+		}
+		
+		if ( paramChanged ) {
+			paramChanged = false;
+			theModule.setParam( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio );
+		}
+		
+		if ( !pauseFlag ) {
+			theModule.evolve( v_nCalc );
+		} else if ( pauseFlag && stepFlag ) {
+			stepFlag = false;
+			theModule.evolve( v_nCalc );
+			//inStepFlag = true;
+		}
+		
+		draw( ctx, dispMode, timeRange, outputFlag );
+		
+		requestAnimationFrame(animate);
+	}
+	
+	
+	//--------------------  draw  --------------------
+	
+	const gColor = { 
+		S:"#0088ff", Ex:"#ffff00", I:"#ff0000", R:"#00ff00", N:"#ff00ff", NewCase:"#ff8800",
+		text:"#888888", grid:"#666666"
+	};
+	
+	function draw( ctx, dispMode, timeRange, outputFlag ) {
+		const xBoxSize = 400, yBoxSize = 400, xp=60, yp=60;
+		
+		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
+		
+		if (dispMode==0) {
+			plotSEIR(ctx, xp,yp,timeRange);
+		} else if (dispMode==1) {
+			logPlotSEIR(ctx, xp,yp,timeRange);
+		} else if (dispMode==2) {
+			drawField( ctx );
+		}
+		
+		let sysTime, iNow, nContact, pS;
+		[ sysTime, iNow, nContact, pS ] = theModule.getNow();
+		const R0 = p_S0/(p_NNx*p_NNy)/p_dt*v_infectiusProb/v_gamma; //R0= ((SS0/(NNx*NNy))/dt)*infectiusProb/gamma
+		ctx.fillStyle = "#888888";
+		ctx.fillText(`time =${sysTime.toFixed(2)},  nContact =${nContact},  R0 =${R0.toFixed(2)}`, 10, yCanvasSize-25);
+		ctx.fillText(`field = ${p_NNx} x ${p_NNy},  walker =${v_popDens} `, 10, yCanvasSize-5);
+		
+		if ( outputFlag ) outputTextArea(1,timeRange);
+	}
+	
+	
+	function drawField( ctx ) {
+		const cx0 = xCanvasSize/2+g2d.xShift, cy0 = yCanvasSize/2-30+g2d.yShift, xBoxSize = 360, yBoxSize = 360;
+		const scale = 1.0*g2d.zoom;
+		const xSize = xBoxSize*scale, ySize = yBoxSize*scale;
+		const xp = cx0 - xSize/2, yp = cy0-ySize/2;
+		
+		const nnx=p_NNx, nny=p_NNy, nn=p_NNp, ypMax = yp+p_NNy;
+		const wColor = [ gColor.S, gColor.Ex, gColor.I, gColor.R  ];
+		
+		// box
+		ctx.strokeStyle = "#888888";
+		ctx.strokeRect( xp-1*scale, yp-1*scale, (nnx+2)*scale, (nny+2)*scale );
+		
+		for (let i=0; i<nn; i++) {
+			let st, ix, iy; // st:  0:susceptible, 1:exposed, 2:infectius, 3:removed
+			[ st, ix, iy ] = theModule.getWalker(i);
+			ctx.fillStyle = wColor[st];
+			ctx.fillRect( xp+ix*scale, yp+(nny-iy-1)*scale, 1.0*scale, 1.0*scale );
+		}
+		
+		let pS, pE, pI, pR, pN;
+		[ pS, pE, pI, pR, pN ] = theModule.getNowSEIRN();
+		ctx.fillStyle = gColor.S;  ctx.fillText( `S: ${pS}`,  20, 25 );
+		ctx.fillStyle = gColor.Ex; ctx.fillText( `E: ${pE}`, 100, 25 );
+		ctx.fillStyle = gColor.I;  ctx.fillText( `I: ${pI}`, 180, 25 );
+		ctx.fillStyle = gColor.R;  ctx.fillText( `R: ${pR}`, 260, 25 );
+		ctx.fillStyle = gColor.N;  ctx.fillText( `total: ${pN}`, 340, 25 );
+	}
+	
+	
+	function plotSEIR(ctx, xp,yp,timeRange) {
+		const mag = 300.0/p_NNp, m=Math.floor(timeRange/360/p_dt);
+		
+		//drawGrid(xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color)
+		drawGrid(ctx, xp,yp,360,300,30,30,"0",timeRange+"(day)","0",`${p_NNp}`, gColor.grid );
+		
+		drawText(ctx, "Susceptible", xp+20, yp-5, gColor.S );
+		drawText(ctx, "Exposed", xp+70, yp-25, gColor.Ex );
+		drawText(ctx, "Infectious", xp+120, yp-5, gColor.I );
+		drawText(ctx, "Removed", xp+220, yp-5, gColor.R );
+		drawText(ctx, "Population", xp+160, yp-25, gColor.N );
+		drawText(ctx, "new cases/day x 50", xp+260, yp-25, gColor.NewCase );
+		drawText(ctx, "plot SEIR", xp+100, yp+360, gColor.text );
+		
+		plotFunc( ctx, xp, yp, m, theModule.getS, mag, gColor.S );
+		plotFunc( ctx, xp, yp, m, theModule.getE, mag, gColor.Ex );
+		plotFunc( ctx, xp, yp, m, theModule.getI, mag, gColor.I );
+		plotFunc( ctx, xp, yp, m, theModule.getR, mag, gColor.R );
+		plotFunc( ctx, xp, yp, m, theModule.getNewCase, mag*50, gColor.NewCase );
+		plotFunc( ctx, xp, yp, m, theModule.getN, mag, gColor.N );
+	}
+	
+	function plotFunc(ctx, xp,yp,m,pFunc,mag,colr) {
+		ctx.strokeStyle = colr;
+		ctx.beginPath();
+		for (let i=0; i<360; i++) {
+			ctx.lineTo(xp+i, yp+300-mag*pFunc(i*m));
+		}
+		ctx.stroke();
+	}
+	
+	function logPlotSEIR(ctx, xp,yp,timeRange) {
+		const m=Math.floor(timeRange/360/p_dt);
+		
+		//drawGrid(xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color)
+		drawGrid(ctx, xp,yp,360,300,30,60,"0",timeRange+"(day)","10^0","10^5", gColor.grid );
+		
+		drawText(ctx, "Susceptible", xp+20, yp-5, gColor.S );
+		drawText(ctx, "Exposed", xp+70, yp-25, gColor.Ex );
+		drawText(ctx, "Infectious", xp+120, yp-5, gColor.I );
+		drawText(ctx, "Removed", xp+220, yp-5, gColor.R );
+		drawText(ctx, "Population", xp+160, yp-25, gColor.N );
+		drawText(ctx, "new cases/day", xp+260, yp-25, gColor.NewCase );
+		drawText(ctx, "log plot SEIR", xp+100, yp+360, gColor.text );
+		
+		plotLog10Func(ctx, xp,yp,m,theModule.getS, gColor.S );
+		plotLog10Func(ctx, xp,yp,m,theModule.getE, gColor.Ex );
+		plotLog10Func(ctx, xp,yp,m,theModule.getI, gColor.I );
+		plotLog10Func(ctx, xp,yp,m,theModule.getR, gColor.R );
+		plotLog10Func(ctx, xp,yp,m,theModule.getNewCase, gColor.NewCase );
+		plotLog10Func(ctx, xp,yp,m,theModule.getN, gColor.N );
+	}
+	
+	function plotLog10Func(ctx, xp,yp,m,pFunc,colr) {
+		ctx.strokeStyle = colr;
+		ctx.beginPath();
+		for (let i=0; i<360; i++) {
+			let p = pFunc(i*m); 
+			if (p<=0.0) p = 0.1;
+			const logp = Math.log10(p);
+			if (logp>-0.2) ctx.lineTo(xp+i, yp+300-60.0*logp);
+		}
+		ctx.stroke();
+	}
+	
+	function drawGrid(ctx, xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color) {
+		ctx.strokeStyle = color;
+		ctx.fillStyle = color;
+		ctx.strokeRect(xp,yp,xLen,yLen);
+		
+		for (let i=0; i<xLen; i+=xDiv) {
+			drawLine(ctx, xp+i,yp, xp+i, yp+yLen,color);
+		}
+		for (let j=0; j<yLen; j+=yDiv) {
+			drawLine(ctx, xp,yp+yLen-j, xp+xLen, yp+yLen-j,color);
+		}
+		ctx.fillText(x0Str, xp-5, yp+yLen+20);
+		ctx.fillText(xMaxStr, xp+xLen-xMaxStr.length*4, yp+yLen+20);
+		ctx.fillText(y0Str, xp-y0Str.length*8-12, yp+yLen+5);
+		ctx.fillText(yMaxStr, xp-yMaxStr.length*8-12, yp+5);
+	}
+	
+	 function drawLine( ctx, x1, y1, x2, y2, color ) {
+	 	ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	}
+	
+	function drawText( ctx, txt, x, y, color ) {
+		ctx.fillStyle = color;
+		ctx.fillText(txt, x, y);
+	}
+	
+	
+	// --- mouse event  --- mouse drug to shift and mouse wheel to zoom in/out 
+	// ver 0.0.0  2023.05.16  last updated  2023.05.17
+	//
+	// extenal xCanvasSize, yCanvasSize
+	
+	const g2d = {};
+	g2d.mouseDownFlag = 0;			// 1:on mouse down, 0:else
+	g2d.x_mouse = 0;				// x-position of mouse
+	g2d.y_mouse = 0;				// y-position of mouse
+	g2d.x0_mouse = 0;				// drag-started x-position of mouse
+	g2d.y0_mouse = 0;				// drag-started y-position of mouse
+	g2d.xLimit = xCanvasSize*1.5;	// -xLimit <= xShift <= xLimit
+	g2d.yLimit = yCanvasSize*1.5;	// -yLimit <= yShift <= yLimit
+	
+	// public
+	g2d.zoom = 1.0;
+	g2d.xShift = 0.0;
+	g2d.yShift = 0.0;
+	
+	g2d.init = function( canvas, xSize, ySize ) {
+		g2d.setMouseOnCanvas( canvas );
+		g2d.xLimit = xSize*1.5;
+		g2d.yLimit = ySize*1.5;
+	};
+	
+	g2d.setMouseOnCanvas = function( canvas ) {
+		canvas.addEventListener('mousemove', g2d.mouse_move);
+		canvas.addEventListener('mousedown', g2d.mouse_down);
+		canvas.addEventListener('mouseup', g2d.mouse_up);
+		canvas.addEventListener("mousewheel", g2d.mouseWheel);
+	};
+	
+	g2d.mouse_move = function(e) {
+		var pi = Math.PI;
+
+		if (g2d.mouseDownFlag==1) {
+			g2d.x_mouse = e.clientX;
+			g2d.y_mouse = e.clientY;
+			g2d.xShift = g2d.xShift + (g2d.x_mouse-g2d.x0_mouse);
+			if (g2d.xShift<-g2d.xLimit) g2d.xShift=-g2d.xLimit;
+			if (g2d.xShift>g2d.xLimit) g2d.xShift=g2d.xLimit;
+			g2d.yShift = g2d.yShift + (g2d.y_mouse-g2d.y0_mouse);
+			if (g2d.yShift<-g2d.yLimit) g2d.yShift=-g2d.yLimit;
+			if (g2d.yShift>g2d.yLimit) g2d.yShift=g2d.yLimit;
+			g2d.x0_mouse = g2d.x_mouse;
+			g2d.y0_mouse = g2d.y_mouse;
+		}
+	};
+	
+	g2d.mouse_down = function(e) {
+		if (g2d.mouseDownFlag==0) {
+			g2d.x0_mouse = e.clientX;
+			g2d.y0_mouse = e.clientY;
+			g2d.x_mouse = g2d.x0_mouse;
+			g2d.y_mouse = g2d.y0_mouse;
+			g2d.mouseDownFlag = 1;
+		}
+	};
+	
+	g2d.mouse_up = function(e) {
+		if (g2d.mouseDownFlag==1) {
+			g2d.mouseDownFlag = 0;
+		}
+	};
+	
+	g2d.mouseWheel = function(e) {
+		g2d.deltaY = e.deltaY;
+		if ( g2d.deltaY > 0 ) g2d.zoom *= 0.95;
+		else if ( g2d.deltaY < 0 ) g2d.zoom *= 1.05;
+		if ( g2d.zoom<0.25 ) g2d.zoom = 0.25;
+		if ( g2d.zoom>4.0 ) g2d.zoom = 4.0;
+	};
+	
+	// --- mouse event end
+	
+	
+	// --------------------  data output  --------------------
+	
+	function outputTextArea(outputSW,timeRange) {
+		// outputSW:  0:textarea clear,  1:output text data
+		outputFlag = false;
+		
+		let str;
+		
+		if (outputSW==0) {
+			str = "";
+			
+		} else if (outputSW==1) {
+			const R0 = p_S0/(p_NNx*p_NNy)/p_dt*v_infectiusProb/v_gamma; //R0= ((SS0/(NNx*NNy))/dt)*infectiusProb/gamma
+			let pS, pE, pI, pR, pN, newCase;
+			[ pS, pE, pI, pR, pN, newCase ] = theModule.getSEIRN(0);
+			str = `infection prob. = ${v_infectiusProb.toFixed(5)},  sigma = ${v_sigma.toFixed(2)} \n`
+				+ `gamma = ${v_gamma.toFixed(2)},  R0 = ${R0.toFixed(2)} \n`
+				+ `S(0) = ${pS.toFixed(1)},  E(0) = ${pE.toFixed(1)},  I(0) = ${pI.toFixed(1)}`
+				+ `,  R(0) = ${pR.toFixed(1)} \n \n`;
+				
+			str += ` day,  S(t),  E(t),  I(t),  R(t), S+E+I+R, newCase \n`;
+			for (let i=0; i<timeRange; i++) {
+				const j = i*20;
+				[ pS, pE, pI, pR, pN, newCase ] = theModule.getSEIRN(j);
+				str += ` ${i},  ${pS.toFixed(1)},  ${pE.toFixed(1)},  ${pI.toFixed(1)},  ${pR.toFixed(1)},`
+					+ `  ${pN.toFixed(1)},  ${newCase.toFixed(1)}\n`;
+			}
+		}
+		document.getElementById("outputText").innerHTML = str;
+	}
+	
+	
+	// --------------------  dom control  --------------------
+	
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+		document.getElementById("home_button").style.visibility = "hidden";
+	}
+	
+	function reset() { resetFlag = true; }
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = ( pauseFlag==false ); 
+		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==true ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() { stepFlag = true; }
+	
+	function setpN0() {
+		const n = 1 + document.getElementById("slct_pN0").selectedIndex;
+		v_popDens = n*10000;
+		resetFlag = true;
+	}
+	
+	function setRemovedRatio() {
+		const r = 0 + document.getElementById("range_removedRatio").value;
+		v_removedRatio = 0.01*r;
+		document.getElementById("text_removedRatio").innerHTML = " " + v_removedRatio.toFixed(2);
+		resetFlag = true;
+	}
+	
+	function setInfectProb() {
+		const p = 0 + document.getElementById("range_infectiusProb").value;
+		v_infectiusProb = 0.001*p;
+		document.getElementById("text_infectiusProb").innerHTML = " " + v_infectiusProb.toFixed(3);
+		paramChanged = true;
+	}
+	
+	function setSigma() {
+		const s = 0 + document.getElementById("range_sigma").value;
+		v_sigma = 0.005*s;
+		document.getElementById("text_sigma").innerHTML =
+			" " + v_sigma.toFixed(2) + " (1/ " + (1.0/v_sigma).toFixed(1) + " day)";
+		paramChanged = true;
+	}
+	
+	function setGamma() {
+		const g = 0 + document.getElementById("range_gamma").value;
+		v_gamma = 0.005*g;
+		document.getElementById("text_gamma").innerHTML =
+			" " + v_gamma.toFixed(2) + " (1/ " + (1.0/v_gamma).toFixed(1) + " day)";
+		paramChanged = true;
+	}
+	
+	function setDispMode() {
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+		
+		if ( dispMode==2 ) {
+			document.getElementById("home_button").style.visibility = "visible";
+			document.getElementById('home_caption').innerHTML =
+				"drag mouse to shift the box, or wheel to zoom in / out";
+		} else {
+			document.getElementById("home_button").style.visibility = "hidden";
+			document.getElementById('home_caption').innerHTML ="";
+		}
+	}
+	
+	function setSpeed() {
+		v_nCalc = 1 + document.getElementById("slct_speed").selectedIndex;
+	}
+	
+	function setTimeRange() {
+		timeRange = setTimeRange.range[ 0 + document.getElementById("slct_timeRange").selectedIndex ];
+	}
+	setTimeRange.range = [180,360,720,1080];
+	
+	function viewHome() {
+		g2d.zoom = 1.0;
+		g2d.xShift = 0.0;
+		g2d.yShift = 0.0;
+	
+	}
+	
+	function getData() {
+		outputFlag = true; 
+	}
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:				main,				// main()
+		
+		// dom control
+		reset:				reset,				// reset()
+		pause:				pause,				// pause()
+		step:				step,				// step()
+		
+		setpN0:				setpN0,				// setpN0()
+		setRemovedRatio:	setRemovedRatio,	// setRemovedRatio()
+		setInfectProb:		setInfectProb,		// setInfectProb()
+		setSigma:			setSigma,			// setSigma()
+		setGamma:			setGamma,			// setGamma()
+		
+		setDispMode:		setDispMode,		// setDispMode()
+		setSpeed:			setSpeed,			// setSpeed()
+		setTimeRange:		setTimeRange,		// setTimeRange()
+		viewHome:			viewHome,			// viewHome()
+		getData:			getData,			// getData()
+	};
+	
+})(); // ====================  js114 module end  ====================
+
+
+// event
+const js = js114;
+window.addEventListener('load', js.main );
+
+
+// %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%%
+
+</script>
+
+<style type="text/css">
+    body { text-align:left; color:#000000; background-color:#fff8dd; }
+</style>
+
+</head>
+
+<body>
+<p>[js114] SEIR infection model - Monte-Carlo simulation MCS2D</p>
+<canvas ID="canvas_box" style="background-color: #000000;" WIDTH="480" HEIGHT="480"></canvas>
+<br>
+
+<span>theme: S-E-I-R model</span>
+    <span style="margin-right: 20px;"></span>
+<label>walkers:</label>
+<select id="slct_pN0" onChange="js.setpN0()">
+<option selected>10000</option><option>20000</option><option>30000</option><option selected>40000</option>
+<option>50000</option>
+</select>
+    <span style="margin-right: 20px;"></span>
+<button onClick="js.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="js.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="js.step()">step</button>
+<br>
+
+<label>vaccinated ratio =</label>
+<input type="range" id="range_removedRatio" min="0" max="100" value="0" step="1" 
+style="width:200px" oninput="js.setRemovedRatio()">
+<label id="text_removedRatio"> 0.00</label> ... triger RESET
+<br>
+
+<label>infection probability =</label>
+<input type="range" id="range_infectiusProb" min="1" max="100" value="40" step="1" 
+style="width:200px" oninput="js.setInfectProb()">
+<label id="text_infectiusProb"> 0.040</label>(1/contact)
+<br>
+
+<label>sigma (incidence rate)=</label>
+<input type="range" id="range_sigma" min="1" max="100" value="40" step="1" 
+style="width:200px" oninput="js.setSigma()">
+<label id="text_sigma"> 0.20 (1/ 5.0 day)</label>
+<br>
+
+<label>gamma (recovery rate)=</label>
+<input type="range" id="range_gamma" min="1" max="100" value="20" step="1" 
+style="width:200px" oninput="js.setGamma()">
+<label id="text_gamma"> 0.10 (1/ 10.0 day)</label>
+<br>
+
+<label>dispMode:</label>
+<select id="slct_dispMode" onChange="js.setDispMode()">
+<option selected>plot SEIR</option>
+<option >log plot SEIR</option>
+<option >walkers</option>
+</select>
+    <span style="margin-right: 20px;"></span>
+<label>speed:</label>
+<select id="slct_speed" onChange="js.setSpeed()">
+<option selected>1</option><option>2</option><option>3</option><option>4</option>
+<option>5</option><option>6</option>
+</select>
+    <span style="margin-right: 20px;"></span>
+<label>time range:</label>
+<select id="slct_timeRange" onChange="js.setTimeRange()">
+<option >0 - 180</option><option selected>0 - 360</option><option >0 - 720</option>
+<option >0 - 1080</option></select>
+(days)
+<br>
+
+<button id="home_button" onClick="js.viewHome()">return to initial view</button>
+ <span id="home_caption" ></span>
+<br>
+
+<button id="getData_button" onClick="js.getData()">output text data</button>
+<br>
+
+<textarea id="outputText" rows="6" cols="70" disabled></textarea>
+<br>
+
+<p id="text_caption" ></p>
+<hr width="480" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
