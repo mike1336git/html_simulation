@@ -8,3 +8,7 @@
  - using Three.js library - r147 (MIT License)
    - online case: use cdn URL 'https://unpkg.com/three@0.147.0/build/three.min.js'
    - offline case: use sub-directory '../lib/three.min.js'
+
+ - Please see
+   [previous versions]()
+    of the website for reference.
