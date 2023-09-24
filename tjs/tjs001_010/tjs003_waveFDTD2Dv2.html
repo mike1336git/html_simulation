@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>tjs003_waveFDTD2D</title>
+  <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+  <!--
+  <script src="../lib/three.min.js"></script>
+  <script src="../lib/OrbitControls.js"></script>
+  -->
+  <script>
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tjs003_waveFDTD2D
+//    Copyright(C) 2021 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2021.12.07 created, last updated on 2021.12.15
+//    ver 0.0.1  2022.05.24 v1, last updated on 2022.12.22
+//    ver 0.0.2  2023.09.21 v2, last updated on 2023.09.21
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  FDTD2D: finite-difference time-domain method 2D
+//
+// - electro-magnetic field : Maxwell's equations
+//     rot H = eps dE/dt + sgm E
+//     rot E = -mue dH/dt
+//
+//   in 2D system: Ez,Hx,Hy - TMz system
+//     dEz/dt = (1/eps) (dHy/dx-dHx/dy) - (sgm/eps) Ez
+//     dHx/dt = -(1/mue) (dEz/dy-dEy/dz)
+//     dHy/dt = -(1/mue) (dEx/dz-dEz/dx)
+//
+//     dEz = dt(1/eps) (dHy/dx - dHx/dy - sgm Ez)
+//     dHx = -dt(1/mue) dEz/dy
+//     dHy = dt(1/mue) dEz/dx
+//
+// - FDTD (Finite Difference Time Domain method)
+//     finite difference dA/dx ~> {A(x+h)-A(x)}/h, dA/dt -> {A(t+dt)-A(t)}/dt
+//
+//     Ez(i,j,t+dt) = Ez(i,j) + dt(1/eps){(Hy(i+1,j)-Hy(i,j))/dx-(Hx(i,j+1)-Hx(i,j))/dy - sgm Ez(i,j)}
+//     Hx(i,j,t+dt) = Hx(i,j) - dt(1/mue)(Ez(i,j)-Ez(i,j-1))/dy
+//     Hy(i,j,t+dt) = Hy(i,j) + dt(1/mue)(Ez(i,j)-Ez(i-1,j))/dx
+//
+// - boundary : no-reflect (in vacuum) condition case
+//     MUR Hx(n+1,i,0) = Hx(n,i,1)-(dx-dt)/(dx+dt){Hx(n+1,i,1)-Hx(n,i,0)}
+//
+//     Hx(n)[i][0] = c*Hx(n)[i][0] + Hx(n)[i][1]; c=(dx-dt)/(dx+dt)
+//       ...
+//     (time evolution : Hx(n)[i][0] no change, Hx(n)[i][1] -> Hx(n+1)[i][1])
+//       ...
+// 	   Hx(n+1)[i][0] = Hx(n)[i][0] - c*Hx(n+1)[i][1]
+//                   = c*Hx(n)[i][0] + Hx(n)[i][1] - c*Hx(n+1)[i][1]
+//                   = Hx(n)[i][1] -c*(Hx(n+1)[i][1] - Hx(n)[i][0])
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====================
+	
+	const g_nMax = 241;                     // array max
+	
+	let g_NNx = 240;                        // number of space division (NNx*dx = x-length)
+	let g_NNy = 240;                        // number of space division (NNy*dx = y-length)
+	let g_sysTime = 0.0;                    // system time
+	let g_dt = 1.0;                         // time step
+	let g_dx = 1.0;                         // space division dx =1.0, (dy = 1.0 (no use))
+	let g_omega = Math.PI/16.0;             // generator wave angular velocity: phase angle += omega*dt
+	let g_theta = 0.0;                      // generator phase angle
+	
+	const g_Ez = dim2( g_nMax, g_nMax );    // z-component of electric field
+	const g_Hx = dim2( g_nMax, g_nMax );    // x-component of magnetic field
+	const g_Hy = dim2( g_nMax, g_nMax );    // y-component of magnetic field
+	const g_ep = dim2( g_nMax, g_nMax );    // dielectric constant
+	const g_mu = dim2( g_nMax, g_nMax );    // magnetic permeability
+	const g_sg = dim2( g_nMax, g_nMax );    // Electrical conductivity
+	
+	let g_imageData;                        // field Ez[][] imageData
+	let g_imageData2;                       // imageData for oprical device (use in drawHxyField())
+	
+	function dim2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {  
+			a[i] = new Float64Array( nj );
+		}
+		return a;
+	}
+	
+	
+	// --------------------  set initial condition  --------------------
+	
+	function setInitialCondition( theme ) {	
+		g_sysTime = 0.0;
+		g_theta = 0.0;
+		clearField();
+		// set optical divice
+		let eps = 1.0, mue = 1.0, sgm = 0.0;
+		if (theme==0) {
+			eps=4.0; mue=1.0; sgm=0.0; // glass n=2.0
+		} else if (theme==1) {
+			eps=1000.0; mue=1.0; sgm=1.0; // metal
+		} else if (theme==2) {
+			eps=1.01; mue=1.0; sgm=0.1; // absorber
+		}
+		setOpticalDevice( eps, mue, sgm );
+	}
+	
+	function clearField() {
+		const nnx = g_NNx, nny = g_NNy;
+		for (let i=0; i<nnx+1; i++) {
+			for (let j=0; j<nny+1; j++) {
+				g_Ez[i][j] = 0.0;
+				g_Hx[i][j] = 0.0;
+				g_Hy[i][j] = 0.0;
+				g_ep[i][j] = 1.0;
+				g_mu[i][j] = 1.0;
+				g_sg[i][j] = 0.0;
+			}
+		}
+	}
+	
+	function setOpticalDevice( eps, mue, sgm ) {
+		const nnx = g_NNx, nny = g_NNy;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				if (i>=50 && i<120 && j>=50 && j<150) {
+					g_ep[i][j] = eps;
+					g_mu[i][j] = mue;
+					g_sg[i][j] = sgm;
+				}
+			}
+		}
+	}
+	
+	
+	// --------------------  evolve Field Ez,Hx,Hy  --------------------
+	
+	function evolveField( nTimes, nWaves ) {
+		const n = 2*nTimes;
+		g_sysTime = g_sysTime + nTimes*g_dt;
+		for (let i=0; i<n; i++) { // evolve 0.5dt
+			evolveEz();
+			generateEz(nWaves);
+			evolveHxHy();
+		}
+	}
+	
+	function generateEz( nwave ) {  // plane wave 
+		const nny = g_NNy;
+		g_theta = g_theta + g_omega*0.5*g_dt
+		const Ezt = Math.sin(g_theta);
+		let a = 0.0;
+		if (g_theta<2.0*Math.PI*nwave) {
+			a = 1.0;
+		} else if (g_theta<2.0*Math.PI*nwave+0.10*Math.PI) {
+			a = Math.cos(g_theta);
+		}
+		if (g_theta<2.0*Math.PI*nwave+0.5*Math.PI) {
+			for (let j=0; j<nny; j++) {
+				g_Ez[0][j] = a*a*Ezt;
+			}
+		}
+	}
+	
+	function evolveEz() {  // dD/dt=rotH + J , D=eps*E
+		const nnx = g_NNx, nny = g_NNy, dtv2 = 0.5*g_dt;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				if (g_ep[i][j]<1000.0) { // non-metal
+					g_Ez[i][j] += (dtv2/g_ep[i][j])*( (g_Hy[i+1][j]-g_Hy[i][j]) - (g_Hx[i][j+1]-g_Hx[i][j]) 
+						- g_sg[i][j]*g_Ez[i][j] );
+				}
+			}
+		}
+	}
+	
+	function evolveHxHy() {  // dB/dt=-rotE , B=mue*H
+		const nnx = g_NNx, nny = g_NNy, dtv2 = 0.5*g_dt;
+		
+		// boundary : no-reflect (in vacuum) condition (Mur 1st)
+		// MUR Hx(n+1,i,0) = Hx(n,i,1)-(dx-dt)/(dx+dt){Hx(n+1,i,1)-Hx(n,i,0)}
+		const c = (g_dx-dtv2)/(g_dx+dtv2);
+		for (let i=0; i<nnx; i++) {
+			g_Hx[i][0] = c*g_Hx[i][0] + g_Hx[i][1];
+		}
+		for (let i=0; i<nnx; i++) {
+			g_Hx[i][nny] = c*g_Hx[i][nny] + g_Hx[i][nny-1];
+		}
+		for (let j=0; j<nny; j++) {
+			g_Hy[0][j] = c*g_Hy[0][j] + g_Hy[1][j];
+		}
+		for (let j=0; j<nny; j++) {
+			g_Hy[nnx][j] = c*g_Hy[nnx][j] + g_Hy[nnx-1][j];
+		}
+		
+		// Hx(i,j) - dt(1/mue)(Ez(i,j)-Ez(i,j-1))/dy
+		for (let i=0; i<nnx; i++) {
+			for (let j=1; j<nny; j++) {
+				g_Hx[i][j] -= dtv2/g_mu[i][j]*(g_Ez[i][j]-g_Ez[i][j-1]);
+			}
+		}
+		// Hy(i,j,t+dt) = Hy(i,j) + dt(1/mue)(Ez(i,j)-Ez(i-1,j))/dx
+		for (let i=1; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				g_Hy[i][j] += dtv2/g_mu[i][j]*(g_Ez[i][j]-g_Ez[i-1][j]);
+			}
+		}
+		
+		// boundary : no-reflect (in vacuum) condition (Mur 1st)
+		for (let i=0; i<nnx; i++) {
+			g_Hx[i][0] -= c*g_Hx[i][1];
+		}
+		for (let i=0; i<nnx; i++) {
+			g_Hx[i][nny] -= c*g_Hx[i][nny-1];
+		}
+		for (let j=0; j<nny; j++) {
+			g_Hy[0][j] -= c*g_Hy[1][j];
+		}
+		for (let j=0; j<nny; j++) {
+			g_Hy[nnx][j] -= c*g_Hy[nnx-1][j];
+		}
+	}
+	
+	
+	// --------------------  draw  --------------------
+	
+	function draw( ctx, drawMode ) {
+		
+		if ( ! setImages.defined ) setImages( ctx );
+		
+		//ctx.clearRect(0, 0, g_xCanvasSize, g_yCanvasSize);
+		
+		if (drawMode==0) {
+			drawEzField(ctx);
+		} else if (drawMode==1) {
+			drawHxyField(ctx);
+		}
+		
+		ctx.fillStyle = "rgb(0, 0, 0)";
+		ctx.fillText("time = "+g_sysTime, 10, 290);
+	}
+	
+	function setImages( ctx ) {
+		g_imageData = ctx.getImageData(20, 20, g_NNx, g_NNy);
+		g_imageData2 = ctx.getImageData(20, 20, g_NNx, g_NNy);
+		setImages.defined = true;
+	}
+	setImages.defined = false;
+	
+	
+	function setImage2Data(ctx) {
+		const nnx = g_NNx, nny = g_NNy, data = g_imageData2.data;
+		for (let j=0; j<nny; j++) {
+			const jj = nny - j - 1;
+			for (let i = 0; i<nnx; i++) {
+				let idx = (jj*nnx+i)*4;
+				const g = (g_ep[i][j]!=1.0) ? 80 : 0;
+				data[idx] = 0;
+				data[++idx] = g;
+				data[++idx] = 0;
+				data[++idx] = 255;
+			}
+		}
+		ctx.putImageData(g_imageData2, 20, 20);
+	}
+	
+	
+	function drawEzField(ctx) {
+		const nnx = g_NNx, nny = g_NNy, mag = 250.0, data = g_imageData.data;
+		for (let j=0; j<nny; j++) {
+			const jj = nny - j - 1;
+			for (let i = 0; i<nnx; i++) {
+				let idx = (jj*nnx+i)*4;
+				const ez = g_Ez[i][j];
+				const g = (g_ep[i][j]!=1.0) ? 80 : 0;
+				const aez = Math.min(Math.floor(Math.abs(ez*mag)),255);
+				let r, b;
+				if (ez>=0) {
+					r = aez; b = 0;
+				} else {
+					r = 0; b = aez;
+ 				}
+				data[idx] = r;
+				data[++idx] = g;
+				data[++idx] = b;
+				data[++idx] = 255;
+			}
+		}
+		ctx.putImageData(g_imageData, 20, 20);
+	}
+	
+	function drawHxyField( ctx ) {
+		const nnx = g_NNx, nny = g_NNy, xp=20, yp=20, mag=10.0;
+		
+		setImage2Data( ctx );
+		ctx.putImageData( g_imageData2, xp, yp ); // draw optical object
+		for (let i=2; i<nnx; i+=4) {
+			for (let j=2; j<nny; j+=4) {
+				const jj = nny - j - 1
+				const x1 = xp+i;
+				const y1 = yp+j;
+				const x2 = x1+g_Hx[i][jj]*mag;
+				const y2 = y1-g_Hy[i][jj]*mag;
+				const col = (g_Hy[i][jj]>=0) ? "rgb(250,250,0)" : "rgb(0,250,250)";
+				if ((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1)>0.3) drawLine( ctx, x1, y1, x2, y2, col );
+			}
+		}
+	}
+	
+	function drawLine( ctx, x1, y1, x2, y2, color ) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		init:           setInitialCondition,    // setInitialCondition( theme )
+		evolve:         evolveField,            // evolveField( nTimes,nWaves )
+		draw:           draw,                   // draw( ctx, drawMode )
+		
+		getSysParam:    function() { return [ g_NNx, g_NNy, g_dx, g_dt ]; },
+		getSysTime:     function() { return g_sysTime; },
+		getEz:          function(i,j) { return g_Ez[i][j]; },
+		getHxy:         function(i,j) { return [ g_Hx[i][j], g_Hy[i][j] ]; },
+		getMaterial:    function(i,j) { return [ g_ep[i][j], g_mu[i][j], g_sg[i][j] ]; },
+	};
+	
+})(); // ====================  waveFDTD2D end  ====================
+
+
+const tjs003 = (function(){ // ====================  tjs Module  ====================
+
+	// theModule.init( v_theme )
+	// theModule.evolve( v_nCalc, v_nWaves )
+	// theModule.draw( ctx, v_drawMode )
+	
+	const theModule = waveFDTD2D;
+	let v_theme = 0; // 0:glass 1:metal 2:absorber
+	let v_nCalc = 2;
+	let v_nWaves = 2; // select 1,2,3,4
+	
+	let p_nx, p_ny, p_dx, p_dt; // <-- theModule.getSysParam();
+	
+	let dispMode = 0;
+	let dispModeChanged = true;
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let viewHomeRequested = true;
+	let count = 0;
+	
+	// sizes in the threejs world
+	const xBoxSize = 480; // in three.js world
+	let hh, yBoxSize, zBoxSize, x0, y0, z0;
+	
+	// sizes in the threejs world
+	let lineEzArray = [];
+	let lineHxyArray = [];
+	let agrid;
+	let mfield;
+	let rect1;
+	let cnvsprite;
+	
+	// three.js global
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+
+	// --------------------  main
+
+	function main() {
+		// constract renderer
+		const width = 500;
+		const height = 480;
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+
+		// camera
+		const r_camera = 1200.0;
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, -0.9*r_camera, 0.44*r_camera);
+		controls = new THREE.OrbitControls(camera,renderer.domElement);
+		
+		initDom();
+		
+		constructScene();
+		animate();
+	}
+
+	function constructScene() {
+
+		// init FDTD
+		theModule.init( v_theme );
+		[ p_nx, p_ny, p_dx, p_dt ] = theModule.getSysParam();
+		hh = xBoxSize/p_nx
+		yBoxSize = hh*p_ny;
+		zBoxSize = xBoxSize;
+		x0 = xBoxSize/2;
+		y0 = yBoxSize/2;
+		z0 = xBoxSize/2;
+		
+		// scene
+		scene = new THREE.Scene();
+ 
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xFFFFFF, 0.8);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xFFFFFF, 0.6);
+		scene.add(light);
+		
+		
+		// optical entity - 70 x 100 x 100 
+		{
+			const geometry = new THREE.BoxGeometry(70*hh,100*hh,100*hh);
+			const material = new THREE.MeshNormalMaterial({ opacity: 0.3,transparent: true});
+			rect1 = new THREE.Mesh(geometry, material);
+			rect1.position.set( (50 + 70/2)*hh - x0, (50 + 100/2)*hh - y0, 0 );
+			scene.add(rect1);
+		}
+		
+		// lines_Ez
+		lineEz_add( scene );
+
+		// lines_Hxy
+		lineHxy_add( scene );
+		
+		// Ez or Hx or Hy
+		// agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+		agrid = m3js_grid2D( p_nx, p_ny, xBoxSize );
+		scene.add( agrid );
+		
+		// Hxy vector
+		//  vfield = m3js_vField2D( p_nx, p_ny, xBoxSize [, colorMode] ); // colorMode  0:direction color, 1:blue|red
+		mfield = m3js_vField2D( p_nx, p_ny, xBoxSize, 0 );
+		scene.add( mfield );
+		
+		// canvas sprite
+		//cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 600, 600, 300 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+	}
+	
+	
+	// loop animation
+	function animate() {
+		
+		// select theme
+		if (resetFlag==1) {
+			resetFlag = 0;
+
+			constructScene();
+			count = 0;
+			dispModeChanged = true;
+
+		}
+		
+		if ( dispModeChanged ) {
+			dispModeChanged = false;
+			
+			lineEz_visible( false );
+			lineHxy_visible( false );
+			
+			rect1.visible = false;
+			agrid.visible = false;
+			mfield.visible = false;
+			cnvsprite.visible = false;
+			if ( dispMode<=5 ) {
+				rect1.visible = true;
+			}
+		}
+		
+		if ( viewHomeRequested ) {
+			const r_camera = 1200.0;
+			camera.position.set(0,-0.9*r_camera, 0.44*r_camera);
+			viewHomeRequested = false;
+		}
+
+		// evolve FDTD
+		if (pauseFlag==0) {
+			theModule.evolve( v_nCalc, v_nWaves );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( v_nCalc, v_nWaves );
+		}
+		
+		
+		// lines_Ez, lines_Hxy update
+		if ( dispMode==0 ) { // Ez + Hxy line
+			lineEz_update( );
+			lineHxy_update( );
+		}
+		
+		if ( dispMode==1 ) { // Ez(x,y)
+			const mag = 40.0;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			agrid.update(
+				function(i,j) {
+					const amp = theModule.getEz(i,j);
+					const hue = ( Math.abs(amp)>0.05 ) ? Math.floor((36180-360.0*amp)%360) : 365;
+					return [ mag*amp, hue ];
+				}
+			);
+		}
+		
+		if ( dispMode==2 ) { // Hx(x,y)
+			const mag = 40.0;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			agrid.update(
+				function(i,j) {
+					const amp = theModule.getHxy(i,j)[0];
+					const hue = ( Math.abs(amp)>0.05 ) ? Math.floor((36180-360.0*amp)%360) : 365;
+					return [ mag*amp, hue ];
+				}
+			);
+		}
+		
+		if ( dispMode==3 ) { // Hy(x,y)
+			const mag = 40.0;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			agrid.update(
+				function(i,j) {
+					const amp = theModule.getHxy(i,j)[1];
+					const hue = ( Math.abs(amp)>0.05 ) ? Math.floor((36180-360.0*amp)%360) : 365;
+					return [ mag*amp, hue ];
+				}
+			);
+		}
+		
+		if ( dispMode==4 ) { // z= | H(x,y) |, color:vector direction
+			const mag = 40.0;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			agrid.update(
+				function(i,j) {
+					let Hx, Hy;
+					[ Hx, Hy ] = theModule.getHxy(i,j);
+					const z = Math.sqrt(Hx*Hx + Hy*Hy);
+					const hue = ( Math.abs(z)>0.05 ) ? Math.floor((Math.atan2(Hy,Hx))*180.0/Math.PI+180.0) : 365;
+					return [ mag*z, hue ];
+				}
+			);
+		}
+		
+		if ( dispMode==5 ) { // vector(Hx,Hy), z= | H(x,y) |, color:vector direction
+			const mag = 40.0;
+			const vmag = 40.0;
+			// vfield.update( vx_vy_z_col_func [,step] ); // vx_vy_z_col_func: (i,j) --> [vx, vy, z, [col] ]
+			mfield.update( 
+				function(i,j) { // vx_vy_z_col_func
+					let Hx, Hy;
+					[ Hx, Hy ] = theModule.getHxy(i,j)
+					const z = Math.sqrt(Hx*Hx + Hy*Hy);
+					return [ Hx*vmag, Hy*vmag, z*mag, ];
+				},
+				2
+			);
+		}
+		
+		
+		// sprite update
+		if ( dispMode>=6 ) {
+			//cnvsprite.update( drawFunc )
+			cnvsprite.update(
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					theModule.draw( ctx, dispMode-6 );
+				}
+			);
+		}
+
+		// output to innerHTML
+		if (count % 20 == 0) {
+			document.getElementById("text_caption").innerHTML = 
+				"field ="+p_nx+"x"+p_ny
+				+ ", time ="+theModule.getSysTime()+"<br>";
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+
+
+
+	// ------------ line Ez : lineEzArray
+
+	function lineEz_add( scene ) {
+		const emag = 40.0;
+		for(let j=0; j<p_ny; j+=2) {
+    		const points = [];
+    		for(let i= 0; i<p_nx; i++) {
+    			const ezij = theModule.getEz(i,j);
+        		const x = hh*i - x0;
+        		const y = hh*j - y0;
+        		const z = emag*ezij;
+        		const p = new THREE.Vector3(x,y,z);
+        		points.push(p);
+    		}
+ 	
+    		const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    		const material = new THREE.LineBasicMaterial({ color: 0x4040e0 });
+    		const line = new THREE.Line(geometry,material);
+    		line.visible = false;
+    		lineEzArray[j] = line;
+    		scene.add(lineEzArray[j]);
+		}
+	}
+	
+	function lineEz_update( ) {
+		const emag = 40.0;
+		for(let j=0; j<p_ny; j+=2) {
+			const line = lineEzArray[j];
+			const positions = line.geometry.attributes.position.array;
+ 
+    		for(let i= 0; i<p_nx; i++) {
+        		const x = hh*i - x0;
+        		const y = hh*j - y0;
+        		let z = emag*theModule.getEz(i,j);
+        		if (z*z<0.1*hh*hh) z = 0;
+            	positions[i * 3] = x;
+            	positions[i * 3 + 1] = y;
+            	positions[i * 3 + 2] = z;
+    		}
+    		line.visible = true;
+			line.geometry.attributes.position.needsUpdate = true;
+		}
+	}
+	
+	function lineEz_visible( sw ) {
+		for(let j=0; j<p_ny; j+=2) {
+			lineEzArray[j].visible = sw;
+		}
+	}
+	
+	
+	// ------------ line Hxy : lineHxyArray
+	
+	function lineHxy_add( scene ) {
+		let hxij, hyij;
+		for(let j=0; j<p_ny; j+=2) {
+    		const points = [];
+    		for(let i= 0; i<p_nx; i++) {
+    			[ hxij, hyij ] = theModule.getHxy(i,j);
+        		const x = hh*i - x0 + hxij;
+        		const y = hh*j - y0 + hyij
+        		const z = 0;
+        		const p = new THREE.Vector3(x,y,z);
+        		points.push(p);
+    		}
+    		const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    		const material = new THREE.LineBasicMaterial({ color: 0x40a040 });
+    		const line = new THREE.Line(geometry,material);
+    		line.visible = false;
+    		lineHxyArray[j] = line;
+    		scene.add(lineHxyArray[j]);
+		}
+	}
+	
+	function lineHxy_update( ) {
+		let hxij, hyij;
+		const hmag = 40.0;
+		for(let j=0; j<p_ny; j+=2) {
+			const line = lineHxyArray[j];
+			const positions = line.geometry.attributes.position.array;
+ 
+    		for(let i= 0; i<p_nx; i++) {
+    			[ hxij, hyij ] = theModule.getHxy(i,j);
+				let hx = hmag*hxij;
+				if (hx*hx<0.1*hh*hh) hx = 0;
+        		let hy = hmag*hyij;
+        		if (hy*hy<0.1*hh*hh) hy = 0;
+        		const x = hh*i - x0 + hx;
+        		const y = hh*j - z0 + hy;
+        		const z = 0;
+        		
+            	positions[i * 3] = x;
+            	positions[i * 3 + 1] = y;
+            	positions[i * 3 + 2] = z;
+    		}
+    		line.visible = true;
+    		line.geometry.attributes.position.needsUpdate = true;
+		}
+	}
+	
+	function lineHxy_visible( sw ) {
+		let hxij, hyij;
+		for(let j=0; j<p_ny; j+=2) {
+			lineHxyArray[j].visible = sw;
+		}
+	}
+	
+	
+	// -----------------------  m3js_grid2D function  -----------------------------------------
+	//
+	//    ver 0.0.0  2022.10.08 created, last updated on 2022.12.20
+	//
+	//  agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+	//      p_nx: number of x-direction lines, p_ny: number of y-direction lines
+	//      xBoxSize: x-box size in the threejs-world
+	//		[zBoxSize]: z-box size in the threejs-world
+	//      [mode]: if mode=='xLineOnly' -->  grid change to x-lines only
+	//            if mode=='yLineOnly' -->  grid change to y-lines only
+	//            else or undefined --> grid x-lines and y-lines
+	//
+	//  scene.add( agrid );
+	//
+	//  agrid.setPallet( pallet, color );
+	//      pallet: pallet number 372 ... 399, (371:inner pallet)
+	//      color: col = new THREE.Color( color )
+	//
+	//  agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+	//      z_hue_func(i,j) { ... return [ z, [hue] ]; }
+	//          z: threejs world z-position at grid point (i,j)
+	//          hue: 0...359 huedeg, 360(black) ...gray...370(white) 371(inner pallet) 372...399 free
+	//              or string shch as 'red', '#ff0000', 'rgb(255,0,0)', 'hsl(0,100%,50%)'
+	//
+	// agrid.visible = false;
+	//
+	
+	const m3js_grid2D = function( p_nx, p_ny, xBoxSize, zBoxSize, mode ) {
+		const hueArray = []; // red:hue[deg][0]  green:hue[deg][1]  blue:hue[deg][2]
+		const gridArray = [];
+		const nx = p_nx;
+		const ny = p_ny
+		const hh = xBoxSize/nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*ny/2.0;
+		const z0 = ( zBoxSize==undefined ) ? y0 : zBoxSize/2.0;
+		const xLineOnly = ( mode==undefined || mode!='xLineOnly' ) ? false : true;
+		const yLineOnly = ( mode==undefined || mode!='yLineOnly' ) ? false : true;
+		const agrid = new THREE.Group();
+		
+		if ( hueArray.length<1 ) init_hueArray();
+		
+		if ( ! yLineOnly ) {
+			for (let j=0; j<ny; j++) {
+ 				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( nx * 3 );
+				const colors = new Float32Array( nx * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, nx );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[j] = line;
+    			agrid.add( gridArray[j] );
+			}
+		}
+		if ( ! xLineOnly ) {
+			for (let i=0; i<nx; i++) {
+				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( ny * 3 );
+				const colors = new Float32Array( ny * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, ny );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[ny+i] = line;
+    			agrid.add( gridArray[ny+i] );
+    		}
+    	}
+    	
+    	agrid.setPallet = setPallet; // setPallet( pallet, color )
+		agrid.update = gridUpdate; // gridUpdate( fieldFunc, [hueFunc|huedeg|hueStr] )
+		agrid.visible = false;
+		
+		return agrid;
+
+
+		// private functions
+		
+		function gridUpdate( z_hue_Func ) {
+			if ( ! yLineOnly ) {
+				for (let j=0; j<ny; j++) {
+					const line = gridArray[j];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let i= 0; i<nx; i++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[i*3]   = hh*i - x0;
+						positions[i*3+1] = hh*j - y0;
+						positions[i*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[i*3]   = r;
+						colors[i*3+1] = g;
+						colors[i*3+2] = b;
+					}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			if ( ! xLineOnly ) {
+				for (let i=0; i<nx; i++) {
+					const line = gridArray[ny+i];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let j= 0; j<ny; j++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[j*3]   = hh*i - x0;
+						positions[j*3+1] = hh*j - y0;
+						positions[j*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[j*3]   = r;
+            			colors[j*3+1] = g;
+            			colors[j*3+2] = b;
+    				}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			agrid.visible = true;
+		}
+		
+		function setPallet( pallet, color ) {
+			const deg = Math.floor(pallet);
+			const col = new THREE.Color( color );
+			hueArray[deg][0] = col.r;
+			hueArray[deg][1] = col.g;
+			hueArray[deg][2] = col.b;
+		}
+		
+		function init_hueArray() {
+			// deg= 0...359 hue color, 360: black ... gray ...  370:white,
+			// 371: inner use, 372...399 as pallete
+			for (let deg=0; deg<360; deg++) {
+				hueArray[deg] = [];
+				const col = new THREE.Color( 'hsl('+deg+',100%,50%)');
+				hueArray[deg][0] = col.r;
+				hueArray[deg][1] = col.g;
+				hueArray[deg][2] = col.b;
+			}
+			for (let deg=360; deg<400; deg++) {
+				hueArray[deg] = [];
+				const x = (deg<371) ? (deg-360)*0.1 : 0.0;
+				hueArray[deg][0] = x;
+				hueArray[deg][1] = x;
+				hueArray[deg][2] = x;
+			}
+		}
+		
+	};
+	
+	// -----------------------  m3js_grid2D function end
+	
+	
+	// -----------------------  m3js_vField2D function  ---------------------------
+	//
+	//    ver 0.0.0  2022.02.04 created, last updated on 2022.12.20
+	//
+	//  vfield = m3js_vField2D( p_nx, p_ny, xBoxSize [, colorMode] ); // colorMode  0:direction color, 1:blue|red
+	//     nx: number of x-direction division, ny:number of y-direction division
+	//     xBoxSize: x-box size in threejs world
+	//  scene.add( vfield );
+	//
+	//  vfield.update( vx_vy_z_col_func [,step] ); // vx_vy_z_col_func: (i,j) --> [vx, vy, z, [col] ]
+	//     vx_vy_z_col_func: function(i,j) { return [vx, vy, z, [col] ]; }
+	//     [step]: step of for-loop, 1:default, else 2 or 3 or 4 ... 
+	//
+	//  vfield.visible = false;
+	//
+	
+	function m3js_vField2D( p_nx, p_ny, xBoxSize, colorMode ) {
+		const nx = p_nx;
+		const ny = p_ny;
+		const hh = xBoxSize/p_nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*p_ny/2.0;
+		const vectorArray = [];
+		const lines = new THREE.Group();
+		const cMode = ( colorMode==undefined ) ? 1 : colorMode;
+		
+		for (let i=0; i<nx; i++) {
+			vectorArray[i] = [];
+			for (let j=0; j<ny; j++) {
+				const geometry = new THREE.BufferGeometry();
+				const positions = new Float32Array( 2 * 3 ); // MAX_POINTS = 2,  3 vertices per point
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setDrawRange( 0, 2 );
+				const material = new THREE.LineBasicMaterial( { color: 0x888888 } );
+				const line = new THREE.Line( geometry, material );
+				line.visible = false;
+				vectorArray[i][j] = line;
+    			lines.add( vectorArray[i][j] );
+			}
+		}
+		
+		lines.update = linesUpdate;
+		
+		return lines;
+		
+		
+		function linesUpdate( vx_vy_z_col_func, step ) {
+			const inc = ( step == undefined ) ? 1 : step;
+			for (let i=0; i<nx; i+=inc) {
+				for (let j=1; j<ny; j+=inc) {
+					const line = vectorArray[i][j];
+					const positions = line.geometry.attributes.position.array;
+					const vec = vx_vy_z_col_func(i,j);
+					if ( !Array.isArray(vec) ) {
+						line.visible = false;
+						continue;
+					}
+					let vx, vy, z, col, h=0;
+					[ vx, vy, z, col ] = vec;
+					if ( col==undefined ) {
+						if ( cMode==0 ) {
+							h = Math.floor((Math.atan2(vy,vx))*180.0/Math.PI+180.0);
+
+						} else if ( cMode==1 ) {
+							h = (vx>=0.0) ? 240 : 0;
+						}
+						col = `hsl(${h},100%,50%)`;
+					}
+					let x = hh*i-x0, y = hh*j-y0;
+					positions[0] = x; // point 0
+					positions[1] = y;
+					positions[2] = z;
+					positions[3] = x + vx; // point 1
+					positions[4] = y + vy;
+					positions[5] = z;
+					line.visible = true;
+					line.material.color = new THREE.Color( col );
+					line.geometry.attributes.position.needsUpdate = true;
+				}
+			}
+			lines.visible = true;
+		}
+	}
+	
+	// -----------------------  m3js_vField2D function end
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+
+	// ----------  dom control
+
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = (pauseFlag+1)%2; 
+		if (pauseFlag==0) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==1 ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+
+	function setnWaves() {  // select nWaves
+		v_nWaves = 1 + document.getElementById("slct_cycle").selectedIndex;
+		resetFlag = 1;
+	}
+	
+	
+	//--------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		// dom control
+		reset:			function() { resetFlag = 1; },
+		pause:			pause,
+		step:			function() { stepFlag = 1; },
+		setTheme:		function() { 
+							v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
+							resetFlag = 1;
+						},
+		setnWaves:		setnWaves,
+		setDispMode:	function() {
+							dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+							dispModeChanged = true;	
+						},
+		viewHome:		function() { viewHomeRequested = true; },
+	};
+
+})(); // ====================  tjs003 module end  ====================
+
+
+// event
+const tjs = tjs003;
+window.addEventListener('load', tjs.main );
+
+
+
+//--------------------  end of javaScript
+
+  </script>
+  <style type="text/css">
+    body { color:#000000; background-color:#fff8dd;}
+  </style>
+</head>
+<body>
+<p>[tjs003] Ez-Hxy wave - Finite-Difference Time-Domain method 2D</p>
+<canvas id="myCanvas" width="500" height="480" ></canvas>
+<br>
+
+<label>object:</label>
+<select id="slct_theme" onChange="tjs.setTheme()">
+<option>glass n=2.0</option><option>metal</option><option>absorber</option>
+</select>
+    <span style="margin-right: 20px;"></span>
+<label>generate:</label>
+<select id="slct_cycle" onChange="tjs.setnWaves()">
+<option>1</option><option selected>2</option><option>3</option><option>4</option>
+</select>
+ waves
+    <span style="margin-right: 20px;"></span>
+<button onClick="tjs.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="tjs.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="tjs.step()">step</button>
+<br>
+
+<label>disp mode:</label>
+<select id="slct_dispMode" onChange="tjs.setDispMode()">
+<option>Ez(x,y):blue + Hxy(x,y):green</option><option>Ez(x,y)</option>
+<option>Hx(x,y)</option><option>Hy(x,y)</option>
+<option>| Hxy(x,y) |, color:direction</option><option>vector(Hx, Hy), z:| Hxy(x,y) |, color:direction</option>
+<option>canvas2d Ez(x,y)</option><option>canvas2d Hxy(x,y)</option>
+</select>
+<br>
+
+<button onClick="tjs.viewHome()">return to initial view</button>
+    <span style="margin-right: 50px;"></span>
+drag mouse to rotate view point
+<br>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
