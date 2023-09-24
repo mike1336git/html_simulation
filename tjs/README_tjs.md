@@ -10,5 +10,5 @@
    - offline case: use sub-directory '../lib/three.min.js'
 
  - Please see
-   [previous versions](https://mike1336git.github.io/index.html)https://mike1336git.github.io/index.html)
+   [previous versions](https://mike1336git.github.io/index.html)
     of the website for reference.
