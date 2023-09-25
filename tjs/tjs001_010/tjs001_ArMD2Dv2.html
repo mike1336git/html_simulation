@@ -43,11 +43,11 @@
 */
 
 const ArMD2D = (function(){ // ====================  ArMD2D Module  ====================
-	
+
 	const g_AMU = 1.66053904e-27;   // (kg) atomic mass unit
 	const g_kB = 1.380649e-23;      // (J/K) Boltzmann's constant
 	const g_nMax = 1000;            // array max
-	
+
 	let g_nParticles = 300;         // number of particles
 	let g_sysTime = 0.0;            // (s) system time
 	let g_timeStep = 5.0e-15;       // (s) time step dt
@@ -55,31 +55,31 @@ const ArMD2D = (function(){ // ====================  ArMD2D Module  ============
 	let g_yMax = 8.0E-9;            // (m) y-box size
 	let g_kineticEnergy = 0.0;      // (J) total kinetic energy
 	let g_potentialEnergy = 0.0;    // (J) total potential energy
-	
+
 	let g_xBoxSize = 480;           // in pixel
 	let g_yBoxSize = 400;           // in pixel
 	let g_yTextSize = 80;           // in pixel
-	
+
 	const g_xx = dim1( g_nMax );    // (m) x-component of i-th particle position
 	const g_yy = dim1( g_nMax );    // (m) y-component of i-th particle position
 	const g_vx = dim1( g_nMax );    // (m/s) x-component of i-th particle velocity
 	const g_vy = dim1( g_nMax );    // (m/s) y-component of i-th particle velocity
 	const g_ffx = dim1( g_nMax );   // (N) x-component of total force applied i-th particle
 	const g_ffy = dim1( g_nMax );   // (N) y-component of total force applied i-th particle
-	
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
-	
+
 	// ----- material data
-	
+
 	const g_mass = 39.95*g_AMU;	 // (kg) mass of Ar
 	const g_sigma = 3.418e-10;	  // (m) Lennard-Jones potential sigma for Ar 
 	const g_epsilon = 1.711e-21;	// (J) Lennard-Jones potential epsilon for Ar
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( nn, BoxSizeInNM, contTemp ) {
 
 		g_sysTime = 0.0;
@@ -89,7 +89,7 @@ const ArMD2D = (function(){ // ====================  ArMD2D Module  ============
 		g_nParticles = setGas(nn);
 		ajustVelocity(contTemp);
 	}
-	
+
 	function setGas( nn ) {
 		const sigma = g_sigma;
 		const rNear2=1.2*sigma*sigma;
@@ -120,22 +120,22 @@ const ArMD2D = (function(){ // ====================  ArMD2D Module  ============
 		}
 		return nParticles;
 	}
-	
+
 	// normal distributed random number: -3.0 <= normalRandom3() < 3.0
 	function normalRandom3() {
 		return (Math.random()+Math.random()+Math.random()+Math.random()+Math.random()+Math.random()-3.0);
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
+
 	function timeEvolution( nCalc ) {
 		for (let i=0; i<nCalc; i++) {
 			g_sysTime += g_timeStep;
 			moveParticles( g_timeStep );
 		}
 	}
-	
+
 	function moveParticles( dt ) {
 		const nn = g_nParticles, a = 0.5*dt/g_mass;
 		for (let i=0; i<nn; i++) {
@@ -154,7 +154,7 @@ const ArMD2D = (function(){ // ====================  ArMD2D Module  ============
 			g_kineticEnergy += 0.5*g_mass*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
 		}
 	}
-	
+
 	function calcForce() {
 		const nn = g_nParticles, s05=0.5*g_sigma;
 		g_potentialEnergy = 0.0;
@@ -185,17 +185,17 @@ const ArMD2D = (function(){ // ====================  ArMD2D Module  ============
 			g_ffy[i] += boundaryForce(g_yy[i]+s05) + boundaryForce(g_yy[i]-g_yMax-s05);
 		}
 	}
-	
+
 	function boundaryForce( r ) { // boundary:L-J type; epsilon = 0.5*epsilonOfAr, sigma = sigmaOfAr
 		const ri = (g_sigma/r);
 		const r6 = ri*ri*ri*ri*ri*ri;
 		g_potentialEnergy += 4.0*0.5*g_epsilon*r6*(r6-1.0);
 		return (24.0*0.5*g_epsilon*r6*(2.0*r6-1.0)/r);
 	}
-	
-	
+
+
 	// --------------------  utility  --------------------
-	
+
 	function systemTemperature() {
 		const nn = g_nParticles;
 		let ek= 0.0; //kinetic energy (J)
@@ -204,7 +204,7 @@ const ArMD2D = (function(){ // ====================  ArMD2D Module  ============
 		}
 		return ek/(nn*g_kB); // for 2D
 	}
-	
+
 	function ajustVelocity(temp) {
 		const nn = g_nParticles;
 		const a = Math.sqrt(temp/systemTemperature());
@@ -213,18 +213,18 @@ const ArMD2D = (function(){ // ====================  ArMD2D Module  ============
 			g_vy[i] = a*g_vy[i];
 		}
 	}
-	
-	
+
+
 	//--------------------  draw  --------------------
-	
+
 	function draw( ctx ) {
 		const boxSize=400, px=10, py=10, pCaption=410, sc = boxSize/g_xMax;
-		
+
 		ctx.fillStyle = "rgb(125,125,125)"; //background color
 		ctx.fillRect(px, py, boxSize, boxSize); //clear box
-		
+
 		drawBalls( ctx, px, py, sc );
-		
+
 		// caption
 		ctx.fillStyle = "rgb(0, 0, 0)";
 		ctx.fillText("time = "+(g_sysTime*1.0e12).toFixed(1)+" (ps)", 10, pCaption+24);
@@ -233,7 +233,7 @@ const ArMD2D = (function(){ // ====================  ArMD2D Module  ============
 		ctx.fillText("Energy = "+(g_kineticEnergy+g_potentialEnergy).toExponential(4)+" (J)", 200, pCaption+44);
 		ctx.fillText("Box = "+(g_xMax*1.0e9).toFixed(1)+"x"+(g_yMax*1.0e9).toFixed(1)+" (nm)", 10, pCaption+64);
 	}
-	
+
 	function drawBalls( ctx, px, py, sc ) {
 		const nn = g_nParticles, r = 0.5*g_sigma, twoPi = 2.0*Math.PI;
 		ctx.fillStyle = "rgb(0, 250, 0)";
@@ -243,17 +243,17 @@ const ArMD2D = (function(){ // ====================  ArMD2D Module  ============
 			ctx.fill();
 		}
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
 		init:           setInitialCondition,    // setInitialCondition( nn, BoxSizeInNM, contTemp )
 		evolve:         timeEvolution,          // timeEvolution( nCalc )
 		draw:           draw,                   // draw(ctx)
-		
+
 		setTemp:        ajustVelocity,          // ajustVelocity( contTemp )
-		
+
 		getSysParam:    function() { return [ g_nParticles, g_timeStep, g_xMax, g_yMax ]; },
 		getNow:         function() { return [ g_sysTime, systemTemperature(), g_kineticEnergy, g_potentialEnergy ]; },
 		getArData:      function() { return [ g_mass, g_sigma, g_epsilon, "Ar", 0xaadd00 ]; },
@@ -261,7 +261,7 @@ const ArMD2D = (function(){ // ====================  ArMD2D Module  ============
 		getVelocity:    function(i) { return [ g_vx[i], g_vy[i] ]; },
 		getForce:       function(i) { return [ g_ffx[i], g_ffy[i] ]; },
 	};
-	
+
 })(); // ====================  ArMD2D end  ====================
 
 
@@ -799,10 +799,10 @@ const tjs001 = (function(){ // ====================  tjs Module  ===============
 	
 	
 	//--------------------  public  --------------------
-	
+
 	return {
 		main:           main,           // main()
-		
+
 		// dom control
 		reset:          function() { resetFlag = 1; },
 		pause:          pause,
@@ -814,9 +814,9 @@ const tjs001 = (function(){ // ====================  tjs Module  ===============
 						},
 		setNcalc:       function() { nTimes = 1 + document.getElementById("slct_nCalc").selectedIndex; },
 		viewHome:       function() { viewHomeRequested = true; },
-		
+
 	};
-	
+
 })(); // ====================  tjs001 module end  ====================
 
 

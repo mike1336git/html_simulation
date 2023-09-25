@@ -64,9 +64,9 @@
 */
 
 const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====================
-	
+
 	const g_nMax = 241;                     // array max
-	
+
 	let g_NNx = 240;                        // number of space division (NNx*dx = x-length)
 	let g_NNy = 240;                        // number of space division (NNy*dx = y-length)
 	let g_sysTime = 0.0;                    // system time
@@ -74,17 +74,17 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 	let g_dx = 1.0;                         // space division dx =1.0, (dy = 1.0 (no use))
 	let g_omega = Math.PI/16.0;             // generator wave angular velocity: phase angle += omega*dt
 	let g_theta = 0.0;                      // generator phase angle
-	
+
 	const g_Ez = dim2( g_nMax, g_nMax );    // z-component of electric field
 	const g_Hx = dim2( g_nMax, g_nMax );    // x-component of magnetic field
 	const g_Hy = dim2( g_nMax, g_nMax );    // y-component of magnetic field
 	const g_ep = dim2( g_nMax, g_nMax );    // dielectric constant
 	const g_mu = dim2( g_nMax, g_nMax );    // magnetic permeability
 	const g_sg = dim2( g_nMax, g_nMax );    // Electrical conductivity
-	
+
 	let g_imageData;                        // field Ez[][] imageData
 	let g_imageData2;                       // imageData for oprical device (use in drawHxyField())
-	
+
 	function dim2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {  
@@ -92,10 +92,10 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 		}
 		return a;
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( theme ) {	
 		g_sysTime = 0.0;
 		g_theta = 0.0;
@@ -111,7 +111,7 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 		}
 		setOpticalDevice( eps, mue, sgm );
 	}
-	
+
 	function clearField() {
 		const nnx = g_NNx, nny = g_NNy;
 		for (let i=0; i<nnx+1; i++) {
@@ -125,7 +125,7 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 			}
 		}
 	}
-	
+
 	function setOpticalDevice( eps, mue, sgm ) {
 		const nnx = g_NNx, nny = g_NNy;
 		for (let i=0; i<nnx; i++) {
@@ -138,10 +138,10 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 			}
 		}
 	}
-	
-	
+
+
 	// --------------------  evolve Field Ez,Hx,Hy  --------------------
-	
+
 	function evolveField( nTimes, nWaves ) {
 		const n = 2*nTimes;
 		g_sysTime = g_sysTime + nTimes*g_dt;
@@ -151,7 +151,7 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 			evolveHxHy();
 		}
 	}
-	
+
 	function generateEz( nwave ) {  // plane wave 
 		const nny = g_NNy;
 		g_theta = g_theta + g_omega*0.5*g_dt
@@ -168,7 +168,7 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 			}
 		}
 	}
-	
+
 	function evolveEz() {  // dD/dt=rotH + J , D=eps*E
 		const nnx = g_NNx, nny = g_NNy, dtv2 = 0.5*g_dt;
 		for (let i=0; i<nnx; i++) {
@@ -180,10 +180,10 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 			}
 		}
 	}
-	
+
 	function evolveHxHy() {  // dB/dt=-rotE , B=mue*H
 		const nnx = g_NNx, nny = g_NNy, dtv2 = 0.5*g_dt;
-		
+
 		// boundary : no-reflect (in vacuum) condition (Mur 1st)
 		// MUR Hx(n+1,i,0) = Hx(n,i,1)-(dx-dt)/(dx+dt){Hx(n+1,i,1)-Hx(n,i,0)}
 		const c = (g_dx-dtv2)/(g_dx+dtv2);
@@ -199,7 +199,7 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 		for (let j=0; j<nny; j++) {
 			g_Hy[nnx][j] = c*g_Hy[nnx][j] + g_Hy[nnx-1][j];
 		}
-		
+
 		// Hx(i,j) - dt(1/mue)(Ez(i,j)-Ez(i,j-1))/dy
 		for (let i=0; i<nnx; i++) {
 			for (let j=1; j<nny; j++) {
@@ -212,7 +212,7 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 				g_Hy[i][j] += dtv2/g_mu[i][j]*(g_Ez[i][j]-g_Ez[i-1][j]);
 			}
 		}
-		
+
 		// boundary : no-reflect (in vacuum) condition (Mur 1st)
 		for (let i=0; i<nnx; i++) {
 			g_Hx[i][0] -= c*g_Hx[i][1];
@@ -227,34 +227,34 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 			g_Hy[nnx][j] -= c*g_Hy[nnx-1][j];
 		}
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	function draw( ctx, drawMode ) {
-		
+
 		if ( ! setImages.defined ) setImages( ctx );
-		
+
 		//ctx.clearRect(0, 0, g_xCanvasSize, g_yCanvasSize);
-		
+
 		if (drawMode==0) {
 			drawEzField(ctx);
 		} else if (drawMode==1) {
 			drawHxyField(ctx);
 		}
-		
+
 		ctx.fillStyle = "rgb(0, 0, 0)";
 		ctx.fillText("time = "+g_sysTime, 10, 290);
 	}
-	
+
 	function setImages( ctx ) {
 		g_imageData = ctx.getImageData(20, 20, g_NNx, g_NNy);
 		g_imageData2 = ctx.getImageData(20, 20, g_NNx, g_NNy);
 		setImages.defined = true;
 	}
 	setImages.defined = false;
-	
-	
+
+
 	function setImage2Data(ctx) {
 		const nnx = g_NNx, nny = g_NNy, data = g_imageData2.data;
 		for (let j=0; j<nny; j++) {
@@ -270,8 +270,8 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 		}
 		ctx.putImageData(g_imageData2, 20, 20);
 	}
-	
-	
+
+
 	function drawEzField(ctx) {
 		const nnx = g_NNx, nny = g_NNy, mag = 250.0, data = g_imageData.data;
 		for (let j=0; j<nny; j++) {
@@ -295,10 +295,10 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 		}
 		ctx.putImageData(g_imageData, 20, 20);
 	}
-	
+
 	function drawHxyField( ctx ) {
 		const nnx = g_NNx, nny = g_NNy, xp=20, yp=20, mag=10.0;
-		
+
 		setImage2Data( ctx );
 		ctx.putImageData( g_imageData2, xp, yp ); // draw optical object
 		for (let i=2; i<nnx; i+=4) {
@@ -313,7 +313,7 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 			}
 		}
 	}
-	
+
 	function drawLine( ctx, x1, y1, x2, y2, color ) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -321,22 +321,22 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
 		init:           setInitialCondition,    // setInitialCondition( theme )
 		evolve:         evolveField,            // evolveField( nTimes,nWaves )
 		draw:           draw,                   // draw( ctx, drawMode )
-		
+
 		getSysParam:    function() { return [ g_NNx, g_NNy, g_dx, g_dt ]; },
 		getSysTime:     function() { return g_sysTime; },
 		getEz:          function(i,j) { return g_Ez[i][j]; },
 		getHxy:         function(i,j) { return [ g_Hx[i][j], g_Hy[i][j] ]; },
 		getMaterial:    function(i,j) { return [ g_ep[i][j], g_mu[i][j], g_sg[i][j] ]; },
 	};
-	
+
 })(); // ====================  waveFDTD2D end  ====================
 
 
@@ -1136,7 +1136,6 @@ drag mouse to rotate view point
 <hr width="500" align="left" color="#a0a0a0">
 <a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
-
 </body>
 </html>
 

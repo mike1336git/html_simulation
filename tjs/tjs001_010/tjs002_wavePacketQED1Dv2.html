@@ -73,22 +73,22 @@
 */
 
 const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Module  ====================
-	
+
 	// au: atomic unit hBar=1,e=1,me=1,a0=1
 	const g_auLength = 5.29177211e-11;      // (m) 1(au) = auLength (m)
 	const g_auTime = 2.418884326e-17;       // (s) 1(au) = auTime (s)
 	const g_auEnergy = 4.35974465e-18;      // (J) 1(au) = auEnergy (J)
 	const g_au2eV = 27.211386;              // (eV) 1(au) = 27.211386 (eV)
-	
+
 	let g_NNx = 400;                        // number of space division (NNx*dx = x-length)
 	let g_sysTime = 0.0;                    // (au) system time
 	let g_dx = 0.5;                         // (au) space division 
 	let g_timeStep = 0.5*g_dx*g_dx;         // (au) time step dt
 	let g_dampingFactor = 0.1;              // for lossEnergy() damping factor :steepest descent method
-	
+
 	let g_xCanvasSize = 480;                // in pixel
 	let g_yCanvasSize = 480;                // in pixel
-	
+
 	const g_phRe = dim1( g_NNx );           // real part of wave function
 	const g_phIm = dim1( g_NNx );           // imaginary part of wave function
 	const g_vv = dim1( g_NNx );             // external potential
@@ -98,14 +98,14 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 	const g_uIm = dim1( g_NNx );            // imaginary part of u vector
 	const g_wrkRe = dim1( g_NNx );          // for lossEnergy() real part of work vector
 	const g_wrkIm = dim1( g_NNx );          // for lossEnergy() imaginary part of work vector
-	
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( theme ) {
 		const xMax = g_NNx*g_dx, dx = g_dx;
 		g_sysTime = 0.0;
@@ -126,14 +126,14 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 			setWave(0.25*xMax, 10.0, 1.0); // (wavePos,waveWidth,momentum), K=momentum^2/(2me) = 0.5
 		}
 	}
-	
+
 	function setFreePotential() {
 		const nnx = g_NNx;
 		for ( let i=0; i<nnx; i++) {
 			g_vv[i] = 0.0;
 		}
 	}
-	
+
 	function setParabolicPotential( xpos, k ) {
 		const nnx = g_NNx, dx = g_dx;
 		for ( let i=0; i<nnx; i++) {
@@ -141,7 +141,7 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 			g_vv[i] = k*(x-xpos)*(x-xpos);
 		}
 	}
-	
+
 	function setWallPotential( xpos, width, hight ) {
 		const nnx = g_NNx, dx = g_dx;
 		for ( let i=0; i<nnx; i++) {
@@ -149,7 +149,7 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 			g_vv[i] = (x>=xpos && x<xpos+width) ? hight : 0.0;
 		}
 	}
-	
+
 	function setWave( wavePos, waveWidth, momentum ) {
 		const nnx = g_NNx, dx = g_dx;
 		const a = Math.pow(2.0*Math.PI*waveWidth*waveWidth,-0.25);
@@ -166,10 +166,10 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 		g_phIm[nnx-1] = 0.0;
 		normalize();
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
+
 	function timeEvolution( lossSW ) {
 		const dt = g_timeStep;
 
@@ -181,7 +181,7 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 		}
 		if (lossSW==1) lossEnergy(g_dampingFactor);
 	}
-	
+
 	function kxStep( dt ) { //evolve dt
 		const nnx = g_NNx;
 		const bbRe = 2.0, bbIm = 4*g_dx*g_dx/dt;
@@ -209,7 +209,7 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 			g_phIm[i] -= g_phRe[i+1]*g_uIm[i] + g_phIm[i+1]*g_uRe[i];
 		}
 	}
-	
+
 	function phaseStep(hdt) { //evolve hdt=0.5*dt
 		const nnx = g_NNx;
 		for ( let i=1; i<nnx-1; i++) {
@@ -220,7 +220,7 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 			g_phIm[i] = -sn*phr+cs*phi;
 		}
 	}
-	
+
 	function lossEnergy(damp) { // steepest descent method: psi_next = psi - damp*(psi|H-E|psi)
 		const nnx = g_NNx, h2 = 2.0*g_dx*g_dx;
 		const ee = energy();
@@ -234,10 +234,10 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 		}
 		normalize();
 	}
-	
-	
+
+
 	// --------------------  utility  --------------------
-	
+
 	function norm() {
 		const nnx = g_NNx, dx = g_dx;
 		let p = 0.0;
@@ -246,7 +246,7 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 		}
 		return p;
 	}
-	
+
 	function normalize() {
 		const nnx = g_NNx, a = Math.sqrt(norm());
 		for ( let i=1; i<nnx-1; i++) {
@@ -254,11 +254,11 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 			g_phIm[i] = g_phIm[i]/a;
 		}
 	}
-	
+
 	function energy() {
 		return kineticEnergy() + potentialEnergy();
 	}
-	
+
 	function kineticEnergy() { // (psi(x)|-d^2/dx^2|psi(x))
 		const nnx=g_NNx, dx = g_dx;
 		let s = 0.0;
@@ -269,7 +269,7 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 		}
 		return s;
 	}
-	
+
 	function potentialEnergy() { // (psi(x)|V(x)|psi(x))
 		const nnx = g_NNx, dx = g_dx;
 		let s = 0.0;
@@ -278,19 +278,19 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 		}
 		return s;
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
 
 	function draw( ctx ) {
 		const nnx=g_NNx, xp=0, yp=240, vmag=200.0;
-		
+
 		//ctx.clearRect(0, 0, g_canvas.width, g_canvas.height);
-		
+
 		drawV(ctx, xp,yp,vmag); //(xp,yp,vmag)
 		drawPsi2(ctx, xp,yp,vmag,2000); //(xp,yp,vmag,pmag)
 		drawWave(ctx, xp,yp,vmag,100); //(xp,yp,vmag,mag)
-		
+
 		ctx.fillStyle = "rgb(240,240,240)"; //background color
 		ctx.fillRect(0, 330, 400, 70); //clear text area
 		ctx.fillStyle = "rgb(0, 0, 0)";
@@ -301,7 +301,7 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 		ctx.fillText("totalE="+(energy()*g_au2eV).toFixed(3)+" (eV)", 10, 394);
 		ctx.fillText("x = 0.0 ... "+(nnx*g_dx*g_auLength*1.0e9).toFixed(2)+"(nm)", 200, 394);
 	}
-	
+
 	function drawPsi2( ctx, xp, yp, vmag, pmag ) {
 		const nnx = g_NNx, dx = g_dx;
 		for ( let i=1; i<nnx-1; i++) {
@@ -311,7 +311,7 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 			}
 		}
 	}
-	
+
 	function drawV( ctx, xp, yp, vmag ) {
 		const nnx = g_NNx;
 		ctx.strokeStyle = "rgb(0,250,0)";
@@ -321,7 +321,7 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 		}
 		ctx.stroke();
 	}
-	
+
 	function drawWave( ctx, xp, yp, vmag, mag ) {
 		const nnx=g_NNx, thInDegree = 15.0, deg = 180.0/Math.PI;
 		const snth = Math.sin(thInDegree/deg), csth = Math.cos(thInDegree/deg);
@@ -336,7 +336,7 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 			ctx.stroke();
 		}
 	}
-	
+
 	function drawLine( ctx, x1, y1, x2, y2, color ) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -344,15 +344,15 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
 		init:           setInitialCondition,    // setInitialCondition( theme )
 		evolve:         timeEvolution,          // timeEvolution( lossSW )
 		draw:           draw,                   // draw( ctx )
-		
+
 		getAUinSI:		function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
 		getSysParam:    function() { return [ g_NNx, g_dx, g_timeStep ]; },
 		getNow:         function() { return [ g_sysTime, norm(), kineticEnergy(), potentialEnergy() ]; },
@@ -361,7 +361,7 @@ const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Mo
 		getPsiDensity:  function(i) { return ( g_phRe[i]*g_phRe[i] + g_phIm[i]*g_phIm[i] ); },
 		getVext:        function(i) { return g_vv[i]; },
 	};
-	
+
 })(); // ====================  wavePacketQED1D end  ====================
 
 
@@ -737,10 +737,10 @@ const tjs002 = (function(){ // ====================  tjs Module  ===============
 	
 	
 	//--------------------  public  --------------------
-	
+
 	return {
 		main:           main,			// main()
-		
+
 		// dom control
 		reset:			function() { resetFlag = 1; },
 		pause:          pause,
@@ -756,7 +756,7 @@ const tjs002 = (function(){ // ====================  tjs Module  ===============
 						},
 		viewHome:       function() { viewHomeRequested = true; },
 	}
-	
+
 })(); // ====================  tjs002 module end  ====================
 
 
