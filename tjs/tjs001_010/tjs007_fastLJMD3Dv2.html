@@ -92,7 +92,7 @@ const fastLJMD3D = (function(){ // ====================  fastLJMD3D Module  ====
 	function dimInt2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
-			a[i] = new Float64Array( nj );
+			a[i] = new Int32Array( nj );
 		}
 		return a;
 	}
