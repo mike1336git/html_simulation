@@ -12,3 +12,5 @@
  - Please see
    [previous versions](https://mike1336git.github.io/index.html)
     of the website for reference.
+
+ - sample [animation](https://mike1336git.github.io/tjs/tjs011_020/tjs012_mixLJMD3Dv1b.html)
