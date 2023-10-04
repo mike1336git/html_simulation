@@ -1,0 +1,105 @@
+
+#### cdn alternative for Three.js( module type )
+
+
+--------------------------------  import
+
+<script type="module">
+
+import * as THREE from 'three';
+import { OrbitControls } from 'orb';
+import { GUI } from 'lil-gui';
+
+
+--------------------------------  as importmap
+
+-------------- r147
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+    "orb": "https://unpkg.com/three@0.147.0/examples/jsm/controls/OrbitControls.js",
+    "lil-gui": "https://unpkg.com/three@0.147.0/examples/jsm/libs/lil-gui.module.min.js"
+  }
+}
+</script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.module.js",
+    "orb": "https://cdn.jsdelivr.net/npm/three@0.147.0/examples/jsm/controls/OrbitControls.js",
+    "lil-gui": "https://cdn.jsdelivr.net/npm/three@0.147.0/examples/jsm/libs/lil-gui.module.min.js"
+  }
+}
+</script>
+
+
+-------------- r157
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.157.0/build/three.module.min.js",
+    "orb": "https://unpkg.com/three@0.157.0/examples/jsm/controls/OrbitControls.js",
+    "lil-gui": "https://unpkg.com/three@0.157.0/examples/jsm/libs/lil-gui.module.min.js"
+  }
+}
+</script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.module.min.js",
+    "orb": "https://cdn.jsdelivr.net/npm/three@0.157.0/examples/jsm/controls/OrbitControls.js",
+    "lil-gui": "https://cdn.jsdelivr.net/npm/three@0.157.0/examples/jsm/libs/lil-gui.module.min.js"
+  }
+}
+</script>
+
+
+
+
+---------------------------  cdn ( content delivery network ) URL
+
+ - "three":
+   "https://unpkg.com/three@0.147.0/build/three.module.js"
+   "https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.module.js"
+   
+   "https://unpkg.com/three@0.157.0/build/three.module.min.js"
+   "https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.module.min.js"
+   "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.157.0/three.min.js"
+
+   
+
+ - "orb":
+   "https://unpkg.com/three@0.147.0/examples/jsm/controls/OrbitControls.js"
+   "https://cdn.jsdelivr.net/npm/three@0.147.0/examples/jsm/controls/OrbitControls.js"
+   
+   
+   "https://unpkg.com/three@0.157.0/examples/jsm/controls/OrbitControls.js"
+   "https://cdn.jsdelivr.net/npm/three@0.157.0/examples/jsm/controls/OrbitControls.js"
+   
+   "https://cdn.jsdelivr.net/npm/three-orbitcontrols@2.110.3/OrbitControls.min.js"
+   
+   
+ - "lil-gui":
+
+   "https://cdn.jsdelivr.net/npm/lil-gui@0.18/+esm"
+   "https://cdn.jsdelivr.net/npm/lil-gui@0.17/+esm"
+   
+   "https://unpkg.com/three@0.147.0/examples/jsm/libs/lil-gui.module.min.js"
+   "https://cdn.jsdelivr.net/npm/three@0.147.0/examples/jsm/libs/lil-gui.module.min.js"
+   
+   "https://unpkg.com/three@0.157.0/examples/jsm/libs/lil-gui.module.min.js"
+   "https://cdn.jsdelivr.net/npm/three@0.157.0/examples/jsm/libs/lil-gui.module.min.js"
+   
+   
+---------------------------  cdn site
+
+ - cdn.jsdelivr.net: https://cdn.jsdelivr.net/npm/three@0.157.0/
+ 
+ - UNPKG: https://unpkg.com/browse/three@0.157.0/
+ 
+

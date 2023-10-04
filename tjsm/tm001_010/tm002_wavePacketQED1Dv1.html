@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>tm002_wavePacketQED1D</title>
+
+<style type="text/css">
+  body { color:#000000; background-color:#fff8dd; }
+</style>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+<!--
+<script type="importmap">
+{
+  "imports": {
+    "three": "../libm/three.module.js",
+    "orb": "../libm/OrbitControls.js",
+    "lil-gui": "../libm/lil-gui.module.min.js"
+  }
+}
+</script>
+-->
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+    "orb": "https://unpkg.com/three@0.147.0/examples/jsm/controls/OrbitControls.js",
+    "lil-gui": "https://unpkg.com/three@0.147.0/examples/jsm/libs/lil-gui.module.min.js"
+  }
+}
+</script>
+
+
+<script type="module">
+
+import * as THREE from 'three';
+import { OrbitControls } from 'orb';
+import { GUI } from 'lil-gui';
+
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tm002_wavePacketQED1D
+//    Copyright(C) 2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2023.01.19 created, last updated on 2023.01.24
+//    ver 0.0.1  2023.10.04 v1, last updated on 2023.10.04
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  QED: Quantum Electron Dynamics 1D
+//
+// - time dependent Schrodinger equation: i(d/dt)psi(r,t) = H psi(r,t)
+// - time evolution
+//    psi(r,t+dt) = exp(-i dt H) psi(r,t),  (H:Hamiltonian of the system)
+//      H = -delta/2 + V(r), delta = d^2/dx^2
+//    psi(r,t+dt) = exp(-i dt H) psi(r,t) nearly=
+//      {exp(-i(dt/2)V} {exp(i dt(delta/2)} {exp(-i(dt/2)V} psi(r,t)
+// - algorism: {exp(i dt(delta/2)}
+//     QED: Watanabe's algorithm (semi-implicit method)
+//     Naoki Watanabe, Masaru Tsukada; arXiv:physics/0011068v1
+//     (Published from Physical Review E. 62, 2914, (2000).)
+//
+//     Cayley's form : exp(i dt delta/2) nearly= (1 + i dt delta/4)/(1 - i dt delta/4)
+//       psi(r,t+dt) = exp(i dt delta/2) psi(r,dt)
+//       (1 - i dt delta/4) psi(r,t+dt) = (1 + i dt delta/4) psi(r,t)
+//
+//     difference form psi(r,t) --> psi(j,n)
+//        psi(j,n+1) - i (dt/dx^2)/4 {psi(j-1,n+1))-2psi(j,n+1)+psi(j+1,n+1)}
+//               = psi(j,n) + i (dt/dx^2)/4 {psi(j-1,n))-2psi(j,n)+psi(j+1,n)}
+//        x i(4dx^2/dt) by each term
+//        psi(j-1,n+1) + A Psi(j,n+1) + psi(j+1,n+1) = -psi(j-1,n) + B Psi(j,n) -psi(j+1,n)
+//          where A=(i4dx^2/dt)-2, B=(i4dx^2/dt)+2
+//          bnj = -psi(j-1,n) + B Psi(j,n) -psi(j+1,n) is calculated using known psi(j,n)
+//          psi(j-1,n+1) + A Psi(j,n+1) + psi(j+1,n+1) = bnj
+//
+//     solve tri-diagonal equation  A X = B
+//         | a1  1  0  0 |  | x1 |    | b1 |
+//         |  1 a2  1  0 |  | x2 |  = | b2 |
+//         |  0  1 a3  1 |  | x3 |    | b3 |
+//         |  0  0  1 a4 |  | x4 |    | b4 |
+//
+//       u(1) = 1.0/a(1)  // u() : work vector
+//       x(1) = b(1)*u(1)
+//
+//       for(i=2; i<=N-2; i++) { //forward elimination
+//          u[i] = 1/(a[i]-u[i-1])
+//          x[i] = (b[i]-x[i-1])*u[i]
+//       }
+//       for(i=N-3; i<=1; i--) { //backward substitution
+//          x[i] -= x[i+1]*u[i]
+//       }
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const wavePacketQED1D = (function(){ // ====================  wavePacketQED1D Module  ====================
+
+	// au: atomic unit hBar=1,e=1,me=1,a0=1
+	const g_auLength = 5.29177211e-11;      // (m) 1(au) = auLength (m)
+	const g_auTime = 2.418884326e-17;       // (s) 1(au) = auTime (s)
+	const g_auEnergy = 4.35974465e-18;      // (J) 1(au) = auEnergy (J)
+	const g_au2eV = 27.211386;              // (eV) 1(au) = 27.211386 (eV)
+
+	let g_NNx = 400;                        // number of space division (NNx*dx = x-length)
+	let g_sysTime = 0.0;                    // (au) system time
+	let g_dx = 0.5;                         // (au) space division 
+	let g_timeStep = 0.5*g_dx*g_dx;         // (au) time step dt
+	let g_dampingFactor = 0.1;              // for lossEnergy() damping factor :steepest descent method
+
+	let g_xCanvasSize = 480;                // in pixel
+	let g_yCanvasSize = 480;                // in pixel
+
+	const g_phRe = dim1( g_NNx );           // real part of wave function
+	const g_phIm = dim1( g_NNx );           // imaginary part of wave function
+	const g_vv = dim1( g_NNx );             // external potential
+	const g_bRe = dim1( g_NNx );            // real part of b vector (b,u: see avove QED1D document)
+	const g_bIm = dim1( g_NNx );            // imaginary part of b vector
+	const g_uRe = dim1( g_NNx );            // real part of u vector
+	const g_uIm = dim1( g_NNx );            // imaginary part of u vector
+	const g_wrkRe = dim1( g_NNx );          // for lossEnergy() real part of work vector
+	const g_wrkIm = dim1( g_NNx );          // for lossEnergy() imaginary part of work vector
+
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition( theme ) {
+		const xMax = g_NNx*g_dx, dx = g_dx;
+		g_sysTime = 0.0;
+		if (theme==0) { // 0:free space
+			setFreePotential();
+			setWave(0.25*xMax, 10.0, 1.0); // (wavePos,waveWidth,momentum), K=momentum^2/(2me) = 0.5
+		} else if (theme==1) { // 1:parabolic potential 
+			setParabolicPotential(0.5*xMax, 0.0001); // (xpos,k)
+			setWave(0.25*xMax, 10.0, 0.0); // (wavePos,waveWidth,momentum)
+		} else if (theme==2) { // 2:tunnel effect
+			setWallPotential(0.5*xMax, 10.0*dx, 0.55); // (xpos,width,hight)
+			setWave(0.25*xMax, 10.0, 1.0); // (wavePos,waveWidth,momentum), K=momentum^2/(2me) = 0.5
+		} else if (theme==3) { // 3:step hill
+			setWallPotential(0.5*xMax, 0.5*xMax, 0.3); // (xpos,width,hight)
+			setWave(0.25*xMax, 10.0, 1.0); // (wavePos,waveWidth,momentum), K=momentum^2/(2me) = 0.5
+		} else if (theme==4) { // 4:step higher hill
+			setWallPotential(0.7*xMax, 0.5*xMax, 0.8); // (xpos,width,hight)
+			setWave(0.25*xMax, 10.0, 1.0); // (wavePos,waveWidth,momentum), K=momentum^2/(2me) = 0.5
+		}
+	}
+
+	function setFreePotential() {
+		const nnx = g_NNx;
+		for ( let i=0; i<nnx; i++) {
+			g_vv[i] = 0.0;
+		}
+	}
+
+	function setParabolicPotential( xpos, k ) {
+		const nnx = g_NNx, dx = g_dx;
+		for ( let i=0; i<nnx; i++) {
+			const x = i*dx;
+			g_vv[i] = k*(x-xpos)*(x-xpos);
+		}
+	}
+
+	function setWallPotential( xpos, width, hight ) {
+		const nnx = g_NNx, dx = g_dx;
+		for ( let i=0; i<nnx; i++) {
+			const x = i*dx;
+			g_vv[i] = (x>=xpos && x<xpos+width) ? hight : 0.0;
+		}
+	}
+
+	function setWave( wavePos, waveWidth, momentum ) {
+		const nnx = g_NNx, dx = g_dx;
+		const a = Math.pow(2.0*Math.PI*waveWidth*waveWidth,-0.25);
+		for ( let i=1; i<nnx-1; i++) {
+			const x = i*dx;
+			const phAb = a*Math.exp(-((x-wavePos)/(2.0*waveWidth))*((x-wavePos)/(2.0*waveWidth)));
+			const phPh = momentum*x;
+			g_phRe[i] = phAb*Math.cos(phPh);
+			g_phIm[i] = phAb*Math.sin(phPh);
+		}
+		g_phRe[0] = 0.0;
+		g_phIm[0] = 0.0;
+		g_phRe[nnx-1] = 0.0;
+		g_phIm[nnx-1] = 0.0;
+		normalize();
+	}
+
+
+	// --------------------  time evolution  --------------------
+
+	function timeEvolution( lossSW ) {
+		const dt = g_timeStep;
+
+		for ( let i=0; i<4; i++) {
+			g_sysTime = g_sysTime + dt;
+			phaseStep(0.5*dt);
+			kxStep(dt);
+			phaseStep(0.5*dt);
+		}
+		if (lossSW==1) lossEnergy(g_dampingFactor);
+	}
+
+	function kxStep( dt ) { //evolve dt
+		const nnx = g_NNx;
+		const bbRe = 2.0, bbIm = 4*g_dx*g_dx/dt;
+		const aaRe = -2.0, aaIm = 4*g_dx*g_dx/dt;
+		const aaAb = aaRe*aaRe + aaIm*aaIm;
+		for ( let i=1; i<nnx-1; i++) { //b-vector
+			g_bRe[i] = bbRe*g_phRe[i]-bbIm*g_phIm[i] - g_phRe[i+1] - g_phRe[i-1];
+			g_bIm[i] = bbRe*g_phIm[i]+bbIm*g_phRe[i] - g_phIm[i+1] - g_phIm[i-1];
+		}
+		g_uRe[1] = aaRe/aaAb; //ph(1)
+		g_uIm[1] = -aaIm/aaAb;
+		g_phRe[1] = g_bRe[1]*g_uRe[1] - g_bIm[1]*g_uIm[1];
+		g_phIm[1] = g_bIm[1]*g_uRe[1] + g_bRe[1]*g_uIm[1];
+		//forward elimination
+		for ( let i=2; i<nnx-1; i++) {
+			const auAb = (aaRe-g_uRe[i-1])*(aaRe-g_uRe[i-1])+(aaIm-g_uIm[i-1])*(aaIm-g_uIm[i-1]);
+			g_uRe[i] = (aaRe-g_uRe[i-1])/auAb;
+			g_uIm[i] = -(aaIm-g_uIm[i-1])/auAb;
+			g_phRe[i] = (g_bRe[i]-g_phRe[i-1])*g_uRe[i] - (g_bIm[i]-g_phIm[i-1])*g_uIm[i];
+			g_phIm[i] = (g_bRe[i]-g_phRe[i-1])*g_uIm[i] + (g_bIm[i]-g_phIm[i-1])*g_uRe[i];
+		}
+		//backward substitution
+		for ( let i=nnx-3; i>=1; i--) {
+			g_phRe[i] -= g_phRe[i+1]*g_uRe[i] - g_phIm[i+1]*g_uIm[i];
+			g_phIm[i] -= g_phRe[i+1]*g_uIm[i] + g_phIm[i+1]*g_uRe[i];
+		}
+	}
+
+	function phaseStep(hdt) { //evolve hdt=0.5*dt
+		const nnx = g_NNx;
+		for ( let i=1; i<nnx-1; i++) {
+			const th = hdt*g_vv[i];
+			const cs = Math.cos(th), sn = Math.sin(th);
+			const phr = g_phRe[i], phi = g_phIm[i];
+			g_phRe[i] =  cs*phr+sn*phi;
+			g_phIm[i] = -sn*phr+cs*phi;
+		}
+	}
+
+	function lossEnergy(damp) { // steepest descent method: psi_next = psi - damp*(psi|H-E|psi)
+		const nnx = g_NNx, h2 = 2.0*g_dx*g_dx;
+		const ee = energy();
+		for ( let i=1; i<nnx-1; i++) { // wrk = (psi(x)|-d^2/dx^2+V-ee|psi(x))
+			g_wrkRe[i] = -(g_phRe[i+1]+g_phRe[i-1]-2.0*g_phRe[i])/h2+(g_vv[i]-ee)*g_phRe[i];
+			g_wrkIm[i] = -(g_phIm[i+1]+g_phIm[i-1]-2.0*g_phIm[i])/h2+(g_vv[i]-ee)*g_phIm[i];
+		}
+		for ( let i=1; i<nnx-1; i++) { // ph = ph -damp*(psi(x)|-d^2/dx^2+V-ee|psi(x))
+			g_phRe[i] -= damp*g_wrkRe[i];
+			g_phIm[i] -= damp*g_wrkIm[i];
+		}
+		normalize();
+	}
+
+
+	// --------------------  utility  --------------------
+
+	function norm() {
+		const nnx = g_NNx, dx = g_dx;
+		let p = 0.0;
+		for ( let i=0; i<nnx; i++) {
+			p += (g_phRe[i]*g_phRe[i]+g_phIm[i]*g_phIm[i])*dx;
+		}
+		return p;
+	}
+
+	function normalize() {
+		const nnx = g_NNx, a = Math.sqrt(norm());
+		for ( let i=1; i<nnx-1; i++) {
+			g_phRe[i] = g_phRe[i]/a;
+			g_phIm[i] = g_phIm[i]/a;
+		}
+	}
+
+	function energy() {
+		return kineticEnergy() + potentialEnergy();
+	}
+
+	function kineticEnergy() { // (psi(x)|-d^2/dx^2|psi(x))
+		const nnx=g_NNx, dx = g_dx;
+		let s = 0.0;
+		for ( let i=1; i<nnx-1; i++) {
+			const hhphRe = (2.0*g_phRe[i]-g_phRe[i+1]-g_phRe[i-1])/(2.0*dx*dx);
+			const hhphIm = (2.0*g_phIm[i]-g_phIm[i+1]-g_phIm[i-1])/(2.0*dx*dx);
+			s += (g_phRe[i]*hhphRe + g_phIm[i]*hhphIm)*dx;
+		}
+		return s;
+	}
+
+	function potentialEnergy() { // (psi(x)|V(x)|psi(x))
+		const nnx = g_NNx, dx = g_dx;
+		let s = 0.0;
+		for ( let i=1; i<nnx-1; i++) {
+			s += g_vv[i]*(g_phRe[i]*g_phRe[i] + g_phIm[i]*g_phIm[i])*dx;
+		}
+		return s;
+	}
+
+
+	// --------------------  draw  --------------------
+
+	function draw( ctx ) {
+		const nnx=g_NNx, xp=0, yp=240, vmag=200.0;
+
+		//ctx.clearRect(0, 0, g_canvas.width, g_canvas.height);
+
+		drawV(ctx, xp,yp,vmag); //(xp,yp,vmag)
+		drawPsi2(ctx, xp,yp,vmag,2000); //(xp,yp,vmag,pmag)
+		drawWave(ctx, xp,yp,vmag,100); //(xp,yp,vmag,mag)
+
+		ctx.fillStyle = "rgb(240,240,240)"; //background color
+		ctx.fillRect(0, 330, 400, 70); //clear text area
+		ctx.fillStyle = "rgb(0, 0, 0)";
+		ctx.fillText("time="+(g_sysTime*g_auTime*1.0e15).toFixed(2)+"(fs)", 10, 354);
+		ctx.fillText("norm="+norm().toFixed(15), 160, 354);
+		ctx.fillText("kineticE="+(kineticEnergy()*g_au2eV).toFixed(3)+"(eV)", 10, 374);
+		ctx.fillText("potentialE="+(potentialEnergy()*g_au2eV).toFixed(3)+"(eV)", 200, 374);
+		ctx.fillText("totalE="+(energy()*g_au2eV).toFixed(3)+" (eV)", 10, 394);
+		ctx.fillText("x = 0.0 ... "+(nnx*g_dx*g_auLength*1.0e9).toFixed(2)+"(nm)", 200, 394);
+	}
+
+	function drawPsi2( ctx, xp, yp, vmag, pmag ) {
+		const nnx = g_NNx, dx = g_dx;
+		for ( let i=1; i<nnx-1; i++) {
+			const p2 = (g_phRe[i]*g_phRe[i] + g_phIm[i]*g_phIm[i])*dx;
+			if (p2*pmag>1) {
+				drawLine(ctx, i+xp,yp-g_vv[i]*vmag-1, i+xp, yp-g_vv[i]*vmag-p2*pmag, "#dd88dd");
+			}
+		}
+	}
+
+	function drawV( ctx, xp, yp, vmag ) {
+		const nnx = g_NNx;
+		ctx.strokeStyle = "rgb(0,250,0)";
+		ctx.beginPath();
+		for ( let i=0; i<nnx-1; i++) {
+			ctx.lineTo(i+xp,yp-g_vv[i]*vmag);
+		}
+		ctx.stroke();
+	}
+
+	function drawWave( ctx, xp, yp, vmag, mag ) {
+		const nnx=g_NNx, thInDegree = 15.0, deg = 180.0/Math.PI;
+		const snth = Math.sin(thInDegree/deg), csth = Math.cos(thInDegree/deg);
+		const te = kineticEnergy()+potentialEnergy();
+		for ( let i=0; i<nnx-1; i++) {
+			let ph0 = g_phRe[i]*mag, ph1 = g_phIm[i]*mag;
+			ctx.strokeStyle = (ph0*ph0+ph1*ph1>1.0e-4) ? "hsl("+(Math.atan2(ph1,ph0)*deg)+",100%,50%)" : "#ff0000";
+			ctx.beginPath();
+			ctx.moveTo(xp+(i+snth*ph1),yp-(ph0+csth*ph1)-te*vmag);
+			ph0 = g_phRe[i+1]*mag; ph1 = g_phIm[i+1]*mag;
+			ctx.lineTo(xp+(i+snth*ph1),yp-(ph0+csth*ph1)-te*vmag);
+			ctx.stroke();
+		}
+	}
+
+	function drawLine( ctx, x1, y1, x2, y2, color ) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:           setInitialCondition,    // setInitialCondition( theme )
+		evolve:         timeEvolution,          // timeEvolution( lossSW )
+		draw:           draw,                   // draw( ctx )
+
+		getAUinSI:		function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:    function() { return [ g_NNx, g_dx, g_timeStep ]; },
+		getNow:         function() { return [ g_sysTime, norm(), kineticEnergy(), potentialEnergy() ]; },
+		getTotalEnergy: function() { return kineticEnergy()+potentialEnergy(); },
+		getPsi:         function(i) { return [ g_phRe[i], g_phIm[i] ]; },
+		getPsiDensity:  function(i) { return ( g_phRe[i]*g_phRe[i] + g_phIm[i]*g_phIm[i] ); },
+		getVext:        function(i) { return g_vv[i]; },
+	};
+
+})(); // ====================  wavePacketQED1D end  ====================
+
+
+const tjsm002 = (function(){ // ====================  tjsm Module  ====================
+
+	const theModule = wavePacketQED1D;
+	const themeStr = ["0:in the box","1:parabolic potential","2:tunnel effect","3:step hill","higher step hill"];
+	
+	let v_theme = 1; // 1:parabolic potential
+	let v_lossSW = 0;
+	
+	let p_auLength, p_auTime, p_auEnergy, p_au2eV // <-- theModule.getAUinSI()
+	let p_nx, p_dx, p_dt; // <-- theModule.getSysParam()
+	let p_time, p_norm, p_kineticEnergy, p_potentialEnergy; // <-- theModule.getNow()
+	
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let dispMode =  0;
+	let dispModeChanged = true;
+	let viewHomeRequested = false;
+	let count = 0;
+	
+	// sizes in the threejs world
+	const xBoxSize = 400, yBoxSize = 400, zBoxSize = 400;
+	const x0 = xBoxSize/2.0, y0 = yBoxSize/2.0, z0 = zBoxSize/2.0;
+	let hh;
+	
+	// threejs scene object
+	let line_box;
+	let psiLine;
+	let vextLine;
+	let densityLine;
+	let cnvsprite;
+
+	// three.js , OrbitControls.js
+	const width = 500;
+	const height = 480;
+	const r_camera = 1050;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+	
+	// -------------------- lil-gui setup
+	
+	const uParam = {
+		theme: 'in parabollic V=k x^2',
+		themeMenu: [ 'in the box', 'in parabollic V=k x^2', 'tunnel effect', 'step hill', 'higher step hill' ],
+		lossON: false,
+		dispMode: 'threejs',
+		dispMenu: [ 'threejs', 'canvas2d' ],
+		reset: function() { resetFlag = 1; },
+		pause: false,
+		viewHome: function() { viewHomeRequested = true; }
+	};
+	
+	const gui = new GUI();
+	setupGUI();
+	
+	function setupGUI() {
+		gui.add( uParam, 'theme', uParam.themeMenu ).onChange( 
+			str => { v_theme = uParam.themeMenu.indexOf(str); resetFlag = 1; } );
+		
+		gui.add( uParam, 'lossON' ).name( 'loss ON' ).onChange( sw => { v_lossSW = (sw==true) ? 1 : 0; } );
+		
+		gui.add( uParam, 'dispMode', uParam.dispMenu ).onChange( 
+			str => { dispMode = uParam.dispMenu.indexOf(str); dispModeChanged = true; } );
+		
+		gui.add( uParam, 'reset' );
+		gui.add( uParam, 'pause' ).onChange( bool => { pauseFlag = ( bool ) ? 1 : 0; } );
+		gui.add( uParam, 'viewHome' ).name( 'camera: home view' );
+	}
+	
+	
+	// --------------------  main
+
+	function main() {
+		// constract renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+		
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, 0, r_camera);
+		controls = new OrbitControls(camera,renderer.domElement);
+		
+		constructScene();
+		animate();
+	}
+
+	function constructScene() {
+		let te = 0.0;
+		let points = [];
+		
+		// init QED1D 
+		theModule.init( v_theme );
+		[ p_auLength, p_auTime, p_auEnergy, p_au2eV ] = theModule.getAUinSI();
+		[ p_nx, p_dx, p_dt ] = theModule.getSysParam();
+		hh = xBoxSize/p_nx;
+		
+		// scene
+		scene = new THREE.Scene();
+ 
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xFFFFFF,0.8);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xFFFFFF, 0.6);
+		scene.add(light);
+		
+		
+		// Vext(x)
+		vextLine = m3js_colorLine( p_nx, xBoxSize );
+		scene.add( vextLine );
+		
+		// density(x)
+		densityLine = m3js_colorLine( p_nx, xBoxSize );
+		scene.add( densityLine );
+		
+		// psi(x)
+		psiLine = m3js_colorLine( p_nx, xBoxSize );
+		scene.add( psiLine );
+		
+		// line_box
+		{
+			const geometry = new THREE.BoxGeometry( xBoxSize, yBoxSize, zBoxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial( { 
+				color: 0x888844 } ) );
+			scene.add( line_box );
+		}
+		
+		// canvas sprite
+		//cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 540, 540, 400 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+		
+	}
+
+	// loop animation
+	function animate() {
+		
+		// select theme
+		if (resetFlag==1) {
+			resetFlag = 0;
+				
+			constructScene();
+			dispModeChanged = true;
+			count = 0;
+		}
+		
+		if ( viewHomeRequested ) {
+			camera.position.set(0, 0, r_camera);
+			viewHomeRequested = false;
+		}
+		
+		//  clear objects
+		if (dispModeChanged) {
+			dispModeChanged = false;
+			
+			line_box.visible = (dispMode==0) ? true : false;
+			vextLine.visible = false;
+			densityLine.visible = false;
+			psiLine.visible = false;
+			cnvsprite.visible = false;
+		}
+		
+		// PQM1D evolve
+		if (pauseFlag==0) {
+			theModule.evolve( v_lossSW );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( v_lossSW );
+		}
+		
+		
+		// threejs world update
+		if ( dispMode==0 ) {
+			const pmag = 200.0;
+			const vmag = 200.0;
+			const rmag = 1000.0;
+			const energy = vmag*theModule.getTotalEnergy();
+			let pRe,pIm;
+			// psi phase
+			// colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+			psiLine.update(
+				function(i) {
+					let pRe,pIm;
+					[ pRe, pIm ] = theModule.getPsi(i);
+					const dens = rmag*theModule.getPsiDensity(i);
+					let th = Math.floor(360.0 + Math.atan2(pIm,pRe)*180.0/Math.PI)%360;
+					return [ i*hh-x0, pmag*pRe+energy, pmag*pIm, (dens>0.1*hh) ? th : "#444444" ];
+				}
+			);
+			// Vext
+			vextLine.update(
+				function(i) {
+					const vv = vmag*theModule.getVext(i);
+					return [ i*hh-x0, vv, 0, "#00ff00" ];
+				}
+			);
+			// density
+			densityLine.update(
+				function(i) {
+					const dens = rmag*theModule.getPsiDensity(i);
+					const vv = vmag*theModule.getVext(i);
+					let col = (dens>0.5*hh) ? "#dd88dd" : "#00ff00";
+					return [ i*hh-x0, dens + vv, 0 , col ];
+				}
+			);
+			
+		}
+		
+		// sprite update
+		if ( dispMode==1 ) {
+			//cnvsprite.update( drawFunc )
+			cnvsprite.update(
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					theModule.draw( ctx );
+				}
+			);
+		}
+		
+		
+		// output to innerHTML
+		if (count % 20 == 0) {
+			let time, norm, kineticEnergy, potentialEnergy;
+			[ time, norm, kineticEnergy, potentialEnergy ] = theModule.getNow();
+			const energy = kineticEnergy + potentialEnergy
+			const realBoxSize = p_nx*p_dx;
+			let msg = 
+				"periodic box ="+realBoxSize+"(au) ~"+(realBoxSize*p_auLength*1.0e9).toFixed(2)+"(nm) "
+				+ ", time ="+time+"(au) ~"+(time*p_auTime*1.0e15).toFixed(2)+"(fs)<br>"
+				+ "norm ="+norm.toFixed(16)
+				+ ", total energy(au) ="+energy.toFixed(4)+"<br>"
+				+ "kinetic energy(au) ="+kineticEnergy.toFixed(4)
+				+ ", potential energy(au)="+potentialEnergy.toFixed(4)+"<br>";
+			document.getElementById("text_caption").innerHTML = msg;
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_colorLine function  ------------------------------
+	//
+	//    ver 0.0.0  2022.09.19 created, last updated on 2022.12.19
+	//
+	//  colorLine = m3js_colorLine( p_nx, xBoxSize )
+	//     p_nx: number of x-division
+	//     xBoxSize: x-box size in the threejs-world
+	//  
+	//  scene.add( colorLine );
+	//
+	//  colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+	//    x_y_z_color_function: function(i) { ... return [ x, y, z, color ]; }
+	//      (x,y,z): position, 
+	//      color: number: hue, 0...359
+	//             string: shch as 'red', '#ff0000', 'rgb(255,0,0)', 'hsl(0,100%,50%)'
+	//
+	//  colorLine.visible = false
+	//
+	
+	function m3js_colorLine( p_nx, xBoxSize ) {
+		const nx = p_nx;
+		const hh = xBoxSize/p_nx;
+		let colorLine;
+		
+ 		const geometry = new THREE.BufferGeometry();
+ 		const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+		const positions = new Float32Array( nx * 3 );
+		const colors = new Float32Array( nx * 3 );
+		geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+		geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+		geometry.setDrawRange( 0, nx );
+    	colorLine = new THREE.Line(geometry,material);
+		
+		colorLine.update = colorLine_update;
+		
+		return colorLine;
+		
+		
+		function colorLine_update( x_y_z_color_function ) {
+			const line = colorLine;
+			const positions = line.geometry.attributes.position.array;
+			const colors = line.geometry.attributes.color.array;
+			for (let i=0; i<nx; i++) {
+				let x, y, z, col;
+				[ x, y, z, col ] = x_y_z_color_function(i);
+				positions[i*3]   = x;
+				positions[i*3+1] = y;
+				positions[i*3+2] = z;
+				if ( col==undefined ) col = 'yellow';
+				const colorStr = ( typeof(col) == 'string' ) ? col : `hsl(${col},100%,50%)`;
+				const colr = new THREE.Color( colorStr );
+				colors[i*3]   = colr.r;
+				colors[i*3+1] = colr.g;
+				colors[i*3+2] = colr.b;
+			}
+			line.geometry.attributes.position.needsUpdate = true;
+			line.geometry.attributes.color.needsUpdate = true;
+			colorLine.visible = true;
+		}
+	
+	}
+	
+	// -----------------------  m3js_colorLine function end
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+	}
+
+})(); // ====================  tjsm002 module end  ====================
+
+
+// event
+const tjsm = tjsm002;
+window.addEventListener('load', tjsm.main );
+
+
+</script>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+</head>
+
+<body>
+<p>[tm002] electron wave packet - Quantum Electron Dynamics 1D</p>
+<canvas id="myCanvas" width="500" height="480" ></canvas>
+<br>
+
+ <span style="color:#888888">rainbow - wave function</span>,
+ <span style="color:#dd88dd">purple - density</span>,
+ <span style="color:#00ff00">green - potential</span>
+ <br>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+</body>
+</html>

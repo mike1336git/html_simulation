@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>tm001_ArMD2D</title>
+
+<style type="text/css">
+  body { color:#000000; background-color:#fff8dd; }
+</style>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+<!--
+<script type="importmap">
+{
+  "imports": {
+    "three": "../libm/three.module.js",
+    "orb": "../libm/OrbitControls.js",
+    "lil-gui": "../libm/lil-gui.module.min.js"
+  }
+}
+</script>
+-->
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+    "orb": "https://unpkg.com/three@0.147.0/examples/jsm/controls/OrbitControls.js",
+    "lil-gui": "https://unpkg.com/three@0.147.0/examples/jsm/libs/lil-gui.module.min.js"
+  }
+}
+</script>
+
+
+<script type="module">
+
+import * as THREE from 'three';
+import { OrbitControls } from 'orb';
+import { GUI } from 'lil-gui';
+
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tm001_ArMD2D
+//    Copyright(C) 2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2023.01.19 created, last updated on 2023.01.24
+//    ver 0.0.1  2023.10.04 v1, last updated on 2023.10.04
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//   Ar - molecular dynamics 2D
+//
+//    time evolution: velocity Verlet Algorithm
+//      (1) vi = vi + (Fi/mi)*(0.5dt)
+//      (2) ri = ri + vi*dt
+//      (3) calculation Fi <- {r1,r2,...,rn} Fi=sum(Fij,j=1 to n,j!=i), Fij=F(ri-rj)
+//      (4) vi = vi + (Fi/mi)*(0.5dt)
+//      goto (1)
+//
+//    potential: Lennard-Jones V(r) = 4.0*epsilon*((sigma/r)^12-(sigma/r)^6)
+//    force: F(r) = -dV(r)/dr = 24.0*epsilon*r6*(2.0*r6-1.0)/r, r6=(sigma/r)^6
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+
+const ArMD2D = (function(){ // ====================  ArMD2D Module  ====================
+
+	const g_AMU = 1.66053904e-27;   // (kg) atomic mass unit
+	const g_kB = 1.380649e-23;      // (J/K) Boltzmann's constant
+	const g_nMax = 1000;            // array max
+
+	let g_nParticles = 300;         // number of particles
+	let g_sysTime = 0.0;            // (s) system time
+	let g_timeStep = 5.0e-15;       // (s) time step dt
+	let g_xMax = 8.0E-9;            // (m) x-box size
+	let g_yMax = 8.0E-9;            // (m) y-box size
+	let g_kineticEnergy = 0.0;      // (J) total kinetic energy
+	let g_potentialEnergy = 0.0;    // (J) total potential energy
+
+	let g_xBoxSize = 480;           // in pixel
+	let g_yBoxSize = 400;           // in pixel
+	let g_yTextSize = 80;           // in pixel
+
+	const g_xx = dim1( g_nMax );    // (m) x-component of i-th particle position
+	const g_yy = dim1( g_nMax );    // (m) y-component of i-th particle position
+	const g_vx = dim1( g_nMax );    // (m/s) x-component of i-th particle velocity
+	const g_vy = dim1( g_nMax );    // (m/s) y-component of i-th particle velocity
+	const g_ffx = dim1( g_nMax );   // (N) x-component of total force applied i-th particle
+	const g_ffy = dim1( g_nMax );   // (N) y-component of total force applied i-th particle
+
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+
+	// ----- material data
+
+	const g_mass = 39.95*g_AMU;	 // (kg) mass of Ar
+	const g_sigma = 3.418e-10;	  // (m) Lennard-Jones potential sigma for Ar 
+	const g_epsilon = 1.711e-21;	// (J) Lennard-Jones potential epsilon for Ar
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition( nn, BoxSizeInNM, contTemp ) {
+
+		g_sysTime = 0.0;
+		g_nParticles = nn;
+		g_xMax = BoxSizeInNM*1.0e-9;
+		g_yMax = BoxSizeInNM*1.0e-9;
+		g_nParticles = setGas(nn);
+		ajustVelocity(contTemp);
+	}
+
+	function setGas( nn ) {
+		const sigma = g_sigma;
+		const rNear2=1.2*sigma*sigma;
+		let nParticles = nn;
+		for (let j=0; j<nn; j++) {
+			let i;
+			let count = 0;
+			do {
+				g_xx[j] = (g_xMax-1.2*sigma)*Math.random() + 0.6*sigma;
+				g_yy[j] = (g_yMax-1.2*sigma)*Math.random() + 0.6*sigma;
+				for (i=0; i<j; i++) {
+					const r2 = (g_xx[i]-g_xx[j])*(g_xx[i]-g_xx[j])+(g_yy[i]-g_yy[j])*(g_yy[i]-g_yy[j]);
+					if (r2 < rNear2) break;
+				}
+				count = count + 1;
+				if (count>1000) break;
+			} while (i<j);
+			if (count>1000) {
+				nParticles = j - 1;
+				break;
+			}
+		}
+		for (let i=0; i<nParticles; i++) {
+			g_vx[i] = 200.0*normalRandom3();
+			g_vy[i] = 200.0*normalRandom3();
+			g_ffx[i] = 0.0;
+			g_ffy[i] = 0.0;
+		}
+		return nParticles;
+	}
+
+	// normal distributed random number: -3.0 <= normalRandom3() < 3.0
+	function normalRandom3() {
+		return (Math.random()+Math.random()+Math.random()+Math.random()+Math.random()+Math.random()-3.0);
+	}
+
+
+	// --------------------  time evolution  --------------------
+
+	function timeEvolution( nCalc, tempMode, contTemp ) {
+		if ( tempMode==1 ) ajustVelocity( contTemp );
+		for (let i=0; i<nCalc; i++) {
+			g_sysTime += g_timeStep;
+			moveParticles(g_timeStep);
+		}
+	}
+
+	function moveParticles( dt ) {
+		const nn = g_nParticles, a = 0.5*dt/g_mass;
+		for (let i=0; i<nn; i++) {
+			g_vx[i] += a*g_ffx[i];
+			g_vy[i] += a*g_ffy[i];
+			g_xx[i] += g_vx[i]*dt;
+			g_yy[i] += g_vy[i]*dt;
+		}
+		calcForce();
+		for (let i=0; i<nn; i++) {
+			g_vx[i] += a*g_ffx[i];
+			g_vy[i] += a*g_ffy[i];
+		}
+		g_kineticEnergy = 0.0;
+		for (let i=0; i<nn; i++) {
+			g_kineticEnergy += 0.5*g_mass*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
+		}
+	}
+
+	function calcForce() {
+		const nn = g_nParticles, s05=0.5*g_sigma;
+		g_potentialEnergy = 0.0;
+		for (let i=0; i<nn; i++) {
+			g_ffx[i]=0; g_ffy[i]=0;
+		}
+		for (let i=0; i<nn; i++) {
+			for (let j=i+1; j<nn; j++) {
+				const xij=g_xx[i]-g_xx[j], yij=g_yy[i]-g_yy[j];
+				const r = Math.sqrt(xij*xij+yij*yij);
+				// calc. L-J force and potential
+				const ri = (g_sigma/r);
+				const r6 =ri*ri*ri*ri*ri*ri;
+				// V(r) = 4.0*epsilon*((sigma/r)^12-(sigma/r)^6)
+				g_potentialEnergy += 4.0*g_epsilon*r6*(r6-1.0);
+				// F(r) = 24.0*epsilon*r6*(2.0*r6-1.0)/r, r6=(sigma/r)^6
+				const f = 24.0*g_epsilon*r6*(2.0*r6-1.0)/r;
+
+				const fxij = f*xij/r, fyij = f*yij/r;
+				g_ffx[i] += fxij;
+				g_ffy[i] += fyij;
+				g_ffx[j] -= fxij;
+				g_ffy[j] -= fyij;
+			}
+		}
+		for (let i=0; i<nn; i++) {
+			g_ffx[i] += boundaryForce(g_xx[i]+s05) + boundaryForce(g_xx[i]-g_xMax-s05);
+			g_ffy[i] += boundaryForce(g_yy[i]+s05) + boundaryForce(g_yy[i]-g_yMax-s05);
+		}
+	}
+
+	function boundaryForce( r ) { // boundary:L-J type; epsilon = 0.5*epsilonOfAr, sigma = sigmaOfAr
+		const ri = (g_sigma/r);
+		const r6 = ri*ri*ri*ri*ri*ri;
+		g_potentialEnergy += 4.0*0.5*g_epsilon*r6*(r6-1.0);
+		return (24.0*0.5*g_epsilon*r6*(2.0*r6-1.0)/r);
+	}
+
+
+	// --------------------  utility  --------------------
+
+	function systemTemperature() {
+		const nn = g_nParticles;
+		let ek= 0.0; //kinetic energy (J)
+		for (let i=0; i<nn; i++) {
+			ek = ek + 0.5*g_mass*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
+		}
+		return ek/(nn*g_kB); // for 2D
+	}
+
+	function ajustVelocity(temp) {
+		const nn = g_nParticles;
+		const a = Math.sqrt(temp/systemTemperature());
+		for (let i=0; i<nn; i++) {
+			g_vx[i] = a*g_vx[i];
+			g_vy[i] = a*g_vy[i];
+		}
+	}
+
+
+	//--------------------  draw  --------------------
+
+	function draw( ctx ) {
+		const boxSize=400, px=10, py=10, pCaption=410, sc = boxSize/g_xMax;
+
+		ctx.fillStyle = "rgb(125,125,125)"; //background color
+		ctx.fillRect(px, py, boxSize, boxSize); //clear box
+
+		drawBalls( ctx, px, py, sc );
+
+		// caption
+		ctx.fillStyle = "rgb(0, 0, 0)";
+		ctx.fillText("time = "+(g_sysTime*1.0e12).toFixed(1)+" (ps)", 10, pCaption+24);
+		ctx.fillText("Temp ="+systemTemperature().toFixed(1)+" (k)", 200, pCaption+24);
+		ctx.fillText("Ar, N = "+g_nParticles, 10, pCaption+44);
+		ctx.fillText("Energy = "+(g_kineticEnergy+g_potentialEnergy).toExponential(4)+" (J)", 200, pCaption+44);
+		ctx.fillText("Box = "+(g_xMax*1.0e9).toFixed(1)+"x"+(g_yMax*1.0e9).toFixed(1)+" (nm)", 10, pCaption+64);
+	}
+
+	function drawBalls( ctx, px, py, sc ) {
+		const nn = g_nParticles, r = 0.5*g_sigma, twoPi = 2.0*Math.PI;
+		ctx.fillStyle = "rgb(0, 250, 0)";
+		for (let i=0; i<nn; i++) {
+			ctx.beginPath();
+			ctx.arc(g_xx[i]*sc+px, (g_yMax-g_yy[i])*sc+py, r*sc, 0.0, twoPi, false);
+			ctx.fill();
+		}
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:           setInitialCondition,    // setInitialCondition( nn, BoxSizeInNM, contTemp )
+		evolve:         timeEvolution,          // timeEvolution( nCalc, tempMode, contTemp )
+		draw:           draw,                   // draw(ctx)
+
+		setTemp:        ajustVelocity,          // ajustVelocity( contTemp )
+
+		getSysParam:    function() { return [ g_nParticles, g_timeStep, g_xMax, g_yMax ]; },
+		getNow:         function() { return [ g_sysTime, systemTemperature(), g_kineticEnergy, g_potentialEnergy ]; },
+		getArData:      function() { return [ g_mass, g_sigma, g_epsilon, "Ar", 0xaadd00 ]; },
+		getPosition:    function(i) { return [ g_xx[i], g_yy[i] ]; },
+		getVelocity:    function(i) { return [ g_vx[i], g_vy[i] ]; },
+		getForce:       function(i) { return [ g_ffx[i], g_ffy[i] ]; },
+	};
+
+})(); // ====================  ArMD2D end  ====================
+
+
+const tjsm001 = (function(){ // ====================  tjsm Module  ====================
+
+	// theModule.init( v_nn, v_boxSizeInNM, v_contTemp )
+	// theModule.evolve( v_nCalc, v_tempMode, v_contTemp )
+	// theModule.draw( ctx )
+	
+	const theModule = ArMD2D;
+	let v_nn = 100;				// number of molecules
+	let v_boxSizeInNM = 8.0;	//(nm)
+	let v_contTemp = 300.0;		// (K) controled temperature
+	let v_tempMode = 0;			// 0: adiabatic, 1: controlled
+	let v_nCalc = 20;
+	
+	let p_mass, p_sigma, p_epsilon, p_molecStr, p_molecColor;	// <-- theModule.getArData()
+	let p_nn, p_dt, p_xMax, p_yMax; // <-- theModule.getSysParam()
+	let p_time, p_temp, p_kineticEnergy, p_potentialEnergy; // <-- theModule.getNow();
+
+	let nTimes = 2;
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let viewHomeRequested = false;
+	let dispMode = 0;
+	let dispModeChanged = true;
+	let count = 0;
+	
+	// sizes in the threejs world
+	const xBoxSize = 600;
+	let yBoxSize, zBoxSize, scale, x0, y0, z0;
+
+	// threejs object in the scene
+	let balls;
+	let arrows;
+	let vpoints;
+	let line_box;
+	let axis;
+	let cnvsprite;
+
+	// three.js , OrbitControls.js
+	const width = 500;
+	const height = 480;
+	const r_camera = 1200;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+	
+	// -------------------- lil-gui setup
+	
+	const uParam = {
+		theme: 'Ar',
+		themeMenu: [ 'Ar' ],
+		tempMode: 0,
+		tempModeMenu: { adiabatic: 0, controlled: 1 },
+		contTemp: 300,
+		nCalc: 2,
+		nCalcMenu: [ 1, 2, 3, 4 ],
+		dispMode: 'balls',
+		dispMenu: [ 'balls', 'ball + velocity', 'velocity space', 'canvas2d balls' ],
+		reset: function() { resetFlag = 1; },
+		pause: false,
+		viewHome: function() { viewHomeRequested = true; }
+	};
+	
+	const gui = new GUI();
+	setupGUI();
+	
+	function setupGUI() {
+		gui.add( uParam, 'tempMode', uParam.tempModeMenu ).onChange( v => { v_tempMode = v; } );
+	
+		gui.add( uParam, 'contTemp', 10, 600, 1 ).name( 'controlled temp.' ).onChange( v => { v_contTemp = v; } );
+		
+		gui.add( uParam, 'nCalc', uParam.nCalcMenu ).name( 'ncalc / frame' ).onChange( v => { nTimes = v; } );
+		
+		gui.add( uParam, 'dispMode', uParam.dispMenu ).onChange( 
+			str => { dispMode = uParam.dispMenu.indexOf(str); dispModeChanged = true; } );
+	
+		gui.add( uParam, 'reset' );
+		gui.add( uParam, 'pause' ).onChange( bool => { pauseFlag = ( bool ) ? 1 : 0; } );
+		gui.add( uParam, 'viewHome' ).name( 'camera: home view' );
+	}
+
+
+	// --------------------  main
+
+	function main() {
+		// constract renderer
+		renderer = new THREE.WebGLRenderer( { canvas: document.querySelector('#myCanvas'), } );
+		renderer.setSize(width, height);
+
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, 0, r_camera);
+		controls = new OrbitControls(camera,renderer.domElement); // lib/OrbitControls.js
+		
+		constructScene();
+		animate();
+	}
+
+	function constructScene() {
+
+		// theModule.init( v_nn, v_boxSizeInNM, v_contTemp )
+		theModule.init( v_nn, v_boxSizeInNM, v_contTemp );
+		[ p_mass, p_sigma, p_epsilon, p_molecStr, p_molecColor ] = theModule.getArData();
+		[ p_nn, p_dt, p_xMax, p_yMax ] = theModule.getSysParam();
+		[ p_time, p_temp, p_kineticEnergy, p_potentialEnergy ] = theModule.getNow();
+		scale = xBoxSize/p_xMax;
+		yBoxSize = p_yMax*scale;
+		zBoxSize = p_sigma*scale+2
+		x0 = xBoxSize/2;
+		y0 = yBoxSize/2;
+		z0 = 0;
+
+		// scene
+		scene = new THREE.Scene();
+		
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xFFFFFF,0.8);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xFFFFFF, 0.6);
+		scene.add(light);
+		
+		
+		// balls
+		// spheres = m3js_spheres( p_nn, x_y_z_r_material_func )
+		balls = m3js_spheres( p_nn,
+			function(i) { // x_y_z_r_material_func : (i) --> [ x, y, z, r, [material] ]
+				let x, y;
+				[ x, y ] = theModule.getPosition(i);
+				const r = 0.5*p_sigma*scale;
+				const material = new THREE.MeshStandardMaterial({ color:p_molecColor, opacity:0.8, transparent:true });
+				return [ x*scale-x0, y*scale-y0, 0, r, material ];
+			}
+		);
+		scene.add( balls );
+		
+		// velocity space points
+		// spheres = m3js_spheres( p_nn, x_y_z_r_material_func )
+		vpoints = m3js_spheres( p_nn,
+			function(i) { // x_y_z_r_material_func : (i) --> [ x, y, z, r, [material] ]
+				let vx, vy, vz, mag = 0.25;
+				[ vx, vy, vz ] = theModule.getVelocity(i);
+				const r = 3.0;
+				const material = new THREE.MeshStandardMaterial({ color:p_molecColor, opacity:0.8, transparent:true });
+				return [ vx*mag, vy*mag, 0, r, material ];
+			}
+		);
+		scene.add( vpoints );
+		
+		//  add arrows
+		arrows = m3js_arrows( p_nn, "#ffaaaa" );
+		scene.add( arrows );
+
+		
+		// add line_box
+		{
+			const geometry = new THREE.BoxGeometry( xBoxSize, yBoxSize, zBoxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial({ color: 0x666644 }) );
+			scene.add( line_box );
+		}
+		
+		// axis
+		axis = m3js_xyzAxis( xBoxSize, yBoxSize, zBoxSize );
+		scene.add( axis );
+		
+		// canvas sprite
+		//cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 600, 600, 480 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+	}
+
+	// loop animation
+	function animate() {
+		
+		if (resetFlag==1) {
+			resetFlag = 0;
+				
+			constructScene();
+			dispModeChanged = true;
+			count = 0;
+		}
+		
+		if ( viewHomeRequested ) {
+			const r_camera = 1200.0;
+			camera.position.set(0, 0, r_camera);
+			viewHomeRequested = false;
+		}
+		
+		if ( dispModeChanged ) {
+			dispModeChanged = false;
+
+			line_box.visible = ( dispMode<=1 ) ? true : false;
+			axis.visible = false;
+			balls.visible = false;
+			arrows.visible = false;
+			vpoints.visible = false;
+			cnvsprite.visible = false;
+			
+			if (dispMode==0) {
+				balls.setOpacity( 0.8 );
+			} else if (dispMode==1) {
+				balls.setOpacity( 0.5 );
+			}
+		}
+		
+		// evolve 
+		if ( pauseFlag==0 ) {
+			// theModule.evolve( v_nCalc, v_tempMode, v_contTemp )
+			theModule.evolve( nTimes*v_nCalc, v_tempMode, v_contTemp );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( v_nCalc, v_tempMode, v_contTemp );
+		}
+		[ p_time, p_temp, p_kineticEnergy, p_potentialEnergy ] = theModule.getNow();
+		
+		
+		// balls
+		if ( dispMode==0 || dispMode==1 ) {
+			// spheres.update( x_y_z_r_col_func );   x_y_z_r_col_func: (i) --> [ x, y, z, [r], [col] ]
+			balls.update( 
+				function(i) {
+					let x, y;
+					[ x, y ] = theModule.getPosition(i);
+					return [ x*scale-x0, y*scale-y0, 0 ]; // r,col : default
+				}
+			);
+		}
+		
+		// velocity
+		if ( dispMode==1) { 
+			//arrows.update( px_py_pz_vx_vy_vz_col_func );
+			const tt = 400.0*scale*p_dt; //0.1;
+			arrows.update(
+				function(i) { // (i) -->  [px, py, pz, vx, vy, vz, [col] ];
+					let xi, yi, vxi, vyi;
+					[ xi, yi ] = theModule.getPosition(i);
+					[ vxi, vyi ] = theModule.getVelocity(i);
+					return [ xi*scale-x0, yi*scale-y0, 0, vxi*tt, vyi*tt, 0, ]; // col = default color
+				}
+			);
+		}
+		
+		// velocity space points
+		if ( dispMode==2 ) {
+			axis.visible = true;
+			
+			const mag = 0.25;
+			// spheres.update( x_y_z_r_col_func ); , x_y_z_r_col_func: (i) --> [ x, y, z, [r], [col] ]
+			vpoints.update(
+				function(i) {
+					let vx, vy;
+					[ vx, vy ] = theModule.getVelocity(i);
+					return [ vx*mag, vy*mag, 0  ]; // r,col : default
+				}
+			);
+		}
+		
+		// sprite update
+		if ( dispMode==3 ) {
+			//cnvsprite.update( drawFunc )
+			cnvsprite.update(
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					theModule.draw( ctx );
+				}
+			);
+		}
+		
+		
+		// output to innerHTML
+		if (count % 20 == 0) {
+			const totalEnergy = p_kineticEnergy + p_potentialEnergy;
+			const msg = 
+				"time(ps)="+(p_time*1.0e12).toFixed(1)
+				+ " Temp(K)="+p_temp.toFixed(1)
+				+ ", total energy(J)="+totalEnergy.toExponential(4)+"<br>"
+				+ "kinetic energy(J)="+p_kineticEnergy.toExponential(4)
+				+ ", potential energy(J)="+p_potentialEnergy.toExponential(4)+"<br>";
+			document.getElementById("text_caption").innerHTML = msg;
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_xyzAxis function  ---------------------------
+	//
+	//    ver 0.0.0  2022.10.25 created, last updated on 2022.12.19
+	//
+	//  axis = m3js_xyzAxis( xBoxSize, yBoxSize, zBoxSize );
+	//  scene.add( axis );
+	//
+	//  axis.visible = true | false;
+	//
+	
+	function m3js_xyzAxis( xBoxSize, yBoxSize, zBoxSize ) {
+		const lineData = [
+			[  0,  0,  0,  1,  0,  0, "#ff8888" ], [  0,  0,  0, -1,  0,  0, "#990000" ],
+			[  0,  0,  0,  0,  1,  0, "#88ff88" ], [  0,  0,  0,  0, -1,  0, "#009900" ],
+			[  0,  0,  0,  0,  0,  1, "#8888ff" ], [  0,  0,  0,  0,  0, -1, "#4444cc" ]
+		];
+		const nn = lineData.length
+		const axis = new THREE.Group();
+		axis.array = [];
+		
+		for (let i=0; i<nn; i++) {
+			const geometry = new THREE.BufferGeometry();
+			const positions = new Float32Array( 2 * 3 ); // MAX_POINTS = 2,  3 vertices per point
+			geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+			geometry.setDrawRange( 0, 2 );
+			const material = new THREE.LineBasicMaterial( { color:"#888888" } );
+			const line = new THREE.Line( geometry, material );
+			axis.array[i] = line;
+    		axis.add( axis.array[i] );
+		}
+		for (let i=0; i<nn; i++) {
+			const line = axis.array[i];
+			const positions = line.geometry.attributes.position.array;
+			let x0, y0, z0, x1, y1, z1, col;
+			[ x0, y0, z0, x1, y1, z1, col ] = lineData[i];
+			positions[0] = x0*xBoxSize/2.0; // point 0
+			positions[1] = y0*yBoxSize/2.0;
+			positions[2] = z0*zBoxSize/2.0;
+			positions[3] = x1*xBoxSize/2.0; // point 1
+			positions[4] = y1*yBoxSize/2.0;
+			positions[5] = z1*zBoxSize/2.0;
+			line.visible = true;
+			line.material.color = new THREE.Color( col );
+			line.geometry.attributes.position.needsUpdate = true;
+		}
+		axis.visible = true;
+		return axis;
+	}
+	
+	// -----------------------  m3js_xyzAxis function end
+	
+	
+	// -----------------------  m3js_spheres function  ---------------------------
+	//
+	//    ver 0.0.0  2022.10.26 created, last updated on 2022.12.20
+	//
+	//  spheres = m3js_spheres( p_nn, x_y_z_r_material_func );
+	//     p_nn: number of arrows
+	//     x_y_z_r_material_func: (i) --> [ x, y, z, r, [material] ]
+	//        x,y,z: i-th sphere position in the threejs world
+	//        r: i-th sphere radius in the threejs world
+	//        material: such as = new THREE.MeshStandardMaterial({ color:"#ff0000", opacity:1.0, transparent:true });
+	//  scene.add( spheres );
+	//
+	//  spheres.update( x_y_z_rmag_col_func ); // x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+	//     x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+	//        x,y,z: i-th sphere position in the threejs world
+	//        rmag: i-th sphere radius magnified ratio: 0.0 ... 1.0
+	//        col: such as "#ff0000" or "red" or "rgb(255,0,0)" or 0xff0000 or ...
+	//
+	//  spheres.setOpacity( opacity );
+	//     opacity: 0.0 (transparent) ..... 1.0 (opaque)
+	//
+	//  spheres.visible = true | false;
+	//
+	
+	function m3js_spheres( p_nn, x_y_z_r_material_func ) {
+		const nn = p_nn;
+		const defaultMaterial = new THREE.MeshStandardMaterial({ color:"#ff0000", opacity:1.0, transparent:true });
+		const spheres = new THREE.Group();
+		spheres.array = [];
+		
+		for (let i=0; i<nn; i++) {
+			let x, y, z, r, mater;
+			[ x, y, z, r, mater ] = x_y_z_r_material_func(i);
+			const geometry = new THREE.SphereGeometry(r, 18, 10);
+			const material = ( mater != undefined ) ? mater : defaultMaterial;
+			spheres.array[i] = new THREE.Mesh(geometry, material);
+			spheres.array[i].position.set(x, y, z);
+			spheres.array[i].visible = true;
+			spheres.add( spheres.array[i] );
+		}
+		
+		spheres.update = spheresUpdate;
+		spheres.setOpacity = setSheresOpacity;
+		return spheres;
+		
+		
+		function spheresUpdate( x_y_z_rmag_col_func ) {
+			for (let i=0; i<nn; i++) {
+				const vec = x_y_z_rmag_col_func(i);
+				if ( !Array.isArray(vec) ) {
+					spheres.array[i].visible = false;
+					continue;
+				}
+				let x, y, z, rmag, col;
+				[ x, y, z, rmag, col ] = vec;
+				spheres.array[i].position.set(x, y, z);
+				if ( rmag != undefined ) spheres.array[i].scale.set(rmag,rmag,rmag);
+				if ( col != undefined ) spheres.array[i].material.color = new THREE.Color( col );
+				spheres.array[i].visible = true;
+			}
+			spheres.visible = true;
+		}
+		
+		function setSheresOpacity( opa ) {
+			for (let i=0; i<nn; i++) {
+				spheres.array[i].material.opacity = opa;
+			}
+		}
+	}
+	
+	// -----------------------  m3js_spheres function end
+	
+	
+	// -----------------------  m3js_arrows function  ---------------------------
+	//
+	//    ver 0.0.0  2022.10.25 created, last updated on 2022.12.19
+	//
+	//  arrows = m3js_arrows( p_nn, [defaultColor] );
+	//     nn: number of arrows
+	//     defaultColor: default color of arrows
+	//  scene.add( arrows );
+	//
+	//  arrows.update( x_y_z_vx_vy_vz_col_func );
+	//     x_y_z_vx_vy_vz_col_func: (i) --> [px, py, pz, vx, vy, vz, [col] ]
+	//        x,y,z: i-th arrow starting point in the threejs world
+	//        vx,vy,vz: i-th arrow vector (vx, vy, vz) in the threejs world
+	//        col: such as "#ff0000" or "red" or "rgb(255,0,0)" or 0xff0000 or ...
+	//
+	//  arrows.visible = true | false;
+	//
+	
+	function m3js_arrows( p_nn, defaultColor ) {
+		const nn = p_nn;
+		const dcol = ( defaultColor==undefined ) ? "#ff0000" : defaultColor;
+		const lines = new THREE.Group();
+		lines.array = [];
+		
+		for (let i=0; i<nn; i++) {
+			const geometry = new THREE.BufferGeometry();
+			const positions = new Float32Array( 2 * 3 ); // MAX_POINTS = 2,  3 vertices per point
+			geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+			geometry.setDrawRange( 0, 2 );
+			const material = new THREE.LineBasicMaterial( { color: dcol } );
+			const line = new THREE.Line( geometry, material );
+			line.visible = false;
+			lines.array[i] = line;
+    		lines.add( lines.array[i] );
+		}
+		
+		lines.update = linesUpdate;
+		
+		return lines;
+		
+		
+		function linesUpdate( x_y_z_vx_vy_vz_col_func ) {
+			for (let i=0; i<nn; i++) {
+				const line = lines.array[i];
+				const positions = line.geometry.attributes.position.array;
+				const vec = x_y_z_vx_vy_vz_col_func(i);
+				if ( !Array.isArray(vec) ) {
+					line.visible = false;
+					continue;
+				}
+				
+				let x, y, z, vx, vy, vz, col;
+				[ x, y, z, vx, vy, vz, col ] = vec;
+				if ( col==undefined ) col = dcol;
+				
+				positions[0] = x; // point 0
+				positions[1] = y;
+				positions[2] = z;
+				positions[3] = x + vx; // point 1
+				positions[4] = y + vy;
+				positions[5] = z + vz;
+				line.visible = true;
+				line.material.color = new THREE.Color( col );
+				line.geometry.attributes.position.needsUpdate = true;
+			}
+			lines.visible = true;
+		}
+	}
+	
+	// -----------------------  m3js_arrows function end
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+	
+	//--------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+	};
+
+})(); // ====================  tjsm001 module end  ====================
+
+
+// event
+const tjsm = tjsm001;
+window.addEventListener('load', tjsm.main );
+
+
+</script>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+</head>
+
+<body>
+<p>[tm001] Ar in the box - molecular dynamics 2D</p>
+<canvas id="myCanvas" width="500" height="480" ></canvas>
+<br>
+
+<hr width="500" align="left" color="#a0a0a0">
+Ar, N=100, box=8.0x8.0(nm), boiling point of Ar: 87.3K (@ 1 atm)<br>
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+</body>
+</html>
+
