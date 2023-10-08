@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>tm008_harmonicsSD1D</title>
+
+<style type="text/css">
+  body { color:#000000; background-color:#fff8dd; }
+</style>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+<!--
+<script type="importmap">
+{
+  "imports": {
+    "three": "../libm/three.module.js",
+    "orb": "../libm/OrbitControls.js",
+    "lil-gui": "../libm/lil-gui.module.min.js"
+  }
+}
+</script>
+-->
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+    "orb": "https://unpkg.com/three@0.147.0/examples/jsm/controls/OrbitControls.js",
+    "lil-gui": "https://unpkg.com/three@0.147.0/examples/jsm/libs/lil-gui.module.min.js"
+  }
+}
+</script>
+
+
+<script type="module">
+
+import * as THREE from 'three';
+import { OrbitControls } from 'orb';
+import { GUI } from 'lil-gui';
+
+
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tm008_harmonicsSD1D
+//    Copyright(C) 2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2023.01.21 created, last updated on 2023.01.24
+//    ver 0.0.1  2023.10.08 v1, last updated on 2023.10.08
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  steepest descent method 1D -- solve time-independent schroedinger equation
+//
+//  system Hamiltonian: H = -delta/2 + V(r) , delta r = div grad r
+//  eigen energy set { Ei }, eigen function set { |i> }
+//
+//  procedure : successive approximation
+//    (i) trial function set { |0>,|1>,..,|i>,.. }
+//    (2) energy of |i> : ei = <i|H|i>/<i|i>
+//    (3) steepest gradient direction (H-ei)|i>
+//    (4) next generation : |i(next)> = |i> - dampingFactor*(H-ei)|i>
+//    (5) orthogonalization { |0>,|1>,..,|i>,.. }  (Gram-Schmidt)
+//    (6) sort state (It is not always necessary)
+//    goto (2)
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const harmonicsSD1D = (function(){ //========================  harmonicsSD1D Module  ===============================
+
+	// au: atomic unit hBar=1,e=1,me=1,a0=1
+	const gc_auLength = 5.29177211e-11;		// (m) 1(au) = auLength (m)
+	const gc_auTime = 2.418884326e-17;		// (s) 1(au) = auTime (s)
+	const gc_auEnergy = 4.35974465e-18;		// (J) 1(au) = auEnergy (J)
+	const gc_au2eV = 27.211386;				// (eV) 1(au) = 27.211386 (eV)
+
+	var g_iterCount = 0;					// sd iteration count
+	var g_NNx = 256;						// xMax = NNx*dx 
+	var g_dx = 1.0/16.0;					// (au) x-division
+	var g_dampingFactor = 0.003;			// steepest descent damping factor
+
+	var g_xCanvasSize = 480;				// in pixel
+	var g_yCanvasSize = 480;				// in pixel
+
+	var g_sdEnergy = dim1(20);				// sdEnergy[20] electron state energy
+	var g_sdState =dim2(20,g_NNx);			// sdState[20][NNx] electron state 0...19
+	var g_wrk = dim1(g_NNx);				// wrk[NNx] state work space in steepestDescent
+	var g_vv = dim1(g_NNx);					// vv[NNx] external potential
+
+	function dim1(n) {
+		var i, a=[];
+
+		for (i=0; i<n; i++) {
+			a[i] = 0.0;
+		}
+		return a;
+	}
+
+	function dim2(ni,nj) {
+		var i,j, a=[];
+
+		for (i=0; i<ni; i++) {
+			a[i] = [];
+			for (j=0; j<nj; j++) {
+				a[i][j] = 0.0;
+			}
+		}
+		return a;
+	}
+
+
+	//--------------------  set initial condition  --------------------
+
+	function setInitialCondition( stateMax, vIndex ) {
+
+		g_iterCount = 0;
+		setInitialState(stateMax);
+		setPotential(vIndex);
+	}
+
+	function setInitialState(stateMax) {
+		var ist,i,nnx=g_NNx;
+
+		for (ist=0; ist<stateMax; ist++) {
+			for (i=1; i<nnx-1; i++) {
+				g_sdState[ist][i] = Math.random()-0.5;
+			}
+			g_sdState[ist][0] = 0.0;
+			g_sdState[ist][nnx-1] = 0.0;
+			normalizeState(ist);
+		}
+	}
+
+	function setPotential(vIndex) {
+		var i,nnx=g_NNx, x0,x;
+
+		x0 = 0.5*nnx*g_dx;
+		for (i=0; i<nnx; i++) {
+			x = i*g_dx;
+			if (vIndex==0) { // 0:hermonic
+				g_vv[i] = 0.5*(x-x0)*(x-x0);
+			} else if (vIndex==1) { // 1:well
+				g_vv[i] = (Math.abs(x-x0)<4.0) ? 0.0 : 18.0;
+			} else if (vIndex==2) { // 1:well2
+				g_vv[i] = (Math.abs(x-x0)<1.0) ? -1.0 : 0.0;
+			} else if (vIndex==3) { // 1:H-like
+				let r = Math.sqrt((x-x0)*(x-x0))
+				if (r<0.1) r = 0.1;
+				g_vv[i] = -1.0/r;
+			}
+		}
+	}
+
+
+	//--------------------  steepest descent iteration  --------------------
+
+	function SDiteration( stateMax, iterMax ) {
+		var i,ist;
+
+		for (i=0; i<iterMax; i++) {
+			for (ist=0; ist<stateMax; ist++) {
+				g_sdEnergy[ist] = steepestDescent(ist, g_dampingFactor);
+			}
+			GramSchmidt(stateMax);
+			sortState(stateMax); // It is not always necessary
+			g_iterCount += 1;
+		}
+	}
+
+	function steepestDescent(ist,damp) {
+		var i,nnx=g_NNx, h2,ei;
+
+		h2 = 2*g_dx*g_dx;
+		ei = energyOfState(ist);
+		for (i=1; i<nnx-1; i++) {
+			g_wrk[i] = (2*g_sdState[ist][i]-g_sdState[ist][i+1]-g_sdState[ist][i-1])/h2
+						+(g_vv[i]-ei)*g_sdState[ist][i];
+		}
+		for (i=1; i<nnx-1; i++) {
+			g_sdState[ist][i] = g_sdState[ist][i]-damp*g_wrk[i];
+		}
+		normalizeState(ist);
+		return ei;
+	}
+
+	function energyOfState(ist) {
+		var i,nnx=g_NNx, h2,s,sn,fai=g_sdState[ist];
+
+		h2 = 2*g_dx*g_dx;
+		s = 0.0;
+		sn = 0.0;
+		for (i=1; i<nnx-1; i++) {
+			s = s+fai[i]*((2*fai[i]-fai[i+1]-fai[i-1])/h2+g_vv[i]*fai[i]);
+			sn = sn + fai[i]*fai[i];
+		}
+		return s/sn;
+	}
+
+	function GramSchmidt(stateMax) {
+		var istate,ist,i,nnx=g_NNx, s;
+
+		normalizeState(0);
+		for (istate=1; istate<stateMax; istate++) {
+			for (ist=0; ist<istate; ist++) {
+				s = innerProduct(ist,istate);
+				for (i=1; i<nnx-1; i++) {
+					g_sdState[istate][i] = g_sdState[istate][i] - s*g_sdState[ist][i];
+				}
+			}
+			normalizeState(istate);
+		}
+	}
+
+	function sortState(stateMax) {
+		var ist,i,nnx=g_NNx, w;
+
+		for (ist=stateMax-2; ist>=0; ist--) {
+			if (g_sdEnergy[ist]>g_sdEnergy[ist+1]+0.00001) {
+				for (i=0; i<nnx; i++) {
+					w = g_sdState[ist][i];
+					g_sdState[ist][i] = g_sdState[ist+1][i];
+					g_sdState[ist+1][i] = w;
+				}
+				w = g_sdEnergy[ist];
+				g_sdEnergy[ist] = g_sdEnergy[ist+1];
+				g_sdEnergy[ist+1] = w;
+			}
+		}
+	}
+
+
+	//--------------------  utility  --------------------
+
+	function innerProduct(ist,jst) {
+		var i,nnx=g_NNx, s=0.0;
+
+		for (i=1; i<nnx-1; i++) {
+			s = s + g_sdState[ist][i]*g_sdState[jst][i];
+		}
+		return s*g_dx;
+	}
+
+	function normalizeState(ist) {
+		var i,nnx=g_NNx, s=0.0,a;
+
+		for (i=1; i<nnx-1; i++) {
+			s = s + g_sdState[ist][i]*g_sdState[ist][i]*g_dx;
+		}
+		a = Math.sqrt(1/s);
+		for (i=1; i<nnx-1; i++) {
+			g_sdState[ist][i] = a*g_sdState[ist][i];
+		}
+	}
+
+
+	//--------------------  draw  --------------------
+
+	function draw(ctx, stateMax) {
+		var ist,nnx=g_NNx,xp=40,yp=360, col;
+
+		//ctx.clearRect(0, 0, g_xCanvasSize, g_yCanvasSize);
+		
+		drawLine(ctx, xp,yp,xp+nnx-1,yp,"rgb(80,80,80)"); // base line
+		drawV(ctx, xp,yp,"rgb(0,120,0)"); // potential
+		for (ist=stateMax-1; ist>=0; ist--) {
+			col = "hsl("+ist*30+",100%,50%)";
+			drawState(ctx, ist,xp,yp,col); // state
+			ctx.fillStyle = col;
+			ctx.fillText("E["+ist+"]="+g_sdEnergy[ist].toFixed(6), 320, 360-ist*20); // energy
+		}
+		ctx.fillStyle = "rgb(0,0,0)";
+		ctx.fillText("iter="+g_iterCount, 260, g_yCanvasSize-20);
+	}
+
+	function drawState(ctx, ist,xp,yp,color) {
+		var i,nnx=g_NNx, pmag=100.0,emag=15.0;
+
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		for (i=1; i<nnx-1; i++) {
+			ctx.lineTo(i+xp,yp-g_sdState[ist][i]*pmag-g_sdEnergy[ist]*emag);
+		}
+		ctx.stroke();
+	}
+
+	function drawV(ctx, xp,yp,color) {
+		var i,nnx=g_NNx, vmag=15.0;
+
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		for (i=1; i<nnx-1; i++) {
+			ctx.lineTo(i+xp,yp-g_vv[i]*vmag);
+		}
+		ctx.stroke();
+	}
+
+	function drawLine(ctx, x1, y1, x2, y2, color) {
+
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	}
+
+
+	//--------------------  public  --------------------
+
+	return {
+		init:			setInitialCondition,	// setInitialCondition( stateMax, vIndex )
+		evolve:			SDiteration,			// SDiteration( stateMax, iterMax )
+		draw:			draw, 					// draw( ctx, stateMax )
+		
+		getAUinSI:		function() { return [ gc_auLength, gc_auTime, gc_auEnergy, gc_au2eV ]; },
+		getSysParam:	function() { return [ g_NNx, g_dx ]; },
+		getNow:			function() { return g_iterCount; },
+		getStEnergy:	function(ist) { return g_sdEnergy[ist]; },
+		getStDensity:	function(ist,i) { return g_sdState[ist][i]*g_sdState[ist][i]; },
+		getState:		function(ist,i) { return g_sdState[ist][i]; },
+		getVext:		function(i) { return g_vv[i]; },
+	};
+
+})(); //==============  harmonicsSD1D end  =========================================================================
+
+
+const tjsm008 = (function(){ //========================  tjsm Module  ==============================================
+
+	// theModule.init( v_stateMax, v_vIndex )
+	// theModule.evolve( v_stateMax, v_iterMax )
+	// theModule.draw( ctx, stateMax )
+	
+	const theModule = harmonicsSD1D;
+	
+	const v_stateMax = 10; 
+	let v_vIndex = 0; // 0:parabolic  1:well
+	let v_iterMax = 2;
+	
+	let p_auLength, p_auTime, p_auEnergy, p_au2eV // <-- theModule.getAUinSI()
+	let p_nx, p_dx; // <-- theModule.getSysParam()
+	
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let dispMode = 0; //inner switch: 0:threejs,  1:threejs-sprite <-- canvas2d
+	let dispModeChanged = true;
+	let viewHomeRequested = true;
+	let legendFlag = true;
+	let dispState = 0;
+	let count = 0;
+	
+	// sizes in the threejs world
+	const xBoxSize = 600;
+	const yBoxSize = 600;
+	const zBoxSize = 0;
+	const x0 = xBoxSize/2;
+	const y0 = yBoxSize/2;
+	const z0 = 0;
+	let hh;
+	
+	// threejs scene object
+	let stateLine;
+	let vextLine;
+	let densityLine;
+	let line_box;
+	let aboard;
+	let cnvsprite; // in sprite mode(dispMode==1)
+	
+	// three.js , OrbitControls.js
+	const width = 500;
+	const height = 480;
+	const r_camera = 1200;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+	
+	// -------------------- lil-gui setup
+	
+	const uParam = {
+		theme: 'in parabollic V(x)=0.5 x^2',
+		themeMenu: [ 'in parabollic V(x)=0.5 x^2', 'well V(x) = 0(|x|<4), = 18.0(else)',
+					'>well2 V(x) = -1.0(|x|<1), = 0.0(else)', 'H like V(x) = 1/x (|x|>0.1), = 1/0.1 (else)' ],
+		dispMode: 'threejs',
+		dispMenu: [ 'threejs', 'canvas2d' ],
+		dispState: 0,
+		dispStateMenu: [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 ],
+		reset: function() { resetFlag = 1; },
+		pause: false,
+		viewHome: function() { viewHomeRequested = true; }
+	};
+	
+	const gui = new GUI();
+	setupGUI();
+	
+	function setupGUI() {
+		gui.add( uParam, 'theme', uParam.themeMenu ).onChange( 
+			str => { v_vIndex = uParam.themeMenu.indexOf(str); resetFlag = 1; } );
+		
+		gui.add( uParam, 'dispMode', uParam.dispMenu ).name( 'disp. mode' ).onChange( 
+			str => { dispMode = uParam.dispMenu.indexOf(str); dispModeChanged = true; } );
+		
+		gui.add( uParam, 'dispState', uParam.dispStateMenu ).name( 'disp. state' ).onChange( v => { dispState = v; } );
+		
+		gui.add( uParam, 'reset' );
+		gui.add( uParam, 'pause' ).onChange( bool => { pauseFlag = ( bool ) ? 1 : 0; } );
+		gui.add( uParam, 'viewHome' ).name( 'camera: home view' );
+	}
+	
+	
+	// --------------------  main
+
+	function main() {
+		// constract renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+		
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, 0, r_camera);
+		controls = new OrbitControls(camera,renderer.domElement);
+		
+		constructScene();
+		animate();
+	}
+
+	function constructScene() {
+		
+		// init SD1D 
+		theModule.init( v_stateMax, v_vIndex );
+		[ p_auLength, p_auTime, p_auEnergy, p_au2eV ] = theModule.getAUinSI();
+		[ p_nx, p_dx ] = theModule.getSysParam();
+		hh = xBoxSize/p_nx;
+
+		// scene
+		scene = new THREE.Scene();
+		
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xFFFFFF, 0.8);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xFFFFFF, 0.6);
+		scene.add(light);
+		
+		
+		// Vext(x)
+		// colorLine = m3js_colorLine( p_nx, xBoxSize )
+		vextLine = m3js_colorLine( p_nx, xBoxSize );
+		scene.add( vextLine );
+		
+		// density(x)
+		densityLine = m3js_colorLine( p_nx, xBoxSize );
+		scene.add( densityLine );
+		
+		// psi(x)
+		stateLine = m3js_colorLine( p_nx, xBoxSize );
+		scene.add( stateLine );
+		
+		// line_box
+		{
+			const geometry = new THREE.BoxGeometry( xBoxSize, yBoxSize, zBoxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial( { 
+				color: 0x888844 } ) );
+			scene.add( line_box );
+		}
+		
+		// canvasBoard
+		//aboard = m3js_canvasBoard( boardWidth, boardHeight, canvasHeight )
+		aboard = m3js_canvasBoard( 400, 60, 120 ); //180 = 60px x 2Columns (font=48px), 90 = 180/2
+		aboard.position.set(0,260,-1);
+		scene.add( aboard );
+		
+		// canvas sprite
+		//cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 600, 600, 480 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+		
+	}
+
+	// loop animation
+	function animate() {
+		
+		// select theme
+		if (resetFlag==1) {
+			resetFlag = 0;
+				
+			constructScene();
+			count = 0;
+			
+			dispModeChanged = true;
+		}
+		
+		if ( dispModeChanged ) {
+			dispModeChanged = false;
+			
+			line_box.visible = ( dispMode==0 ) ? true : false;
+			stateLine.visible = false;
+			vextLine.visible = false;
+			densityLine.visible = false;
+			aboard.visible = false;
+			cnvsprite.visible = false;
+		}
+		
+		if ( viewHomeRequested ) {
+			camera.position.set(0, 0, r_camera);
+			viewHomeRequested = false;
+		}
+		
+		// SD1D update
+		if (pauseFlag==0) {
+			theModule.evolve( v_stateMax, v_iterMax );
+			
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( v_stateMax, v_iterMax );
+		}
+		
+
+		// threejs world update
+		if ( dispMode==0 ) {
+			const pmag = 200.0;
+			const vmag = 10.0;
+			const dmag = 200.0;
+			const energy = vmag*Math.min( theModule.getStEnergy( dispState ), 30.0 );
+			// Initially, the state energy is too high. This has unforeseen effects in the threejs world.
+			
+			// psi phase
+			// colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+			stateLine.update(
+				function(i) { // x_y_z_color_function: (i) --> [ x, y, z, color ]
+					const state = pmag*theModule.getState( dispState, i );
+					return [ i*hh-x0, state + energy , 0, "#cccc00" ];
+				}
+			);
+			// Vext
+			vextLine.update(
+				function(i) { // x_y_z_color_function: (i) --> [ x, y, z, color ]
+					const vv = vmag*theModule.getVext(i);
+					return [ i*hh-x0, vv, 0, "#00ff00" ];
+				}
+			);
+			// density
+			densityLine.update(
+				function(i) { // x_y_z_color_function: (i) --> [ x, y, z, color ]
+					const dens = dmag*theModule.getStDensity( dispState, i );
+					return [ i*hh-x0, dens, 0 , "#dd88dd" ];
+				}
+			);
+			
+			// board
+			aboard.update(
+				function( board ) { // drawFunc(board)
+					const ctx = board.ctx;
+					const boardWidth = board.canvas.width;
+					const boardHeight = board.canvas.height;
+					
+					// clear board
+					ctx.fillStyle = "#000000";
+					ctx.fillRect( 0,0, boardWidth, boardHeight);
+
+					drawText( "Vext(x)", "#00ff00", 20, 55 );
+					drawText( "density(x)", "#dd88dd", 220, 55 );
+					drawText( "state(x)+Ei", "#cccc00", 500, 55 );
+					drawText( "box="+(p_nx*p_dx)+"(au)", "#bbbbbb", 20, 115 );
+				
+					function drawText(text,col,px,py) {
+						ctx.fillStyle = col;
+						ctx.fillText( text, px, py );
+					}
+				}
+			);
+			
+		}
+		
+		// sprite update
+		if ( dispMode==1 ) {
+			//cnvsprite.update( drawFunc )
+			cnvsprite.update(
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					theModule.draw( ctx, v_stateMax );
+				}
+			);
+		}
+		
+		
+		// output to innerHTML
+		if (count % 20 == 0) {
+			const iterCount = theModule.getNow();
+			const te = theModule.getStEnergy(dispState); // total energy
+			const realBoxSize = p_nx*p_dx;
+			const space20 = "<span style='margin-right: 20px;'></span>"
+			let msg = 
+				" theme : " + uParam.theme + "<br>"
+				+ " box size : " + realBoxSize + "(au) ~ " + (realBoxSize*p_auLength*1.0e9).toFixed(2) + "(nm)<br>"
+				+ " disp. State : " + dispState +"," + space20 + " disp. mode : " + uParam.dispMode;
+			let stateStr = "(state) energy(au)<br>";
+			for (let ist=v_stateMax-1; ist>=0; ist--) {
+				const ene = theModule.getStEnergy(ist).toFixed(6);
+				stateStr = stateStr + "("+ist+") "+ene+"<br>"
+			}
+			stateStr = stateStr+"<br>";
+			let sidemsg = " iteration count" + "<br>" + space20 + iterCount + "<br><br>" + stateStr;
+			
+			document.getElementById("text_caption").innerHTML = msg;
+
+			if (legendFlag && dispMode==0) {
+				document.getElementById('textOnCanvas').innerHTML = sidemsg;
+			} else {
+				document.getElementById('textOnCanvas').innerHTML = "";
+			}
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_colorLine function  ------------------------------
+	//
+	//    ver 0.0.0  2022.09.19 created, last updated on 2022.12.19
+	//
+	//  colorLine = m3js_colorLine( p_nx, xBoxSize )
+	//     p_nx: number of x-division
+	//     xBoxSize: x-box size in the threejs-world
+	//  
+	//  scene.add( colorLine );
+	//
+	//  colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+	//    x_y_z_color_function: function(i) { ... return [ x, y, z, color ]; }
+	//      (x,y,z): position, 
+	//      color: number: hue, 0...359
+	//             string: shch as 'red', '#ff0000', 'rgb(255,0,0)', 'hsl(0,100%,50%)'
+	//
+	//  colorLine.visible = false
+	//
+	
+	function m3js_colorLine( p_nx, xBoxSize ) {
+		const nx = p_nx;
+		const hh = xBoxSize/p_nx;
+		let colorLine;
+		
+ 		const geometry = new THREE.BufferGeometry();
+ 		const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+		const positions = new Float32Array( nx * 3 );
+		const colors = new Float32Array( nx * 3 );
+		geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+		geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+		geometry.setDrawRange( 0, nx );
+    	colorLine = new THREE.Line(geometry,material);
+		
+		colorLine.update = colorLine_update;
+		
+		return colorLine;
+		
+		
+		function colorLine_update( x_y_z_color_function ) {
+			const line = colorLine;
+			const positions = line.geometry.attributes.position.array;
+			const colors = line.geometry.attributes.color.array;
+			for (let i=0; i<nx; i++) {
+				let x, y, z, col;
+				[ x, y, z, col ] = x_y_z_color_function(i);
+				positions[i*3]   = x;
+				positions[i*3+1] = y;
+				positions[i*3+2] = z;
+				if ( col==undefined ) col = 'yellow';
+				const colorStr = ( typeof(col) == 'string' ) ? col : `hsl(${col},100%,50%)`;
+				const colr = new THREE.Color( colorStr );
+				colors[i*3]   = colr.r;
+				colors[i*3+1] = colr.g;
+				colors[i*3+2] = colr.b;
+			}
+			line.geometry.attributes.position.needsUpdate = true;
+			line.geometry.attributes.color.needsUpdate = true;
+			colorLine.visible = true;
+		}
+	
+	}
+	
+	// -----------------------  m3js_colorLine function end
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+	
+	// -----------------------  m3js_canvasBoard function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.15 created, last updated on 2022.12.21
+	//
+	// aboard = m3js_canvasBoard( boardWidth, boardHeight, canvasHeight )
+	//     boardWidth: world width of board object
+	//     boardHeight: world height of board object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( aboard );
+	//
+	// aboard.update( drawFunc )
+	//     drawFunc: draw(aboard)
+	// 
+	// aboard.visible = true|false;
+	//
+	
+	function m3js_canvasBoard( boardWidth, boardHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(boardWidth*canvasHeight/boardHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "48px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		const geometry = new THREE.PlaneGeometry(boardWidth, boardHeight);
+		const material = new THREE.MeshBasicMaterial( 
+			{ side:THREE.DoubleSide, map:texture, transparent:true, opacity:1.0 } );
+		const board = new THREE.Mesh(geometry, material);
+		
+		board.canvas = canvas;
+		board.ctx = ctx;
+		board.texture = texture;
+		board.visible = false;
+		board.update =
+			function( drawFunc ) {
+				drawFunc(board);
+				board.visible = true;
+				board.texture.needsUpdate = true;
+			};
+		return board;
+	}
+	
+	// -----------------------  m3js_canvasBoard end
+	
+	
+	//--------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+	}
+
+})(); //==============  tjsm008 module end  ========================================================================
+
+
+// event
+const tjsm = tjsm008;
+window.addEventListener('load', tjsm.main );
+
+
+</script>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+</head>
+
+<body>
+<p>[tm008] electron harmonics - steepest descent method 1D</p>
+<div style="position: relative; overflow: hidden; width: 720px; height: 480px">
+  <canvas id="myCanvas" style="position: absolute; top: 0px; left: 0px"></canvas>
+  <div id="textOnCanvas" style="position:absolute; top:5px; left:505px; color:#000000; background-color:#fff8dd;"></div>
+</div>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+</body>
+</html>
+
