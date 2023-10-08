@@ -1,0 +1,1204 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>tjs022_sampleLDA1D</title>
+  <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+  <!--
+  <script src="../lib/three.min.js"></script>
+  <script src="../lib/OrbitControls.js"></script>
+  -->
+  <script>
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tjs022_sampleLDA1D
+//    Copyright(C) 2021-2022 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2021.12.24 created, last updated on 2021.12.27
+//    ver 0.0.1  2022.06.14 v1, last updated on 2022.12.26
+//    ver 0.0.2  2023.10.08 v2, last updated on 2023.10.08
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  RS-DFT - local density approximation 1D
+//
+// - real space density functional theory - local density approximation
+// - solve Kohn-Sham equation - successive approximation
+// - Vxc : LDA(local density approximation)
+//         J. P. Perdew and A. Zunger; Phys. Rev., B23, 5048 (1981)
+//
+//  many electron system --> one electron approximation
+//    one electron ,  others -> consider as effective potential Veff
+//    Kohn-Sham equation {(-d^2/dr^2)+Veff(r)} |i> = e_i |i>,  Veff(r)=Vext+VH+Vx+Vc
+//      Veff: one electron feels effective potential
+//      Vext: external Potential
+//      VH  : Hartree potential (electron charge -> electro-static potential)
+//      Vx,Vc :electron exchange and correlation potential (LDA:Perdew-Zunger)
+//    successive approximation
+//      solve Kohn-Sham -> electron state,occupation -> electron charge density -> Veff
+//
+//  procedure
+//   (1) given: trial |i>, occupation(i)
+//
+//   (2) set electron density rho
+//       rho <-- |i>, occupation(i), mixing rho(iter-1)
+//
+//   (3) set effective potential
+//        Veff = Vext + VH + Vx + Vc
+//        VH <-- rho (Poisson eq. ,SOR iteration)
+//        Vx,Vc <-- rho (LDA:Perdew-Zunger)
+//
+//   (4) solve Kohn-Sham equation (successive approximation)
+//        |i> steepest descent method: |i(next)> = |i> - damp{H-E}|i>
+//        E(i) <-- <i|H|i>
+//        {|0>,..,|i>,..,|N>} orthogonallization : Gram-Schmidt
+//
+//   (5) sort state
+//        sort orbit by E(i)
+//
+//   (6) set occupation
+//        occupation(i) <-- E(i)
+//
+//   goto (2)
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const sampleLDA1D = (function(){ // ====================  sampleLDA1D Module  ====================
+
+	// au: atomic unit hBar=1,e=1,me=1,a0=1
+	const g_auLength = 5.29177211e-11;  // (m) 1(au) = auLength (m)
+	const g_auTime = 2.418884326e-17;   // (s) 1(au) = auTime (s)
+	const g_auEnergy = 4.35974465e-18;  // (J) 1(au) = auEnergy (J)
+	const g_au2eV = 27.211386;          // (eV) 1(au) = 27.211386 (eV)
+	const g_nMax = 256;                 // maximum of NNx
+	const g_stMax = 20;                 // maximum number of state
+
+	let g_numberOfElectron = 4;         // number of electron in the system
+	let g_numberOfOrbit = 10;           // number of orbit
+	let g_iterCount = 0;                // iteration count
+	let g_NNx = 64;                     // xMax = NNx*dx
+	let g_dx = 1.0/4.0;                 // (au) x-division
+	let g_lylz = 16.0*16.0;             // (au) volume=dx*ly*lz (to use LDA rho -> Vxc)
+	let g_energyMem = 0.0;              // temporal memory of energy
+	let g_iterationError = 1.0;         // energy difference for iteration n and n+1
+	let g_dampingFactor = 0.03;         // damping factor of steepest descent method
+	let g_mixing = 0.5;                 // charge mixing in setRho()
+	let g_broadening = 0.001;           // (au) level broadening in setOccupation()
+
+	let g_xCanvasSize = 400;            // in pixel
+	let g_yCanvasSize = 400;            // in pixel
+
+	const g_sdEnergy = dim1(g_stMax);   // sdEnergy[20] electron orbit energy
+	const g_sdState =dim2(g_stMax,g_nMax); // sdState[20][256] electron orbit 0...19
+	const g_occupation = dim1(g_stMax); // occupation of orbit
+	const g_wrk = dim1(g_nMax);         // wrk[256] orbit work space in steepestDescent
+	const g_vv = dim1(g_nMax);          // vv[256] effective potential
+	const g_vvext = dim1(g_nMax);       // external potential
+	const g_vvh = dim1(g_nMax);         // Hartree potential
+	const g_vvx = dim1(g_nMax);         // exchange potential
+	const g_vvc = dim1(g_nMax);         // correlation potential
+	const g_rho = dim1(g_nMax);         // electron charge density
+
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+
+	function dim2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Float64Array( nj );
+		}
+		return a;
+	}
+
+
+	// -------------------- set initial condition  --------------------
+
+	function setInitialCondition( stateMax, vIndex, nElectron ) {
+		g_iterCount = 0;
+		setInitialState(stateMax);
+		setExternalPotential(vIndex);
+		setNumberOfElectron(nElectron);
+	}
+
+	function setInitialState( stateMax ) {
+		const nnx = g_NNx;
+		for (let ist=0; ist<stateMax; ist++) {
+			for (let i=1; i<nnx-1; i++) {
+				g_sdState[ist][i] = Math.random()-0.5;
+			}
+			g_sdState[ist][0] = 0;
+			g_sdState[ist][nnx-1] = 0;
+			normalizeState(ist);
+		}
+	}
+
+	function setExternalPotential( vIndex ) {
+		const nnx=g_NNx;
+		const x0 = 0.5*nnx*g_dx;
+		if (vIndex==0) { // 0:parabolic
+			for (let i=0; i<nnx; i++) {
+				const x = i*g_dx;
+				g_vvext[i] = Math.min(0.5*(x-x0)*(x-x0),20.0);
+			}
+		} else if (vIndex==1) { // 1:well
+			for (let i=0; i<nnx; i++) {
+				const x = i*g_dx;
+				g_vvext[i] = (Math.abs(x-x0)<4.0) ? 0.0 : 20.0;
+			}
+		} else if (vIndex==2) { // 2:well
+			for (let i=0; i<nnx; i++) {
+				const x = i*g_dx;
+				g_vvext[i] = (Math.abs(x-x0)<4.0) ? -1.0 : 0.0;
+			}
+		}
+	}
+
+	function setNumberOfElectron( ne ) {
+		g_numberOfElectron = ne;
+		g_iterCount = 0;	
+	}
+	
+	function setMixing( mix ) {
+		g_mixing = mix;
+	}
+
+	function setBroadening( broadening ) {
+		g_broadening = broadening;
+	}
+
+
+	// --------------------  iterate LDA  --------------------
+
+	function iterateLDA( stateMax, iterMax ) {
+		g_numberOfOrbit = stateMax;
+		const errorDecisionOrbit = Math.floor((g_numberOfElectron-1)/2);
+		setElectronDensity();
+		setEffectivePotential();
+		solveKohnSham(g_numberOfOrbit,iterMax);
+		sortState(g_numberOfOrbit);
+		setOccupation(g_numberOfOrbit,g_numberOfElectron);
+		g_iterationError = g_sdEnergy[errorDecisionOrbit] - g_energyMem;
+		g_energyMem = g_sdEnergy[errorDecisionOrbit];
+	}
+
+	// --- (2) set electron density rho -from sdState[], occupation[]
+
+	function setElectronDensity() {
+		const nnx = g_NNx;
+		for (let i=0; i<nnx; i++) {
+			g_rho[i] *= (1.0-g_mixing);
+			for (let ie=0; ie<g_numberOfOrbit; ie++) {
+				if (g_occupation[ie]<=0.0) continue;
+				g_rho[i] += g_mixing*g_occupation[ie]*(g_sdState[ie][i]*g_sdState[ie][i])/g_lylz;
+			}
+		}
+	}
+
+	// --- (3) set effective potential -from electron density
+
+	function setEffectivePotential() {
+		const nnx = g_NNx;
+		poisson(20); // setVh
+		setVxc();
+		for (let i=0; i<nnx; i++) {
+			g_vv[i] = g_vvext[i]+g_vvh[i]+g_vvx[i]+g_vvc[i];
+		}
+	}
+
+	function poisson( iterMax ) { // solve (d^2/dr^2) V = 4 pai rho
+		const nnx = g_NNx, h2 = 4.0*Math.PI*g_dx*g_dx, w = (1.0/2.0)*1.8; // 1/2 * SOR omega(1.0<omega<2.0)
+		for (let iter=0; iter<iterMax; iter++) {
+			for (let i=1; i<nnx-1; i++) {
+				g_vvh[i] = g_vvh[i]+w*(g_vvh[i+1]+g_vvh[i-1]-2.0*g_vvh[i] +h2*g_rho[i]);
+			}
+		}
+	}
+
+	/*
+	function compensateVh() {
+		const nnx = g_NNx;
+		let vhs = 0.0, vxcs = 0.0;
+		for (let i=0; i<nnx; i++) {
+			vhs += g_vvh[i];
+			vxcs += g_vvx[i] + g_vvc[i];
+		}
+		const vm = (vhs+vxcs)/nnx;
+		for (let i=0; i<nnx; i++) {
+			g_vvh[i] -= vm;
+		}
+	}
+	*/
+
+	// LDA :  J. P. Perdew and A. Zunger; Phys. Rev., B23, 5048 (1981)
+	function setVxc() {
+		const nnx=g_NNx;
+		const c1 = -0.984745022;
+		for (let i=0; i<nnx; i++) {
+			const rh = g_rho[i];
+			const rh3 = Math.pow(rh,0.33333333);
+			g_vvx[i] = c1*rh3;
+			const rs = 0.6204/(rh3+1.0e-20);
+			if (rs>=1.0) {
+				const sqrtrs = Math.sqrt(rs);
+				const ec = -0.1423/(1.0+1.0529*sqrtrs+0.3334*rs);
+				g_vvc[i] = ec*(1.0+1.22838*sqrtrs+0.4445*rs)/(1.0+1.0529*sqrtrs+0.3334*rs);
+			} else {
+				g_vvc[i] = -0.05837-0.0084*rs +(0.0311+0.00133*rs)*Math.log(rs);
+			}
+		}
+	}
+
+	function eeCorrelation( rh ) {
+		const r = 0.6204/(Math.pow(rh,0.33333333)+1.0e-20);
+		let ec;
+		if (r>=1.0) {
+			ec = -0.1423/(1.0+1.0529*Math.sqrt(r)+0.3334*r);
+		} else {
+			ec = -0.0480-0.0116*r+(0.0311+0.0020*r)*Math.log(r);
+		}
+		return ec;
+	}
+
+	// --- (4) solve Kohn-Sham equation
+
+	function solveKohnSham( stateMax, iterMax ) {
+		for (let i=0; i<iterMax; i++) {
+			for (let ist=0; ist<stateMax; ist++) {
+				g_sdEnergy[ist] = steepestDescent(ist, g_dampingFactor);
+			}
+			GramSchmidt(stateMax);
+			g_iterCount += 1;
+		}
+	}
+
+	function steepestDescent( ist, damp ) {
+		const nnx = g_NNx, h2 = 2.0*g_dx*g_dx, ei = energyOfState(ist), p = g_sdState[ist];
+		for (let i=1; i<nnx-1; i++) {
+			g_wrk[i] = (2*p[i]-p[i+1]-p[i-1])/h2 + (g_vv[i]-ei)*p[i];
+		}
+		for (let i=1; i<nnx-1; i++) {
+			g_sdState[ist][i] = g_sdState[ist][i]-damp*g_wrk[i];
+		}
+		normalizeState(ist);
+		return ei;
+	}
+
+	function energyOfState( ist ) {
+		const nnx = g_NNx, h2 = 2.0*g_dx*g_dx, p = g_sdState[ist];
+		let s = 0.0, sn = 0.0;
+		for (let i=1; i<nnx-1; i++) {
+			s += p[i]*((2*p[i]-p[i+1]-p[i-1])/h2 + g_vv[i]*p[i]);
+			sn += p[i]*p[i];
+		}
+		return s/sn;
+	}
+
+	function GramSchmidt( stateMax ) {
+		const nnx = g_NNx;
+		normalizeState(0);
+		for (let istate=1; istate<stateMax; istate++) {
+			for (let ist=0; ist<istate; ist++) {
+				const s = innerProduct(ist,istate);
+				for (let i=1; i<nnx-1; i++) {
+					g_sdState[istate][i] = g_sdState[istate][i] - s*g_sdState[ist][i];
+				}
+			}
+			normalizeState(istate);
+		}
+	}
+
+	// --- (5) sort state
+
+	function sortState( stateMax ) {
+		const nnx = g_NNx;
+		for (let ist=stateMax-2; ist>=0; ist--) {
+			if (g_sdEnergy[ist]>g_sdEnergy[ist+1]+0.00001) {
+				for (let i=0; i<nnx; i++) {
+					const w = g_sdState[ist][i];
+					g_sdState[ist][i] = g_sdState[ist+1][i];
+					g_sdState[ist+1][i] = w;
+				}
+				const w = g_sdEnergy[ist];
+				g_sdEnergy[ist] = g_sdEnergy[ist+1];
+				g_sdEnergy[ist+1] = w;
+			}
+		}
+	}
+
+	// --- (6) set occupation
+
+	function setOccupation( maxState, nElectron ) {
+		let eFermi, eUpper = g_sdEnergy[maxState-1]+1.0, eLower = g_sdEnergy[0]-1.0;
+		for (let i=0; i<maxState; i++) {
+			if (g_sdEnergy[i]>eUpper) eUpper = g_sdEnergy[i];
+			if (g_sdEnergy[i]<eLower) eLower = g_sdEnergy[i];
+		}
+		while (eUpper-eLower>1.0e-12) {
+			eFermi = (eUpper+eLower)/2.0;
+			const ntrial = trialOcc(maxState, eFermi);
+			if (ntrial<nElectron) {
+				eLower = eFermi;
+			} else {
+				eUpper = eFermi;
+			}
+		}
+		eFermi = (eUpper+eLower)/2.0;
+		for (let i=0; i<maxState; i++) {
+			g_occupation[i] = 2.0*FermiDirac(g_sdEnergy[i], eFermi);
+			if (g_occupation[i]<0.0001) g_occupation[i] = 0.0;
+			if (2.0-g_occupation[i]<0.0001) g_occupation[i] = 2.0;
+		}
+	}
+
+	function trialOcc(maxState,eFermi) {
+		let s = 0.0;
+		for (let i=0;i<maxState;i++) {
+			s += 2.0*FermiDirac(g_sdEnergy[i], eFermi);
+		}
+		return s;
+	}
+
+	function FermiDirac(ee, ef) {
+		const et = g_broadening;
+		return ( 1.0/(Math.exp((ee-ef)/et)+1.0) );
+	}
+
+
+	// --------------------  utility  --------------------
+
+	function innerProduct( ist, jst ) {
+		const nnx = g_NNx;
+		let s = 0.0;
+		for (let i=1; i<nnx-1; i++) {
+			s += g_sdState[ist][i]*g_sdState[jst][i];
+		}
+		return s*g_dx;
+	}
+
+	function normalizeState( ist ) {
+		const nnx = g_NNx;
+		let s = 0.0;
+		for (let i=1; i<nnx-1; i++) {
+			s += g_sdState[ist][i]*g_sdState[ist][i]*g_dx;
+		}
+		const a = Math.sqrt(1/s);
+		for (let i=1; i<nnx-1; i++) {
+			g_sdState[ist][i] = a*g_sdState[ist][i];
+		}
+	}
+
+	function totalEnergy() {
+		const nnx = g_NNx;
+		let s = 0.0, sei = 0.0;
+		for (let i=0; i<g_numberOfOrbit; i++) {
+			sei += g_occupation[i]*g_sdEnergy[i];
+		}
+		for (let i=1; i<nnx-1; i++) {
+			s += (-0.5*g_vvh[i]-0.25*g_vvx[i]+eeCorrelation(g_rho[i])-g_vvc[i])*g_rho[i];
+		}
+		s = s*g_dx;
+		return sei+s;
+	}
+
+
+	// --------------------  draw  --------------------
+
+	const gColor = { orb:"#dddd00", dens:"#dd88dd",
+					Vext:"#00dd00", Veff:"#0088ff", Vh:"#4444ff", Vxc:"#8800ff", Vx:"#aa00ff",Vc:"#8888ff" };
+
+	function draw( ctx, drawMode ) {
+		const textpos=260;
+
+		//ctx.clearRect(0, 0, g_canvas.width, g_canvas.height);
+
+		if (drawMode==0) {
+			drawState( ctx );
+		} else if (drawMode==1) {
+			drawRho( ctx );
+		} else if (drawMode==2) {
+			drawPotential( ctx );
+		}
+
+		for (let ist=0; ist<10; ist++) {
+			ctx.fillStyle = "hsl("+ist*30+",100%,50%)";
+			ctx.fillText("E["+ist+"]="+g_sdEnergy[ist].toFixed(6), textpos, 200-ist*20);
+		}
+		ctx.fillStyle = "rgb(80,80,80)";
+		for (let ist=0; ist<5; ist++) {
+			ctx.fillText("occ["+ist+"]="+g_occupation[ist].toFixed(4), textpos, 300-ist*20);
+		}
+		ctx.fillStyle = "rgb(80,80,80)";
+		ctx.fillText("iter="+g_iterCount, textpos, g_yCanvasSize-45);
+		ctx.fillText("error="+g_iterationError.toFixed(6), textpos, g_yCanvasSize-25);
+		ctx.fillText("E="+totalEnergy().toFixed(6)+"(au)", textpos, g_yCanvasSize-5);
+	}
+
+	function drawState( ctx ) {
+		const nnx = g_NNx, xp = 0, yp = 300, sc = 4.0, pmag = 100.0, emag = 20.0, vmag = 10.0;
+		ctx.lineWidth = 1;
+		drawVeff(ctx, xp,yp,sc,vmag);
+		for (let ist=9; ist>=0; ist--) { // draw state 0-9
+			ctx.strokeStyle = "hsl("+ist*30+",100%,50%)";
+			ctx.beginPath();
+			for (let i=0; i<nnx; i++) {
+				ctx.lineTo(i*sc+xp,yp-g_sdState[ist][i]*pmag-g_sdEnergy[ist]*emag);
+			}
+			ctx.stroke();
+		}
+	}
+
+	function drawVeff(ctx, xp,yp,sc,vmag) {
+		// base line
+		ctx.strokeStyle = "rgb(120,120,120)";
+		ctx.beginPath();
+		ctx.moveTo(xp, yp);
+		ctx.lineTo(xp+(g_NNx-1)*sc, yp);
+		ctx.stroke();
+		// draw Veff
+		drawFn(ctx, g_vv,xp,yp,sc,vmag, gColor.Veff );
+	}
+
+	function drawFn(ctx, ff,xp,yp,sc,vmag,color) {
+		const nnx = g_NNx;
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		for (let i=0; i<nnx; i++) {
+			ctx.lineTo(i*sc+xp,yp-ff[i]*vmag);
+		}
+		ctx.stroke();
+	}
+
+	function drawRho(ctx) {
+		const nnx = g_NNx, xp = 0, yp = 300, sc = 4.0, rmag = 20000.0, vmag = 10.0;
+		drawVeff(ctx, xp,yp,sc,vmag);
+		ctx.fillStyle = gColor.dens;
+		for (let i=0; i<nnx-1; i++) {
+			ctx.beginPath();
+			ctx.lineTo(i*sc+xp,yp-g_vv[i]*vmag);
+			ctx.lineTo(i*sc+xp,yp-g_vv[i]*vmag-g_rho[i]*rmag);
+			ctx.lineTo((i+1)*sc+xp,yp-g_vv[i+1]*vmag-g_rho[i+1]*rmag);
+			ctx.lineTo((i+1)*sc+xp,yp-g_vv[i+1]*vmag);
+			ctx.closePath();
+			ctx.fill();
+		}
+	}
+
+	function drawPotential(ctx) {
+		const xp = 0, yp = 300, sc = 4.0, rmag = 20000.0, vmag = 10.0;
+		drawRho(ctx); // draw rho + Veff
+		drawFn(ctx, g_vvext,xp,yp,sc,vmag,gColor.Vext); //Vext
+		drawFn(ctx, g_vvh,xp,yp,sc,vmag*10,gColor.Vh); //VH
+		drawFn(ctx, g_vvx,xp,yp,sc,vmag*10,gColor.Vx);  //Vx
+		drawFn(ctx, g_vvc,xp,yp,sc,vmag*10,gColor.Vc);  //Vc
+		ctx.fillStyle = gColor.Vext; ctx.fillText("Vext", 20, 340);
+		ctx.fillStyle = gColor.Veff; ctx.fillText("Veff", 20, 360);
+		ctx.fillStyle = gColor.Vh; ctx.fillText("VH x 10", 120, 340);
+		ctx.fillStyle = gColor.Vx; ctx.fillText("Vx x 10", 120, 360);
+		ctx.fillStyle = gColor.Vc; ctx.fillText("Vc x 10", 120, 380);
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:           setInitialCondition,    // setInitialCondition( stateMax, vIndex, nElectron )
+		evolve:         iterateLDA,             // iterateLDA( stateMax, iterMax )
+		draw:           draw,                   // draw( ctx, drawMode )
+		
+		setNe:          setNumberOfElectron,    // setNumberOfElectron( ne )
+		setMixing:      setMixing,              // setMixing( mix )
+		setBroadening:  setBroadening,          // setBroadening( broadening )
+		
+		getAUinSI:      function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:    function() { return [ g_NNx, g_dx ]; },
+		getNow:         function() { return [ g_iterCount, totalEnergy() ]; },
+		getOccupation:  function(ist) { return g_occupation[ist]; },
+		getStEnergy:    function(ist) { return g_sdEnergy[ist]; },
+		getState:       function(ist,i) { return g_sdState[ist][i]; },
+		getDensity:     function(i) { return g_rho[i]; },
+		getVext:        function(i) { return g_vvext[i]; },
+		getVeff:        function(i) { return g_vv[i]; },
+		getVh:          function(i) { return g_vvh[i]; },
+		getVx:          function(i) { return g_vvx[i]; },
+		getVc:          function(i) { return g_vvc[i]; },
+	};
+
+})(); // ====================  sampleLDA1D end  ====================
+
+
+const tjs022 = (function(){ // ====================  tjs Module  ====================
+
+	const theModule = sampleLDA1D;
+	
+	const v_stateMax = 10; 
+	let v_vIndex = 0; // 0:V(x) = 0.5*x^2  1:well
+	let v_nElectron = 4;
+	let v_iterMax = 2; // number of solving Kohn-Sham per calling theModule.evolve()
+	
+	let p_auLength, p_auTime, p_auEnergy, p_au2eV // <-- theModule.getAUinSI()
+	let p_nx, p_dx; // <-- theModule.getSysParam()
+
+	// set global
+	let theme = 0; // 0:parabolic potential  1:well
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let dispMode =  0; // 0:density, 1:1:orbit, 3:none
+	let dispModeChanged = true;
+	let neChanged = false;
+	let legendFlag = true;
+	let viewHomeRequested = false;
+	let dispOrbit = 0; // 0 ... 9
+	let dispVmode = 0; // 0:Veff  1:Vext  2:VH  3:Vx  4:Vc
+	let count = 0;
+	
+	// sizes in the threejs world
+	const xBoxSize = 400;
+	const yBoxSize = 400;
+	const zBoxSize = 0;
+	const x0 = xBoxSize/2;
+	const y0 = yBoxSize/2;
+	const z0 = zBoxSize/2;
+	let hh;
+	
+	let vline = [];
+	let pline;
+	let rline;
+	let bline;
+	let line_box;
+	let cnvsprite;
+	let aboard;
+	let bboard;
+
+	// three.js , OrbitControls.js
+	const width = 500;
+	const height = 480;
+	const r_camera = 1200;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+
+	// --------------------  main
+	
+	function main() {
+		// constract renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+		
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, 0, r_camera);
+		controls = new THREE.OrbitControls(camera,renderer.domElement);
+
+		initDom();
+
+		constructScene();
+		animate();
+	}
+
+	function constructScene() {
+		let te = 0.0;
+		let points = [];
+		
+		// init LDA1D 
+		theModule.init( v_stateMax, v_vIndex, v_nElectron );
+		[ p_auLength, p_auTime, p_auEnergy, p_au2eV ] = theModule.getAUinSI();
+		[ p_nx, p_dx ] = theModule.getSysParam();
+		hh = xBoxSize/p_nx;
+		
+		// scene
+		scene = new THREE.Scene();
+ 
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xFFFFFF);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xFFFFFF, 0.5);
+		scene.add(light);
+		
+		
+		// Vext(x), Veff(x), Vh(x), Vx(x)+Vc(x)
+		for (let i=0; i<4; i++) {
+			// colorLine = m3js_colorLine( p_nx, xBoxSize )
+			vline[i] = m3js_colorLine( p_nx, xBoxSize );
+			scene.add( vline[i] );
+		}
+		
+		// state(x)
+		// colorLine = m3js_colorLine( p_nx, xBoxSize )
+		pline = m3js_colorLine( p_nx, xBoxSize );
+		scene.add( pline );
+		
+		// densitye(x)
+		rline = m3js_colorLine( p_nx, xBoxSize );
+		scene.add( rline );
+		
+		// line box
+		{
+			const geometry = new THREE.BoxGeometry( xBoxSize, yBoxSize, zBoxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial({ color: 0x666644 }) );
+			scene.add( line_box );
+		}
+
+		// canvas sprite
+		//cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 600, 600, 400 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+		
+		// canvasBoard
+		//aboard = m3js_canvasBoard( boardWidth, boardHeight, canvasHeight )
+		aboard = m3js_canvasBoard( 400, 90, 180 ); //180 = 60px x 3Columns (font=48px), 90 = 180/2
+		//aboard.position.set(0,250,-1);
+		scene.add( aboard );
+		
+		bboard = m3js_canvasBoard( 500, 60, 120 ); // 120 = 60px x 2Columns (font=48px), 60 = 120/2
+		//aboard.position.set(0,-250,-1);
+		scene.add( bboard );
+		
+	}
+
+	// loop animation
+	function animate() {
+		
+		// select theme
+		if (resetFlag==1) {
+			resetFlag = 0;
+			if ( neChanged ) {
+				neChanged = false;
+				theModule.setNe( v_nElectron );
+			} else {
+				constructScene();
+				dispModeChanged = true;
+			}
+			count = 0;
+		}
+		
+		if ( viewHomeRequested ) {
+			camera.position.set(0, 0, r_camera);
+			viewHomeRequested = false;
+		}
+		
+		//  clear objects
+		if (dispModeChanged) {
+			dispModeChanged = false;
+			
+			line_box.visible = (dispMode>1) ? false : true;
+			//visibleRho( false );
+			for (let i=0; i<4; i++) {
+				vline[i].visible = false;
+			}
+			pline.visible = false;
+			rline.visible = false;
+			cnvsprite.visible = false;
+			aboard.visible = false;
+			bboard.visible = false;
+		}
+		
+		// LDA1D update
+		if (pauseFlag==0) {
+			theModule.evolve( v_stateMax, v_iterMax )
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( v_stateMax, v_iterMax );
+		}
+		
+		
+		// threejs graph update
+		if ( dispMode==0 || dispMode==1 ) {
+			const gColor =
+				{ orb:"#dddd00", dens:"#dd88dd", Vext:"#00dd00", Veff:"#0088ff", Vh:"#4444ff", Vxc:"#8800ff" };
+			const pmag = 200.0;
+			const rmag = 20000.0;
+			const vmag = 10.0;
+			const ee = vmag*theModule.getStEnergy( dispOrbit );
+			const eey = (ee>y0) ? y0 : ee;
+			
+			// potential
+			if ( dispMode==0 ) {
+				// colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+				vline[0].update( function(i) { return [ i*hh-x0, vmag*theModule.getVext(i), -1, gColor.Vext ]; } );
+			} else if ( dispMode==1 ) {
+				vline[0].update( function(i) { return [ i*hh-x0, vmag*theModule.getVext(i), -1, gColor.Vext ]; } );
+				vline[1].update( function(i) { return [ i*hh-x0, vmag*theModule.getVeff(i),  0, gColor.Veff ]; } );
+				vline[2].update( function(i) { return [ i*hh-x0, 10*vmag*theModule.getVh(i), -2, gColor.Vh ]; } );
+				vline[3].update(
+					function(i) { return [ i*hh-x0, 10*vmag*(theModule.getVx(i)+theModule.getVc(i)), -2, gColor.Vxc ]; }
+				);
+			}
+			
+			// orbit
+			//colorLine.update( x_y_z_color_function )
+			pline.update(
+				function(i) { // (i) --> [ x, y, z, color ]
+					const y = pmag*theModule.getState(dispOrbit,i) + eey;
+					return [ i*hh-x0, y, 0, gColor.orb ]; 
+				}
+			);
+			
+			// density
+			rline.update( function(i) { return [ i*hh-x0, rmag*theModule.getDensity(i),  1, gColor.dens ]; } );
+			
+			
+			// board
+			aboard.update(
+				function( board ) { // drawFunc(board)
+					const ctx = board.ctx;
+					const boardWidth = board.canvas.width;
+					const boardHeight = board.canvas.height;
+					//ctx.font = "48px 'sans-serif'";
+					//ctx.textBaseline = "bottom";
+					//ctx.textAlign = "left";
+					
+					// clear board
+					ctx.fillStyle = "#111111";
+					ctx.fillRect( 0,0, boardWidth, boardHeight);
+					if ( dispMode==1 ) {
+						drawText( "Veff(x)", gColor.Veff, 20, 55 );
+						drawText( "Vh(x) x10", gColor.Vh, 220, 55 );
+						drawText( "Vxc(x) x10", gColor.Vxc, 500, 55 );
+					}
+					drawText( "Vext(x)", gColor.Vext, 20, 115 );
+					drawText( "density(x)", gColor.dens, 220, 115 );
+					drawText( "orbit(x)+Ei", gColor.orb, 500, 115 );
+					drawText( "box="+(p_nx*p_dx)+"(au)", "#bbbbbb", 20, 175 );
+				
+					function drawText(text,col,px,py) {
+						ctx.fillStyle = col;
+						ctx.fillText( text, px, py );
+					}
+				}
+			);
+			aboard.position.set(0,260,-1);
+
+			bboard.update(
+				function( board ) { // drawFunc(board)
+					const ctx = board.ctx;
+					const boardWidth = board.canvas.width;
+					const boardHeight = board.canvas.height;
+					ctx.font = "48px 'monospace'";
+					//ctx.font = "48px 'sans-serif'";
+					//ctx.textBaseline = "bottom";
+					//ctx.textAlign = "left";
+					let iter, totalEnergy, orbitEnergy;
+					[ iter, totalEnergy ] = theModule.getNow();
+					orbitEnergy = theModule.getStEnergy(dispOrbit);
+					
+					// clear board
+					ctx.fillStyle = "#111111";
+					ctx.fillRect( 0,0, boardWidth, boardHeight);
+					
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillText( "iter="+iter, 20, 55 );
+					ctx.fillText( "total energy="+totalEnergy.toFixed(6), 400, 55 );
+					const txt = "orbit("+dispOrbit+") energy="+orbitEnergy.toFixed(6);
+					ctx.fillText( txt, 20, 115 );
+				}
+			);
+			bboard.position.set(0,-250,-1);
+			
+		}
+		
+		// canvas2d-sprite update
+		if ( dispMode>=2 ) {
+			//cnvsprite.update( drawFunc )
+			cnvsprite.update(
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					theModule.draw( ctx, dispMode-2 );
+				}
+			);
+		}
+		
+		
+		// output to innerHTML
+		if (count % 20 == 0) {
+			let iter, totalEnergy, xMax=p_nx*p_dx;
+			[ iter, totalEnergy ] = theModule.getNow();
+			const msg = 
+				"box ="+xMax+"(au) ~"+(xMax*p_auLength*1.0e9).toFixed(2)+"(nm) "
+				+ ", iteration count ="+iter+"<br>"
+				+ "total energy(au)="+totalEnergy.toFixed(6)+"<br>"
+				+ "dispOrbit ="+dispOrbit
+				+ ", orbit energy(au) ="+theModule.getStEnergy(dispOrbit).toFixed(6);
+			document.getElementById("text_caption").innerHTML = msg
+
+			if (legendFlag && dispMode<2) {
+				let stateStr = "orbit) energy<br>";
+				for (let ist=v_stateMax-1; ist>=0; ist--) {
+					const ene = theModule.getStEnergy(ist).toFixed(6);
+					stateStr = stateStr + " "+ist+") "+ene+"<br>"
+				}
+				stateStr = stateStr+"<br>occupation<br>";
+				for (let ist=v_stateMax/2-1; ist>=0; ist--) {
+					const occ = theModule.getOccupation(ist);
+					const occStr = "<span style='color:hsl("+(180-90*occ)+",100%,50%)'>"+occ.toFixed(4)+"</span>"
+					stateStr = stateStr + " "+ist+") "+occStr+"<br>"
+				}
+				document.getElementById('textOnCanvas').innerHTML = stateStr;
+			} else {
+				document.getElementById('textOnCanvas').innerHTML = "";
+			}
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_colorLine function  ------------------------------
+	//
+	//    ver 0.0.0  2022.09.19 created, last updated on 2022.12.19
+	//
+	//  colorLine = m3js_colorLine( p_nx, xBoxSize )
+	//     p_nx: number of x-division
+	//     xBoxSize: x-box size in the threejs-world
+	//  
+	//  scene.add( colorLine );
+	//
+	//  colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+	//    x_y_z_color_function: function(i) { ... return [ x, y, z, color ]; }
+	//      (x,y,z): position, 
+	//      color: number: hue, 0...359
+	//             string: shch as 'red', '#ff0000', 'rgb(255,0,0)', 'hsl(0,100%,50%)'
+	//
+	//  colorLine.visible = false
+	//
+	
+	function m3js_colorLine( p_nx, xBoxSize ) {
+		const nx = p_nx;
+		const hh = xBoxSize/p_nx;
+		let colorLine;
+		
+ 		const geometry = new THREE.BufferGeometry();
+ 		const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+		const positions = new Float32Array( nx * 3 );
+		const colors = new Float32Array( nx * 3 );
+		geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+		geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+		geometry.setDrawRange( 0, nx );
+    	colorLine = new THREE.Line(geometry,material);
+		
+		colorLine.update = colorLine_update;
+		
+		return colorLine;
+		
+		
+		function colorLine_update( x_y_z_color_function ) {
+			const line = colorLine;
+			const positions = line.geometry.attributes.position.array;
+			const colors = line.geometry.attributes.color.array;
+			for (let i=0; i<nx; i++) {
+				let x, y, z, col;
+				[ x, y, z, col ] = x_y_z_color_function(i);
+				positions[i*3]   = x;
+				positions[i*3+1] = y;
+				positions[i*3+2] = z;
+				if ( col==undefined ) col = 'yellow';
+				const colorStr = ( typeof(col) == 'string' ) ? col : `hsl(${col},100%,50%)`;
+				const colr = new THREE.Color( colorStr );
+				colors[i*3]   = colr.r;
+				colors[i*3+1] = colr.g;
+				colors[i*3+2] = colr.b;
+			}
+			line.geometry.attributes.position.needsUpdate = true;
+			line.geometry.attributes.color.needsUpdate = true;
+			colorLine.visible = true;
+		}
+	
+	}
+	
+	// -----------------------  m3js_colorLine function end
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+	
+	// -----------------------  m3js_canvasBoard function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.15 created, last updated on 2022.12.21
+	//
+	// aboard = m3js_canvasBoard( boardWidth, boardHeight, canvasHeight )
+	//     boardWidth: world width of board object
+	//     boardHeight: world height of board object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( aboard );
+	//
+	// aboard.update( drawFunc )
+	//     drawFunc: draw(aboard)
+	// 
+	// aboard.visible = true|false;
+	//
+	
+	function m3js_canvasBoard( boardWidth, boardHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(boardWidth*canvasHeight/boardHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "48px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		const geometry = new THREE.PlaneGeometry(boardWidth, boardHeight);
+		const material = new THREE.MeshBasicMaterial( 
+			{ side:THREE.DoubleSide, map:texture, transparent:true, opacity:1.0 } );
+		const board = new THREE.Mesh(geometry, material);
+		
+		board.canvas = canvas;
+		board.ctx = ctx;
+		board.texture = texture;
+		board.visible = false;
+		board.update =
+			function( drawFunc ) {
+				drawFunc(board);
+				board.visible = true;
+				board.texture.needsUpdate = true;
+			};
+		return board;
+	}
+	
+	// -----------------------  m3js_canvasBoard end
+	
+	
+	// ----------  dom control
+
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function reset() {
+		resetFlag = 1;
+	}
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = (pauseFlag+1)%2; 
+		if (pauseFlag==0) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==1 ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() {
+		stepFlag = 1;
+	}
+	
+	
+	function setTheme() {  // select theme
+		v_vIndex = 0 + document.getElementById("slct_theme").selectedIndex;
+		resetFlag = 1;
+	}
+
+	function setNelectron() {  // select theme
+		let ne = 0 + document.getElementById("slct_Nelectron").selectedIndex;
+		v_nElectron = ne;
+		neChanged = true;
+		resetFlag = 1;
+	}
+
+	function setDispMode() {  // select dispMode
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+		if ( dispMode==0 || dispMode==1 ) {
+			document.getElementById("slct_orbit").style.visibility = "visible";
+		} else {
+			document.getElementById("slct_orbit").style.visibility = "hidden";
+		}
+		dispModeChanged = true;
+	}
+
+	function setOrbit() {  // select dispOrbit
+		dispOrbit = 0 + document.getElementById("slct_orbit").selectedIndex;
+	}
+
+	function setLegendFlag() {  // select dispMode
+		const leg = 0 + document.getElementById("slct_legend").selectedIndex;
+		legendFlag = (leg==1);
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		// dom control
+		reset:			reset,
+		pause:			pause,
+		step:			step,
+		setTheme:		setTheme,
+		setNelectron:	setNelectron,
+		
+		setDispMode:	setDispMode,
+		setOrbit:		setOrbit,
+		setLegendFlag:	setLegendFlag,
+		viewHome:		function() { viewHomeRequested = true; },
+	}
+
+})(); // ====================  tjs022 module end  ====================
+
+
+// event
+const tjs = tjs022;
+window.addEventListener('load', tjs.main );
+
+
+// --------------------  end of javaScript
+
+  </script>
+  <style type="text/css">
+    body { color:#000000; background-color:#fff8dd;}
+  </style>
+</head>
+
+<body>
+<p>[tjs022] Real Space DFT - Local Density Approxmation 1D</p>
+<div style="position: relative; overflow: hidden; width: 500px; height: 480px">
+  <canvas id="myCanvas" style="position: absolute; top: 0px; left: 0px"></canvas>
+  <div id="textOnCanvas" 
+    style="position:absolute; top:5px; left:5px; color:#99aa44; background-color:rgba(0, 0, 0, 0);
+           font-size:0.9rem"></div>
+</div>
+<label>theme:</label>
+<select id="slct_theme" onChange="tjs.setTheme()">
+<option selected>electrons in parabollic V=0.5x^2</option>
+<option>electrons in well V=0(|x|<4.0) =20.0(else)</option>
+<option>electrons in well V=-1(|x|<4.0) =20.0(else)</option>
+</select>
+<br>
+
+<label>number of electron:</label>
+<select id="slct_Nelectron" onChange="tjs.setNelectron()">
+<option>0</option><option>1</option><option>2</option><option>3</option><option selected>4</option>
+<option>5</option><option>6</option><option>7</option><option>8</option>
+</select>
+    <span style="margin-right: 160px;"></span>
+<button onClick="tjs.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="tjs.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="tjs.step()">step</button>
+<br>
+
+<label>disp mode:</label>
+<select id="slct_dispMode" onChange="tjs.setDispMode()">
+<option selected>density and orbit</option>
+<option> + Vext(x), Vh(x), Vxc(x)</option>
+<option>canvas2d - orbit</option>
+<option>canvas2d - density</option>
+<option>canvas2d - potential</option>
+</select>
+    <span style="margin-right: 10px;"></span>
+<label>orbit:</label>
+<!--<select id="slct_orbit" style="visibility: hidden;" onChange="setOrbit()"> -->
+<select id="slct_orbit" onChange="tjs.setOrbit()"> 
+<option selected>0</option><option>1</option><option>2</option><option>3</option><option>4</option>
+<option>5</option><option>6</option><option>7</option><option>8</option><option>9</option>
+</select>
+    <span style="margin-right: 20px;"></span>
+<label>figure legend:</label>
+<select id="slct_legend" onChange="tjs.setLegendFlag()">
+<option>off</option><option selected>on</option>
+</select>
+<br>
+
+<button onClick="tjs.viewHome()">return to initial view</button>
+    <span style="margin-right: 50px;"></span>
+drag mouse to rotate view point
+<br>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
+
