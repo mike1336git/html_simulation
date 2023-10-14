@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>tjs028_harmonicsDMC1D</title>
+  <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+  <!--
+  <script src="../lib/three.min.js"></script>
+  <script src="../lib/OrbitControls.js"></script>
+  -->
+  <script>
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tjs028_harmonicsDMC1D
+//    Copyright(C) 2022 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT )
+//
+//    ver 0.0.0  2022.01.01 created, last updated on 2022.01.04
+//    ver 0.0.1  2022.06.26 v1, last updated on 2022.12.26
+//    ver 0.0.2  2023.10.14 v2, last updated on 2023.10.14
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  diffusion Monte-Carlo method
+//
+//  DMC algorithm : I. Kosztin et. al.; e-print arXiv:physics/9702023v1 (1997)
+//                 "Introduction to the Diffusion Monte Carlo Method"
+//  (1) replica walk
+//     x -> x + sqrt(dt)*GaussianRandom
+//  (2) branch: replica birth-death (branching) processes
+//     weight function W
+//       W = exp( -(V-ER)*dt/hbar ) --> Wi ~ 1-(Vi-Ei)*dt/h
+//       m = int( wi + random[0-1] )
+//     if (m=0)  death
+//     if (m=1)  alive
+//     if (m=2)  alive + birth one replica
+//     if (m>=3) alive + birth two replica
+//  (3) count: number of replicas N1
+//  (4) energy calc
+//     ER(k+1) = ER(k) + (hbar/dt)(1-N1/N0)
+//        (N0: target number of replica)
+//  goto (1)
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const harmonicsDMC1D = (function(){ // ====================  harmonicsDMC1D Module  ====================
+
+	// au: atomic unit hBar=1,e=1,me=1,a0=1
+	const g_auLength = 5.29177211e-11;  // (m) 1(au) = auLength (m)
+	const g_auTime = 2.418884326e-17;   // (s) 1(au) = auTime (s)
+	const g_auEnergy = 4.35974465e-18;  // (J) 1(au) = auEnergy (J)
+	const g_au2eV = 27.211386;          // (eV) 1(au) = 27.211386 (eV)
+	const g_hbar = 1.0;                 // hbar = 1 in au(atomic unit)
+
+	let g_NNr = 2000;                   // number of replica
+	let g_NNb = 100;                    // max number of box division 0:x=-5.0 50:x=0.0 100:x=+5.0
+	let g_dx = 0.1;
+	let g_sysTime = 0.0;                // (au) system time
+	let g_timeStep = 0.1;               // (au) time division dt
+	let g_referenceEnergy = 0.0;        // (au) reference energy of the system
+	let g_energy = g_referenceEnergy;   // (au) system energy
+	let g_NN0 = g_NNr/2;                // memory of NN1
+	let g_NN1 = g_NN0;                  // number of alive replicas
+	let g_NN00 = 1000;                  // initial number of alive replicas
+	let g_vIndex = 0;                   // potential index 0:parabolic 1:well 2:well 2
+
+	let g_xBoxSize = 400;               // in pixel
+	let g_yBoxSize = 400;               // in pixel
+
+	const g_repStatus = dimInt1(g_NNr); // status of 1-th replica
+	const g_replica = dim2(g_NNr,3);    // replica[i][0] x-coordinate of 1-th replica
+	const g_box = dimInt1(g_NNb);       // box[ix] number of replica, ix = Math.floor(50.0+x*10+0.5);
+	const g_psi = dim1(g_NNb);          // wave function psi[ix]
+	const g_dens = dim1(g_NNb);         // density dens[ix] = a*psi[ix]*psi[ix], sum(dens[ix],ix)=1
+
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+
+	function dimInt1( n ) {
+		return new Int32Array( n );
+	}
+
+	function dim2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Float64Array( nj );
+		}
+		return a;
+	}
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition( vIndex ) {
+		const nnr = g_NNr;
+		g_vIndex = vIndex;
+		g_sysTime = 0.0;
+		for (let i=0; i<nnr; i++) {
+			g_repStatus[i] = 0;
+		}
+		const n0 = nnr/2;
+		for (let i=0; i<n0; i++) {
+			g_repStatus[i] = 1;
+			g_replica[i][0] = 4.0*Math.random()-2.0;
+		}
+		setPsi(0);
+		g_NN0 = numberOfReplica();
+		g_NN00 = g_NN0;
+	}
+
+
+	// --------------------  evolve DMC  --------------------
+
+	function evolveDMC( nCalc ) {
+		for (let i=0; i<nCalc; i++) {
+			walkReplica();
+		}
+	}
+
+	function walkReplica() {
+		const nnr = g_NNr, sqrtdt = Math.sqrt(g_timeStep);
+		g_sysTime = g_sysTime + g_timeStep;
+		// (1) replica walk
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) {
+				g_replica[i][0] += sqrtdt*GaussianRandom();
+			}
+		}
+		// (2) branch
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) {
+				birthDeathProcess(i);
+			}
+		}
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==2) {
+				g_repStatus[i] = 1;
+			}
+		}
+		// (3) count
+		g_NN1 = numberOfReplica();
+		// (4) energy
+		const er = g_referenceEnergy + g_hbar/g_timeStep*(1.0-(g_NN1+1.0)/(g_NN0+1.0)*(g_NN1+10.0*nnr)/(g_NN00+10.0*nnr));
+		g_NN0 = g_NN1;
+		g_referenceEnergy = er;
+		g_energy = 0.99*g_energy+0.01*g_referenceEnergy;
+		setPsi(1);
+		setDensity();
+	}
+
+	function GaussianRandom() {  //Box-Muller transform  
+		return Math.sqrt(-2*Math.log(1-Math.random()))*Math.sin(2*Math.PI*Math.random());
+	}
+
+	function birthDeathProcess( i ) {
+		const xi = g_replica[i][0];
+		const mn = Math.floor(weightFunction(xi)+Math.random());
+		if (mn==0) {
+			g_repStatus[i] = 0; // death replica
+		} else if (mn==2) {
+			birthReplica(i);
+		} else if (mn>=3) {
+			birthReplica(i);
+			birthReplica(i);
+		}
+	}
+
+	function weightFunction( xn ) {
+		return Math.exp(-(potential(xn,g_vIndex)-g_referenceEnergy)*g_timeStep/g_hbar);
+	}
+
+	function potential( x, vIndex ) {
+		let ret=0.0;
+		if (vIndex==0) { // 0:parabolic V(x)= 0.5*x^2
+			ret = 0.5*x*x;
+		} else if (vIndex==1) { // 1: well V(x)= 0.0(|x|<1.0) 10.0(else)
+			ret = (Math.abs(x)<1.0) ? 0.0 : 10.0;
+		} else if (vIndex==2) { // 2: well V(x)= -1(|x|<1.0) 0.0(else)
+			ret = (Math.abs(x)<1.0) ? -1.0 : 0.0;
+		}
+		return ret;
+	}
+
+	function birthReplica( i ) {
+		const ip = seekSpace(i);
+		if (ip>=0) {
+			g_repStatus[ip] = 2;
+			g_replica[ip][0] = g_replica[i][0];
+		}
+	}
+
+	function seekSpace( istart ) {
+		const nnr = g_NNr;
+		let ip = -1;
+		for (let i=1; i<nnr; i++) {
+			if (g_repStatus[(i+istart)%nnr]==0) {
+				ip = (i+istart)%nnr;
+				break;
+			}
+		}
+		return ip;
+	}
+
+	function numberOfReplica() {
+		const nnr = g_NNr;
+		let n = 0;
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) n+=1;
+		}
+		return n;
+	}
+
+	function setPsi( sw ) {
+		const nnr = g_NNr, nnb = g_NNb;
+		for (let ix=0; ix<nnb; ix++) {
+			g_box[ix] = 0;
+		}
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) {
+				const ix = Math.floor(50.0+g_replica[i][0]*10+0.5);
+				if (ix>=0 && ix<nnb) g_box[ix] += 1;
+			}
+		}
+		if (sw==1) {
+			for (let ix=0; ix<nnb; ix++) {
+				g_psi[ix] = 0.99*g_psi[ix]+0.01*g_box[ix];
+			}
+		} else {
+			for (let ix=0; ix<nnb; ix++) {
+				g_psi[ix] = g_box[ix];
+			}
+		}
+	}
+
+	function setDensity() {
+		const nnb = g_NNb, r = 1.0/Math.sqrt(g_NN0);
+		for (let ix=0; ix<nnb; ix++) {
+			g_dens[ix] = g_psi[ix]*g_psi[ix]*r;
+		}
+	}
+
+
+	// --------------------  draw  --------------------
+
+	function draw( ctx ) {
+		const xp = 50, yp = 280, sc = 3;
+
+		drawPsi(ctx, xp,yp,sc,"rgb(250,120,120");
+		ctx.fillStyle = "rgb(250,120,120";
+		ctx.fillText("wave function", 20, yp-20);
+		
+		drawPotential(ctx, xp,yp,sc,"rgb(0,150,0");
+		ctx.fillStyle = "rgb(0,150,0";
+		ctx.fillText("potential", 20, yp-60);
+
+		ctx.fillStyle = "rgb(80, 80, 80)"; // text
+		ctx.fillText("time = "+g_sysTime.toFixed(1), 20, g_yBoxSize-45);
+		ctx.fillText("energy = "+g_energy.toFixed(6), 20, g_yBoxSize-25);
+		ctx.fillText("number of replica = "+g_NN1, 20, g_yBoxSize-5);
+
+	}
+
+	function drawPsi( ctx, xp, yp, sc, color ) {
+		const nnb = g_NNb, mag = 3.0;
+
+		ctx.fillStyle = color;
+		for (let i=1; i<nnb; i++) {
+			const p = Math.floor(g_psi[i]*mag);
+			ctx.fillRect(xp+i*sc,yp-p, sc, p);
+		}
+	}
+
+	function drawPotential( ctx, xp, yp, sc, color ) {
+		const nnb = g_NNb, vmag = 20.0;
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		for (let i=1; i<nnb; i++) {
+			const p = potential(i*0.1-5.0,g_vIndex)*vmag;
+			ctx.lineTo(xp+i*sc, yp-p);
+		}
+		ctx.stroke();
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:           setInitialCondition,    // setInitialCondition( vIndex )
+		evolve:         evolveDMC,              // evolveDMC( nCalc )
+		draw:           draw,                   // draw( ctx )
+
+		getAUinSI:      function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:    function() { return [ g_NNr, g_NNb, g_dx, g_timeStep ]; },
+		getNow:         function() { return [ g_sysTime, g_energy, g_NN1 ]; },
+		getRepStatus:   function(ir) { return g_repStatus[ir]; },
+		getRepPos:      function(ir) { return g_replica[ir][0]; },
+		getPsi:         function(ix) { return g_psi[ix]; },
+		getVext:        function(ix) { return potential((ix-g_NNb/2)*g_dx,g_vIndex); },
+	};
+
+})(); // ====================  tjs028_harmonicsDMC1D end  ====================
+
+
+const tjs028 = (function(){ // ====================  tjs Module  ====================
+
+	const theModule = harmonicsDMC1D;
+	
+	// v_vIndex:	0: parabolic V(x)= 0.5*x^2
+	// 				1: well V(x)= 0.0(|x|<1.0) 10.0(else)
+	//				2: well V(x)= -1(|x|<1.0) 0.0(else)
+	let v_vIndex = 0;
+	let v_nCalc = 2;
+	
+	let p_auLength, p_auTime, p_auEnergy, p_au2eV // <-- theModule.getAUinSI()
+	let p_NNr, p_NNb, p_dx, p_dt; // <-- theModule.getSysParam()
+	
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let dispMode =  0; // 0:density, 1:1:orbit, 3:none
+	let dispModeChanged = false;
+	let viewHomeRequested = true;
+	let legendFlag = true;
+	let count = 0;
+	
+	// sizes in the threejs world
+	const boxSize = 500;
+	const x0 = boxSize/2;
+	const y0 = boxSize/2;
+	const z0 = x0;
+	let hh;
+	
+	// threejs world object
+	let cubes; // as replicas
+	let bline; // base line
+	let pline; // Vext(x)
+	let vline; // phi(x)
+	let line_box; // box
+	let cnvsprite;
+
+	// three.js , OrbitControls.js
+	const width = 500;
+	const height = 480;
+	const r_camera = 1300;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+
+	// --------------------  main
+	
+	function main() {
+		// constract renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+		
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, 0, r_camera);
+		controls = new THREE.OrbitControls(camera,renderer.domElement);
+		
+		initDom();
+		
+		constructScene();
+		animate();
+	}
+
+
+	function constructScene() {
+		
+		// init DMC1D
+		theModule.init( v_vIndex );
+		[ p_auLength, p_auTime, p_auEnergy, p_au2eV ] = theModule.getAUinSI();
+		[ p_NNr, p_NNb, p_dx, p_dt ] = theModule.getSysParam();
+		hh = boxSize/p_NNb;
+		
+		
+		// scene
+		scene = new THREE.Scene();
+ 
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xffffff, 0.4);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xffffff, 0.6);
+		scene.add(light);
+		
+		
+		// replica cube array
+		{
+			cubes = new THREE.Group();
+			cubes.array = [];
+			const geometry = new THREE.BoxGeometry(hh/2, hh/2, hh/2);
+			for ( let i=0; i<p_NNr; i++ ) {
+				const material = new THREE.MeshBasicMaterial({ color: 0x00dddd });
+				const cube = new THREE.Mesh( geometry, material );
+				cube.visible = false;
+				cubes.array[i] = cube;
+				cubes.add( cubes.array[i] );
+			}
+			scene.add( cubes );
+		}
+		
+		// base line, phi(x), Vext(x),
+		// colorLine = m3js_colorLine( p_nx, xBoxSize )
+		bline = m3js_colorLine( p_NNb, boxSize );
+		scene.add( bline );
+		pline = m3js_colorLine( p_NNb, boxSize );
+		scene.add( pline );
+		vline = m3js_colorLine( p_NNb, boxSize );
+		scene.add( vline );
+		
+		// line box
+		{
+			const geometry = new THREE.BoxGeometry( boxSize, boxSize, boxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial({ color: 0x666644 }) );
+			scene.add( line_box );
+		}
+
+		// canvas sprite
+		//cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 600, 600, 400 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+		
+	}
+
+
+	// loop animation
+	function animate() {
+		
+		// select theme
+		if (resetFlag==1) {
+			resetFlag = 0;
+
+			constructScene();
+			dispModeChanged = true;
+			count = 0;
+		}
+		
+		//  clear objects
+		if (dispModeChanged) {
+			dispModeChanged = false;
+			
+			line_box.visible = (dispMode==0) ? true : false;
+			cubes.visible = false;
+			bline.visible = false;
+			pline.visible = false;
+			vline.visible = false;
+			cnvsprite.visible = false;
+		}
+		
+		if ( viewHomeRequested ) {
+			camera.position.set(0, 0, r_camera);
+			viewHomeRequested = false;
+		}
+		
+		// DMC1D update
+		if (pauseFlag==0) {
+			theModule.evolve( v_nCalc );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( 1 );
+		}
+
+		// baseline, psi(x), Vext(x) update
+		if ( dispMode==0 ) {
+			const pmag = 3.0;
+			const vmag = 20.0;
+			
+			// colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+			// base line
+			bline.update( function(i) { return [ i*hh-x0, 0, -1, "#888888" ]; } );
+			// psi(x)
+			pline.update( function(i) { return [ i*hh-x0, pmag*theModule.getPsi(i), 1, "#dd0000" ]; } );
+			// Vet(x)
+			vline.update( function(i) { return [ i*hh-x0, vmag*theModule.getVext(i), 0, "#00dd00" ]; } );
+		}
+		
+		// replica cube array update
+		if (dispMode==0) {
+			const nn = p_NNr;
+			const yPosRep = -0.5*y0;
+			for ( let i=0; i<nn; i++ ) {
+				const cube = cubes.array[i];
+				if (theModule.getRepStatus(i)==0) { // replica - not alive
+					cube.visible = false;
+					continue;
+				}
+				cube.position.set(40.0*theModule.getRepPos(i), yPosRep, 0.25*(i-nn/2));
+				cube.visible = true;
+			}
+			cubes.visible = true;
+		}
+		
+		// sprite update
+		if ( dispMode==1 ) {
+			//cnvsprite.update( drawFunc )
+			cnvsprite.update(
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					theModule.draw( ctx );
+				}
+			);
+		}
+		
+		// output to innerHTML
+		if (count % 20 == 0) {
+			let time, energy, nn1;
+			[ time, energy, nn1 ] = theModule.getNow();
+			const msg = 
+				"box =10.0 (au) ~"+(10.0*p_auLength*1.0e9).toFixed(2)+"(nm) "
+				+ ", time(au) ="+time.toFixed(1)+"<br>"
+				+ "total energy(au)="+energy.toFixed(6)
+				+ ", number of alive replicas ="+nn1;
+			document.getElementById("text_caption").innerHTML = msg;
+			
+			if (legendFlag && dispMode==0) {
+				let msg = "<span style='margin-right: 30px;'></span>"
+					+ "<span style='color:hsl(120,100%,50%)'>potential</span>"
+					+ ",<span style='margin-right: 20px;'></span>"
+					+ "<span style='color:hsl(0,100%,50%)'>wave function</span>"
+					+ ",<span style='margin-right: 20px;'></span>"
+					+ "<span style='color:#00dddd'>alive replicas(z:array index)</span>"
+				document.getElementById('textOnCanvas').innerHTML = msg;
+			} else {
+				document.getElementById('textOnCanvas').innerHTML = "";
+			}
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_colorLine function  ------------------------------
+	//
+	//    ver 0.0.0  2022.09.19 created, last updated on 2022.12.19
+	//
+	//  colorLine = m3js_colorLine( p_nx, xBoxSize )
+	//     p_nx: number of x-division
+	//     xBoxSize: x-box size in the threejs-world
+	//  
+	//  scene.add( colorLine );
+	//
+	//  colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+	//    x_y_z_color_function: function(i) { ... return [ x, y, z, color ]; }
+	//      (x,y,z): position, 
+	//      color: number: hue, 0...359
+	//             string: shch as 'red', '#ff0000', 'rgb(255,0,0)', 'hsl(0,100%,50%)'
+	//
+	//  colorLine.visible = false
+	//
+	
+	function m3js_colorLine( p_nx, xBoxSize ) {
+		const nx = p_nx;
+		const hh = xBoxSize/p_nx;
+		let colorLine;
+		
+ 		const geometry = new THREE.BufferGeometry();
+ 		const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+		const positions = new Float32Array( nx * 3 );
+		const colors = new Float32Array( nx * 3 );
+		geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+		geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+		geometry.setDrawRange( 0, nx );
+    	colorLine = new THREE.Line(geometry,material);
+		
+		colorLine.update = colorLine_update;
+		
+		return colorLine;
+		
+		
+		function colorLine_update( x_y_z_color_function ) {
+			const line = colorLine;
+			const positions = line.geometry.attributes.position.array;
+			const colors = line.geometry.attributes.color.array;
+			for (let i=0; i<nx; i++) {
+				let x, y, z, col;
+				[ x, y, z, col ] = x_y_z_color_function(i);
+				positions[i*3]   = x;
+				positions[i*3+1] = y;
+				positions[i*3+2] = z;
+				if ( col==undefined ) col = 'yellow';
+				const colorStr = ( typeof(col) == 'string' ) ? col : `hsl(${col},100%,50%)`;
+				const colr = new THREE.Color( colorStr );
+				colors[i*3]   = colr.r;
+				colors[i*3+1] = colr.g;
+				colors[i*3+2] = colr.b;
+			}
+			line.geometry.attributes.position.needsUpdate = true;
+			line.geometry.attributes.color.needsUpdate = true;
+			colorLine.visible = true;
+		}
+	
+	}
+	
+	// -----------------------  m3js_colorLine function end
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+	
+	// ----------  dom control
+
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = (pauseFlag+1)%2; 
+		if (pauseFlag==0) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==1 ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		// dom control
+		reset:			function() { resetFlag = 1; },
+		pause:			pause,			// pause();
+		step:			function() { stepFlag = 1; },
+		setTheme:		function() {
+							v_vIndex = 0 + document.getElementById("slct_theme").selectedIndex;
+							resetFlag = 1;
+						},
+		setHeatSW:		function( qq ) { heatSW = qq; },
+		setDispMode:	function() {
+							dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+							dispModeChanged = true;	
+						},
+		setLegendFlag:	function() {
+							const leg = 0 + document.getElementById("slct_legend").selectedIndex;
+							legendFlag = (leg==1);
+						},
+		viewHome:		function() { viewHomeRequested = true; },
+		
+	};
+
+})(); // ====================  tjs028 module end  ====================
+
+
+// event
+const tjs = tjs028;
+window.addEventListener('load', tjs.main );
+
+
+//--------------------  end of javaScript
+
+  </script>
+  <style type="text/css">
+    body { color:#000000; background-color:#fff8dd;}
+  </style>
+</head>
+
+<body>
+<p>[tjs028] Diffusion Monte-Carlo Method 1D</p>
+<div style="position: relative; overflow: hidden; width: 500px; height: 480px">
+  <canvas id="myCanvas" style="position: absolute; top: 0px; left: 0px"></canvas>
+  <div id="textOnCanvas" 
+    style="position:absolute; top:5px; left:5px; color:#99aa44; background-color:rgba(0, 0, 0, 0); "></div>
+</div>
+
+<label>theme:</label>
+<select id="slct_theme" onChange="tjs.setTheme()">
+<option selected>in parabolic V(x)= 0.5*x^2</option>
+<option>in well V(x)= 0.0(|x|<1.0) 10.0(else)</option>
+<option>in well V(x)= -1(|x|<1.0) 0.0(else)</select>
+    <span style="margin-right: 20px;"></span>
+<button onClick="tjs.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="tjs.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="tjs.step()">step</button>
+<br>
+
+<label>disp mode:</label>
+<select id="slct_dispMode" onChange="tjs.setDispMode()">
+<option>threejs</option><option>canvas2d</option>
+</select>
+<br>
+
+<label>legend:</label>
+<select id="slct_legend" onChange="tjs.setLegendFlag()">
+<option>off</option><option selected>on</option>
+</select>
+    <span style="margin-right: 20px;"></span>
+<button onClick="tjs.viewHome()">return to initial view</button>
+    <span style="margin-right: 20px;"></span>
+drag mouse to rotate view point
+<br>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
