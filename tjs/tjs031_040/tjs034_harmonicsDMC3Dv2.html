@@ -1,0 +1,1525 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>tjs034_harmonicsDMC3D</title>
+  <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+  <!--
+  <script src="../lib/three.min.js"></script>
+  <script src="../lib/OrbitControls.js"></script>
+  -->
+  <script>
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tjs034_harmonicsDMC3D
+//    Copyright(C) 2022 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2022.01.11 created, last updated on 2022.01.12
+//    ver 0.0.1  2022.07.04 v1, last updated on 2022.12.28
+//    ver 0.0.2  2023.10.20 v2, last updated on 2023.10.20
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  diffusion Monte-Carlo method
+//
+// DMC algorithm : I. Kosztin et. al.; e-print arXiv:physics/9702023v1 (1997)
+//                 "Introduction to the Diffusion Monte Carlo Method"
+// (1) replica walk
+//     x -> x + sqrt(dt)*GaussianRandom
+// (2) branch: replica birth-death (branching) processes
+//     weight function W
+//       W = exp( -(V-ER)*dt/hbar ) --> Wi nearly= 1-(Vi-Ei)*dt/h
+//       m = int( wi + random[0-1] )
+//     if (m=0)  death
+//     if (m=1)  alive
+//     if (m=2)  alive + birth one replica
+//     if (m>=3) alive + birth two replica
+// (3) count: number of replicas N1
+// (4) energy calc
+//     ER(k+1) = ER(k) + (hbar/dt)(1-N1/N0)
+//        (N0: target number of replica)
+// goto (1)
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const harmonicsDMC3D = (function(){ // ====================  harmonicsDMC3D Module  ====================
+
+	// au: atomic unit hBar=1,e=1,me=1,a0=1
+	const g_auLength = 5.29177211e-11;  // (m) 1(au) = auLength (m)
+	const g_auTime = 2.418884326e-17;   // (s) 1(au) = auTime (s)
+	const g_auEnergy = 4.35974465e-18;  // (J) 1(au) = auEnergy (J)
+	const g_au2eV = 27.211386;          // (eV) 1(au) = 27.211386 (eV)
+	const g_hbar = 1.0;                 // hbar = 1 in au(atomic unit)
+
+	let g_count = 0;
+	let g_NNr = 2000;                   // number of replica
+	let g_NNb = 40;                     // max number of box division 0:x=-5.0 50:x=0.0 100:x=+5.0
+	let g_sysTime = 0.0;                // (au) system time
+	let g_dt = 0.1;                     // (au) time division
+	let g_dx = 0.5;                     // (au) x-division, boxSize = NNb*dx
+	let g_dy = 0.5;                     // (au) y-division, boxSize = NNb*dy
+	let g_dz = 0.5;                     // (au) z-division, boxSize = NNb*dz
+	let g_referenceEnergy = 0.0;        // (au) reference energy of the system
+	let g_energy = g_referenceEnergy;   // (au) system energy
+	let g_energy100 = g_energy;
+	let g_energy10000 = g_energy;
+	let g_NN0 = g_NNr/2;                // memory of NN1
+	let g_NN1 = g_NN0;                  // number of alive replicas
+	let g_NN00 = 1000;                  // initial number of alive replicas
+	let g_vIndex = 0;                   // potential index 0:parabolic 1:well 2:well 2
+
+	let g_xBoxSize = 400;               // in pixel
+	let g_yBoxSize = 400;               // in pixel
+
+	const g_repStatus = dimInt1(g_NNr);         // status of i-th replica
+	const g_replica = dim2(g_NNr,3);            // replica[i][0] x-coordinate of i-th replica
+	const g_box = dimInt3(g_NNb,g_NNb,g_NNb);   // box[ix][iy][iz] number of replica
+	const g_psi = dim3(g_NNb,g_NNb,g_NNb);      // wave function psi[ix][iy][iy]
+
+	function dimInt1( n ) {
+		return new Int32Array( n );
+	}
+
+	function dim2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Float64Array( nj );
+		}
+		return a;
+	}
+
+	function dim3( ni, nj, nk ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = [];
+			for (let j=0; j<nj; j++) {
+				a[i][j] = new Float64Array( nk );
+			}
+		}
+		return a;
+	}
+
+	function dimInt3( ni, nj, nk ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = [];
+			for (let j=0; j<nj; j++) {
+				a[i][j] = new Int32Array( nk );
+			}
+		}
+		return a;
+	}
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition( theme ) {
+		const nnr = g_NNr, n0 = nnr/2;
+		g_vIndex = theme;
+		g_count = 0;
+		g_sysTime = 0.0
+		for (let i=0; i<nnr; i++) {
+			g_repStatus[i] = 0;
+		}
+		for (let i=0; i<n0; i++) {
+			g_repStatus[i] = 1;
+			g_replica[i][0] = 4.0*Math.random()-2.0;
+			g_replica[i][1] = 4.0*Math.random()-2.0;
+			g_replica[i][2] = 4.0*Math.random()-2.0;
+		}
+		g_NN0 = g_NN00;
+		g_NN1 = g_NN0;
+		g_referenceEnergy = 0.0;
+	}
+
+	function averagedPotential() {
+		const nnr = g_NNr;
+		let s = 0.0, n = 0;
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) {
+				n += 1;
+				s += potential(g_replica[i][0],g_replica[i][1],g_replica[i][2]);
+			}
+		}
+		return s/n;
+	}
+
+
+	// --------------------  evolve DMC  --------------------
+
+	function evolveDMC( nCalc ) {
+		for (let i=0; i<nCalc; i++) {
+			walkReplica();
+			g_count++;
+		}
+	}
+
+	function walkReplica() {
+		const nnr = g_NNr, sqrtdt = Math.sqrt(g_dt);
+		g_sysTime = g_sysTime + g_dt
+		// (1) replica walk
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) {
+				g_replica[i][0] += sqrtdt*GaussianRandom();
+				g_replica[i][1] += sqrtdt*GaussianRandom();
+				g_replica[i][2] += sqrtdt*GaussianRandom();
+			}
+		}
+		// (2) branch
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) {
+				birthDeathProcess(i);
+			}
+		}
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==2) {
+				g_repStatus[i] = 1;
+			}
+		}
+		// (3) count
+		g_NN1 = numberOfReplica();
+		// (4) energy
+		const er = g_referenceEnergy + g_hbar/g_dt*(1.0-(g_NN1+1.0)/(g_NN0+1.0)*(g_NN1+10.0*nnr)/(g_NN00+10.0*nnr));
+		g_NN0 = g_NN1;
+		g_referenceEnergy = er;
+		g_energy100 = 0.99*g_energy100 + 0.01*g_referenceEnergy;
+		if (g_count>500) {
+			g_energy = 0.999*g_energy+0.001*g_referenceEnergy;
+		} else {
+			g_energy = g_energy100;
+		}
+		if (g_count>5000) {
+			g_energy10000 = 0.9999*g_energy10000+0.0001*g_referenceEnergy;
+		} else {
+			g_energy10000 = g_energy;
+		}
+		setPsi(1);
+	}
+
+	function GaussianRandom() {
+		//Box-Muller transform  
+		return Math.sqrt(-2*Math.log(1-Math.random()))*Math.sin(2*Math.PI*Math.random());
+	}
+
+	function birthDeathProcess( i ) {
+		const xi = g_replica[i][0], yi = g_replica[i][1], zi = g_replica[i][2];
+		const mn = Math.floor(weightFunction(xi,yi,zi) + Math.random());
+		if (mn==0) {
+			g_repStatus[i] = 0; // death replica
+		} else if (mn==2) {
+			birthReplica(i);
+		} else if (mn>=3) {
+			birthReplica(i);
+			birthReplica(i);
+		}
+	}
+
+	function weightFunction( xn, yn, zn ) {
+		return Math.exp(-(potential(xn,yn,zn,g_vIndex)-g_referenceEnergy)*g_dt/g_hbar);
+	}
+
+	function potential( x, y, z, vIndex ) {
+		let ret = 0, r;
+		if (vIndex==0) { // parabolic
+			ret = 0.5*(x*x+y*y+z*z);
+		} else if (vIndex==1) { // well
+			ret = (Math.sqrt(x*x+y*y+z*z)<3.0) ? 0.0 : 20.0;
+		} else if (vIndex==2) { // H like
+			r = Math.max(Math.sqrt(x*x+y*y+z*z),0.025);
+			ret = -1.0/r;
+		}  else if (vIndex==3) { // Na like empty core
+			r = Math.sqrt(x*x+y*y+z*z);
+			ret = (r>1.70) ? -1.0/r : 0.0 ;
+		}
+		return ret;
+	}
+
+	function birthReplica( i ) {
+		const ip = seekSpace(i);
+		if (ip>=0) {
+			g_repStatus[ip] = 2; // marked
+			g_replica[ip][0] = g_replica[i][0];
+			g_replica[ip][1] = g_replica[i][1];
+			g_replica[ip][2] = g_replica[i][2];
+		}
+	}
+
+	function seekSpace( istart ) {
+		const nnr = g_NNr;
+		let ip = -1;
+		for (let i=1; i<nnr; i++) {
+			if (g_repStatus[(i+istart)%nnr]==0) {
+				ip = (i+istart)%nnr;
+				break;
+			}
+		}
+		return ip;
+	}
+
+	function numberOfReplica() {
+		const nnr = g_NNr;
+		let n = 0;
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) n += 1;
+		}
+		return n;
+	}
+
+	function setPsi(sw) {
+		const nnr = g_NNr, nnb = g_NNb;
+		for (let ix=0; ix<nnb; ix++) {
+			for (let iy=0; iy<nnb; iy++) {
+				for (let iz=0; iz<nnb; iz++) {
+					 g_box[ix][iy][iz] = 0;
+				}
+			}
+		}
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) {
+				const ix = Math.floor(nnb/2+g_replica[i][0]/g_dx);
+				const iy = Math.floor(nnb/2+g_replica[i][1]/g_dy);
+				const iz = Math.floor(nnb/2+g_replica[i][2]/g_dz);
+				if (ix>=0 && ix<nnb && iy>=0 && iy<nnb && iz>=0 && iz<nnb) g_box[ix][iy][iz] += 1;
+			}
+		}
+
+		if (sw==1) {
+			for (let ix=0; ix<nnb; ix++) {
+				for (let iy=0; iy<nnb; iy++) {
+					for (let iz=0; iz<nnb; iz++) {
+						g_psi[ix][iy][iz] = 0.99*g_psi[ix][iy][iz]+0.01*g_box[ix][iy][iz];
+					}
+				}
+			}
+		} else {
+			for (let ix=0; ix<nnb; ix++) {
+				for (let iy=0; iy<nnb; iy++) {
+					for (let iz=0; iz<nnb; iz++) {
+						g_psi[ix][iy][iz] = g_box[ix][iy][iz];
+					}
+				}
+			}
+		}
+	}
+
+
+	// --------------------  interface to 3D graphic 
+
+	const g_NNx=g_NNb, g_NNy=g_NNb, g_NNz=g_NNb;
+
+	// --------------------  graphics 3D (field) module  --------------------
+	// ver 0.0.1  2018.12.16  last updated on 2022.06.23
+	// external var g_NNx,g_NNy,g_NNz,g_dx,g_dy,g_dz, g_canvas, g_ctx
+
+	const g3d = {};				// namespace of graphic 3D module
+
+	g3d.mouseDownFlag = 0;		// 1:on mouse down, 0:else
+	g3d.x_mouse = 0;			// x-position of mouse
+	g3d.y_mouse = 0;			// y-position of mouse
+	g3d.x0_mouse = 0;			// drag-started x-position of mouse
+	g3d.y0_mouse = 0;			// drag-started y-position of mouse
+
+	g3d.xMax = g_NNx*g_dx;		// x-length of box
+	g3d.yMax = g_NNy*g_dy;		// y-length of box
+	g3d.zMax = g_NNz*g_dz;		// z-length of box
+	g3d.cx0 = 0.5*g3d.xMax;		// x-component of rotate center
+	g3d.cy0 = 0.5*g3d.yMax;		// y-component of rotate center
+	g3d.cz0 = 0.5*g3d.zMax;		// z-component of rotate center
+	g3d.Ax = Math.PI/12.0;		// rotate angle around x-axis
+	g3d.Ay = Math.PI*5.0/6.0;	// rotate angle around y-axis
+	g3d.ddAy = 0.0;				// Ay change rate for auto-rotate: eg. dday=0.5*Math.PI/180
+	g3d.cosAx = 0.0;			// cosAx=Math.cos(Ax)
+	g3d.sinAx = 0.0;			// sinAx=Math.sin(Ax)
+	g3d.cosAy = 0.0;			// cosAy=Math.cos(Ay)
+	g3d.sinAy = 0.0;			// sinAy=Math.sin(Ay)
+
+	g3d.xApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.yApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.zApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.pxApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.pyApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.pzApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
+	g3d.boxApex = [[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1], [1,0,1], [0,1,1], [1,1,1] ];
+	g3d.boxEdge = [[0,1,9], [0,2,9], [0,4,9], [1,3,9], [1,5,9], [2,3,9], 
+					[2,6,9], [3,7,9], [4,5,9], [4,6,9], [5,7,9], [6,7,9] ];
+
+	g3d.setRotateAngle = function(AxInDegree,AyInDegree) {
+		g3d.Ax = AxInDegree*Math.PI/180.0;
+		g3d.Ay = AyInDegree*Math.PI/180.0;
+	};
+
+	// --- set mouse on canvas
+
+	g3d.setMouseOnCanvas = function() {
+		g_canvas.addEventListener('mousemove', g3d.mouse_move);
+		g_canvas.addEventListener('mousedown', g3d.mouse_down);
+		g_canvas.addEventListener('mouseup', g3d.mouse_up);
+	};
+
+	g3d.mouse_move = function(e) {
+		const pi = Math.PI;
+		if (g3d.mouseDownFlag==1) {
+			g3d.x_mouse = e.clientX;
+			g3d.y_mouse = e.clientY;
+			g3d.Ay = g3d.Ay + 0.5*(g3d.x_mouse-g3d.x0_mouse)*pi/180;
+			if (g3d.Ay<-pi) g3d.Ay += 2*pi;
+			if (g3d.Ay>pi) g3d.Ay += -2*pi;
+			g3d.Ax = g3d.Ax + 0.5*(g3d.y_mouse-g3d.y0_mouse)*pi/180;
+			if (g3d.Ax<-0.5*pi) g3d.Ax = -0.5*pi;
+			if (g3d.Ax>0.5*pi) g3d.Ax = 0.5*pi;
+			g3d.x0_mouse = g3d.x_mouse;
+			g3d.y0_mouse = g3d.y_mouse;
+		}
+	};
+
+	g3d.mouse_down = function(e) {
+		if (g3d.mouseDownFlag==0) {
+			g3d.x0_mouse = e.clientX;
+			g3d.y0_mouse = e.clientY;
+			g3d.x_mouse = g3d.x0_mouse;
+			g3d.y_mouse = g3d.y0_mouse;
+			g3d.mouseDownFlag = 1;
+		}
+	};
+
+	g3d.mouse_up = function(e) {
+		if (g3d.mouseDownFlag==1) {
+			g3d.mouseDownFlag = 0;
+		}
+	};
+
+	// --- 3D graphics aid
+	
+	g3d.setSize = function() {
+		g3d.xMax = g_NNx*g_dx;		// x-length of box
+		g3d.yMax = g_NNy*g_dy;		// y-length of box
+		g3d.zMax = g_NNz*g_dz;		// z-length of box
+		g3d.cx0 = 0.5*g3d.xMax;		// x-component of rotate center
+		g3d.cy0 = 0.5*g3d.yMax;		// y-component of rotate center
+		g3d.cz0 = 0.5*g3d.zMax;		// z-component of rotate center
+	};
+
+	g3d.set3DRotateXY = function(rotateRateOfAyInDegree) {
+		g3d.ddAy = rotateRateOfAyInDegree*Math.PI/180.0;
+		g3d.Ay= g3d.Ay + g3d.ddAy; // auto-rotate : if (ddAy==0.0), stop
+		if (g3d.Ay>Math.PI) g3d.Ay = g3d.Ay - 2.0*Math.PI;
+		if (g3d.Ay<-Math.PI) g3d.Ay = g3d.Ay + 2.0*Math.PI;
+		g3d.setBox();           // set box apex
+		g3d.setRotateXY(g3d.Ax,g3d.Ay); // set rotate param
+		g3d.rotateApexXY();     // box Apex rotate--> pxApex[i],pyApex[i],pzApex[i]
+		g3d.markFarEdge();      // boxEdge[iEdge][2]=1:far side edge or 0:near side edge
+	};
+
+	g3d.setBox = function() {
+		for (let i=0; i<8; i++) {
+			g3d.xApex[i] = g3d.boxApex[i][0]*g3d.xMax;
+			g3d.yApex[i] = g3d.boxApex[i][1]*g3d.yMax;
+			g3d.zApex[i] = g3d.boxApex[i][2]*g3d.zMax;
+		}
+	};
+
+	g3d.setRotateXY = function(angleX,angleY) {
+		g3d.cosAx = Math.cos(angleX);
+		g3d.sinAx = Math.sin(angleX);
+		g3d.cosAy = Math.cos(angleY);
+		g3d.sinAy = Math.sin(angleY);
+		g3d.cx0 = 0.5*g3d.xMax;
+		g3d.cy0 = 0.5*g3d.yMax;
+		g3d.cz0 = 0.5*g3d.zMax;
+	};
+
+	g3d.rotateApexXY = function() { // rotate box apex
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
+		for (let i=0; i<8; i++) {
+			g3d.pxApex[i] = cosAy*(g3d.xApex[i]-cx0)+sinAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cx0;
+			g3d.pyApex[i] = cosAx*(g3d.yApex[i]-cy0)-sinAx*(g3d.zApex[i]-cz0) + cy0;
+			g3d.pzApex[i] =-sinAy*(g3d.xApex[i]-cx0)+cosAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cz0;
+		}
+	};
+
+	g3d.markFarEdge = function() {
+		//seek far apex --> iMin
+		let zMin = g3d.pzApex[0];
+		let iMin = 0;
+		for (let i=1; i<8; i++) {
+			if (zMin>g3d.pzApex[i]) {
+				zMin = g3d.pzApex[i];
+				iMin = i;
+			}
+		}
+		//mark far edge
+		for (let iEdge=0; iEdge<12; iEdge++) {
+			g3d.boxEdge[iEdge][2] = 0;
+			if (g3d.boxEdge[iEdge][0]==iMin || g3d.boxEdge[iEdge][1]==iMin) g3d.boxEdge[iEdge][2] = 1;
+		}
+	};
+
+	g3d.drawRotatedDisc = function(ctx, x,y,z,r,color,sc,xp,yp) {
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
+		const x1 = cosAy*(x-cx0)+sinAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cx0
+		const y1 = cosAx*(y-cy0)-sinAx*(z-cz0) + cy0
+		//z1 =-sinAy*(x-cx0)+cosAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cz0
+		g3d.drawDisc(ctx, x1*sc+xp,y1*sc+yp,r,color);
+	};
+
+	g3d.drawRotatedLine = function(ctx, x1,y1,z1,x2,y2,z2,color,sc,xp,yp) {
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
+		const x1p = cosAy*(x1-cx0)+sinAy*(sinAx*(y1-cy0)+cosAx*(z1-cz0)) + cx0
+		const y1p = cosAx*(y1-cy0)-sinAx*(z1-cz0) + cy0
+		const x2p = cosAy*(x2-cx0)+sinAy*(sinAx*(y2-cy0)+cosAx*(z2-cz0)) + cx0
+		const y2p = cosAx*(y2-cy0)-sinAx*(z2-cz0) + cy0
+		g3d.drawLine(ctx, x1p*sc+xp,y1p*sc+yp,x2p*sc+xp,y2p*sc+yp,color);
+	};
+
+	g3d.plotNearEdge = function(ctx, sc,xp,yp,color) {
+		for (let iEdge=0; iEdge<12; iEdge++) {
+			if (g3d.boxEdge[iEdge][2]==0) { //far edge mark = 1
+				g3d.plotEdge(ctx, iEdge,sc,xp,yp,color);
+			}
+		}
+	};
+
+	g3d.plotFarEdge = function(ctx, sc,xp,yp,color) {
+		for (let iEdge=0; iEdge<12; iEdge++) {
+			if (g3d.boxEdge[iEdge][2]==1) { //far edge mark = 1
+				g3d.plotEdge(ctx, iEdge,sc,xp,yp,color);
+			}
+		}
+	};
+
+	g3d.plotEdge = function(ctx, iEdge,sc,xp,yp,color) {
+		let iApex = g3d.boxEdge[iEdge][0];
+		const x1=g3d.pxApex[iApex]*sc+xp, y1=g3d.pyApex[iApex]*sc+yp;
+		iApex = g3d.boxEdge[iEdge][1];
+		const x2=g3d.pxApex[iApex]*sc+xp, y2=g3d.pyApex[iApex]*sc+yp;
+		g3d.drawLine(ctx, x1, y1, x2, y2, color);
+	};
+
+	g3d.drawLine = function(ctx, x1, y1, x2, y2, color) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	};
+
+	g3d.drawDisc = function(ctx, x, y, r, color) {
+		ctx.fillStyle = color;
+		ctx.beginPath();
+		ctx.arc(x, y, r, 0, 2*Math.PI, false);
+		ctx.fill();
+	};
+
+	g3d.drawField3D = function(ctx,rotAngle, ff,mag,zk,sc,xp,yp,colorMode,hsl3) {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+		let isFunction=false;
+
+		if (typeof(ff)==='function') isFunction = true;
+		g3d.set3DRotateXY(rotAngle);
+		g3d.plotFarEdge(ctx, sc,xp,yp,"rgb(160,160,0)"); // dark yellow
+		for (let ii=0; ii<nnx; ii++) {
+			let i=ii; if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
+			for (let jj=0; jj<nny; jj++) {
+				let j=jj; if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
+				for (let kk=0; kk<nnz; kk++) {
+					let k=kk; if (g3d.pzApex[4]-g3d.pzApex[0]<0) k=nnz-kk-1;
+					if (k<zk) continue;
+					const f = (isFunction) ? ff(i,j,k)*mag : ff[i][j][k]*mag;
+					const r = Math.min(Math.pow(Math.abs(f),0.333),5.0);
+					if (r>1.0) {
+						let th, colr;
+						if (colorMode==0) { // 0:red(f>0) or blue(f<0)
+							if (hsl3=='50%') {
+								colr = (f>0) ? "rgb(250,0,0)" : "rgb(0,0,250)";
+							} else {
+								colr = (f>0) ? "rgb(160,80,80)" : "rgb(80,80,160)";
+							}
+						} else if (colorMode==1) { // 1:f=-4.0 ... 4.0 hue color=hsl(240)...hsl(0)
+							th = 120.0-30.0*r*Math.sign(f);
+							if (th>270.0) th = 270.0;
+							if (th<-30.0) th = -30.0;
+							colr = 'hsl('+th+',100%,'+hsl3+')';
+						} else if (colorMode==2) { // 2:f=0.0 ... 4.0 hue color=hsl(240)...hsl(0)
+							th = 240.0-60.0*r*Math.sign(f);
+							if (th>270.0) th = 270.0;
+							if (th<-30.0) th = -30.0;
+							colr = 'hsl('+th+',100%,'+hsl3+')';
+						}
+						g3d.drawRotatedDisc(ctx, i*g_dx,(g_NNy-j)*g_dy,k*g_dz,r,colr,sc,xp,yp); //(x,y,z,r,color,sc,xp,yp)
+					}
+				}
+			}
+		}
+		g3d.plotNearEdge(ctx, sc,xp,yp,"rgb(250,250,0)"); //yellow
+		ctx.font = "10px 'sans-serif'";
+		ctx.fillStyle = "rgb(80,80,80)";
+		ctx.fillText("Ax="+(g3d.Ax*180/Math.PI).toFixed(1)+", Ay="+(g3d.Ay*180/Math.PI).toFixed(1), 10, 15);
+		ctx.font = "16px 'sans-serif'";
+	};
+
+	g3d.drawFieldXY = function(ctx,rotAngle, ff,mag,kk,inc,sc,xp,yp,color) {
+		const kc=kk, nnx=g_NNx, nny=g_NNy;
+		let isFunction = false;
+
+		if (typeof(ff)==='function') isFunction = true;
+		g3d.set3DRotateXY(rotAngle);
+		g3d.plotFarEdge(ctx, sc,xp,yp,"rgb(160,160,0)"); // dark yellow
+		ctx.strokeStyle = color;
+		ctx.lineWidth = 1;
+		for (let j=0; j<nny; j+=inc) {
+			ctx.beginPath();
+			for (let i=0; i<nnx; i++) {
+				const f = (isFunction) ? ff(i,j,kc)*mag : ff[i][j][kc]*mag;
+				const x = i*g_dx, y = j*g_dy, z = kc*g_dz+f;
+				const x1 = g3d.cosAy*(x-g3d.cx0)+g3d.sinAy*(g3d.sinAx*(y-g3d.cy0)+g3d.cosAx*(z-g3d.cz0)) + g3d.cx0;
+				const y1 = g3d.cosAx*(y-g3d.cy0)-g3d.sinAx*(z-g3d.cz0) + g3d.cy0;
+				ctx.lineTo(xp+sc*x1,yp+sc*y1);
+			}
+			ctx.stroke();
+		}
+		for (let i=0; i<nnx; i+=inc) {
+			ctx.beginPath();
+			for (let j=0; j<nny; j++) {
+				const f = (isFunction) ? ff(i,j,kc)*mag : ff[i][j][kc]*mag;
+				const x = i*g_dx, y = j*g_dy, z = kc*g_dz+f;
+				const x1 = g3d.cosAy*(x-g3d.cx0)+g3d.sinAy*(g3d.sinAx*(y-g3d.cy0)+g3d.cosAx*(z-g3d.cz0)) + g3d.cx0;
+				const y1 = g3d.cosAx*(y-g3d.cy0)-g3d.sinAx*(z-g3d.cz0) + g3d.cy0;
+				ctx.lineTo(xp+sc*x1,yp+sc*y1);
+			}
+			ctx.stroke();
+		}
+		g3d.plotNearEdge(ctx, sc,xp,yp,"rgb(250,250,0)"); //yellow
+		ctx.font = "10px 'sans-serif'";
+		ctx.fillStyle = "rgb(80,80,80)";
+		ctx.fillText("Ax="+(g3d.Ax*180/Math.PI).toFixed(1)+", Ay="+(g3d.Ay*180/Math.PI).toFixed(1), 10, 15);
+		ctx.font = "16px 'sans-serif'";
+	};
+
+	// --- end of graphics 3D (field) module
+
+
+	// --------------------  draw  --------------------
+
+	function draw( ctx, drawMode ) {
+		const xp=80, yp=50, sc=240.0/(g_NNx*g_dx), rotAngle= 0.1;
+		if (drawMode==0) {        // 0:along x-axis
+			ctx.fillStyle = "rgb(80,80,80)";
+			ctx.fillText("along x-axis", 10, 20);
+			drawAlongXAxis(ctx, 50,220,6);
+		} else if (drawMode==1) { // 1:replicas
+			drawReplicas3D(ctx, sc,xp,yp);
+		} else if (drawMode==2) { // 2:psi(x,y,z)
+			//g3d.drawField3D(ctx,rotAngle, ff,mag,zk,sc,xp,yp,colorMode,hsl3) 
+			g3d.drawField3D(ctx,rotAngle, g_psi,5.0,0,sc,xp,yp,1,"50%");
+		} else if (drawMode==3) { // 3:rho(x,y,z) 1/2
+			g3d.drawField3D(ctx,rotAngle, rho,25.0,g_NNb/2,sc,xp,yp,2,"50%");
+		}
+
+		ctx.fillStyle = "rgb(0, 0, 0)"; // text
+		ctx.fillText("time = "+g_sysTime.toFixed(1), 10, g_yBoxSize-25);
+		ctx.fillText("energy = "+g_energy.toFixed(6), 200, g_yBoxSize-25);
+		ctx.fillText("replica N = "+g_NN1, 10, g_yBoxSize-5);
+		ctx.fillText("box length = "+(g_NNx*g_dx).toFixed(1)+"au", 200, g_yBoxSize-5);
+	}
+
+	function drawReplicas3D(ctx, sc,xp,yp) { // drawMode == 1
+		const nnr=g_NNr;
+		g3d.set3DRotateXY(0.1);
+		g3d.plotFarEdge(ctx, sc,xp,yp,"rgb(150,150,0)"); // dark yellow
+		const color = "rgb(80,250,250)";
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) {
+				const xi = g_replica[i][0]+0.5*g_NNx*g_dx;
+				const yi = g_replica[i][1]+0.5*g_NNy*g_dy;
+				const zi = g_replica[i][2]+0.5*g_NNz*g_dz;
+				g3d.drawRotatedDisc(ctx, xi,yi,zi,1,color,sc,xp,yp); //(x,y,z,r,color,mag,xp,yp)
+			}
+		}
+		g3d.plotNearEdge(ctx, sc,xp,yp,"rgb(250,250,0)"); //yellow
+		ctx.font = "10px 'sans-serif'";
+		ctx.fillStyle = "rgb(80,80,80)";
+		ctx.fillText("Ax="+(g3d.Ax*180/Math.PI).toFixed(1)+", Ay="+(g3d.Ay*180/Math.PI).toFixed(1), 10, 15);
+		ctx.font = "16px 'sans-serif'";
+	}
+
+	function funcPotential(i,j,k) {
+		const x = (i-g_NNb/2)*g_dx, y = (j-g_NNb/2)*g_dy, z = (k-g_NNb/2)*g_dz;
+		return potential(x,y,z,g_vIndex);
+	}
+
+	function rho(i,j,k) {
+		const p = g_psi[i][j][k];
+		return p*p;
+	}
+
+	function drawAlongXAxis(ctx, xp,yp,sc) {
+		const j=g_NNb/2, k=g_NNb/2, nnb=g_NNb, mag=10.0;
+		let vmag=10.0;
+		if (g_vIndex==0) vmag = vmag/8.0;
+		ctx.fillStyle = "rgb(0,250,250)";
+		for (let i=1; i<nnb; i++) {
+			const p = Math.floor(g_psi[i][j][k]*mag);
+			ctx.fillRect(xp+i*sc,yp-p, sc, p);
+		}
+		ctx.strokeStyle = "rgb(0,150,0)";
+		ctx.beginPath();
+		for (let i=1; i<nnb; i++) {
+			const v = potential((i-nnb/2)*g_dx,0.0,0.0,g_vIndex)*vmag;
+			ctx.lineTo(xp+i*sc, yp-v);
+		}
+		ctx.stroke();
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:           setInitialCondition, // setInitialCondition( vIndex )
+		evolve:         evolveDMC, // evolveDMC( nCalc )
+		draw:           draw, // draw( ctx, drawMode )
+
+		getAUinSI:      function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:    function() { return [ g_NNr, g_NNb, g_dx, g_dt ]; },
+		getNow:         function() { return [ g_count, g_energy100, g_energy, g_energy10000, g_NN1 ]; },
+		getRepStatus:   function(ir) { return g_repStatus[ir]; },
+		getRepPos:      function(ir) { return [ g_replica[ir][0], g_replica[ir][1], g_replica[ir][2] ]; },
+		getPsi:         function(ix,iy,iz) { return g_psi[ix][iy][iz]; },
+		getVext:        function(ix,iy,iz) {
+							let x = (ix-g_NNb/2)*g_dx, y = (iy-g_NNb/2)*g_dx, z = (iz-g_NNb/2)*g_dx;
+							return potential( x, y, z, g_vIndex ); },
+	};
+
+})(); // ====================  hermonicsDMC3D end  ====================
+
+
+const tjs034 = (function(){ // ====================  tjs Module  ====================
+	
+	const theModule = harmonicsDMC3D;
+	// vIndex  0:parabolic V=0.5*r^2, 1:well V=0(r<3) =20(else), 2:H like  V=-1.0/r,
+	//         3:Na like empty core potential V=-1.0/r(r>1.7) =0.0(else)
+	let v_vIndex = 0;
+	let v_nCalc = 1;
+	
+	let p_auLength, p_auTime, p_auEnergy, p_au2eV // <-- theModule.getAUinSI()
+	let p_NNr, p_NNb, p_dx, p_dt; // <-- theModule.getSysParam()
+
+
+	// program flow control
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let dispMode =  0;
+	let dispModeChanged = false;
+	let viewHomeRequested = true;
+	let legendFlag = true;
+	let potentialFlag = true;
+	let count = 0;
+
+	// sizes in threejs world
+	const xBoxSize = 400;
+	const yBoxSize = xBoxSize;
+	const zBoxSize = xBoxSize;
+	const x0 = xBoxSize/2;
+	const y0 = yBoxSize/2;
+	const z0 = zBoxSize/2;
+	let hh;
+
+	// 3d object added to scene
+	let line_box;
+	let reps;
+	let grid3D;
+	let pgrid;
+	let vgrid;
+	let cnvsprite;
+
+	// three.js global
+	const width = 500;
+	const height = 480;
+	const r_camera = 1200;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+
+
+	// --------------------  main
+	
+	function main() {
+
+		// construct renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set( 0, -0.6*r_camera, 0.8*r_camera );
+		// lib/OrbitControls.js
+		controls = new THREE.OrbitControls(camera,renderer.domElement);
+		
+		initDom();
+		
+		constructScene();
+		animate();
+	}
+
+	function constructScene() {
+		
+		// init DMC3D
+		theModule.init( v_vIndex );
+		[ p_auLength, p_auTime, p_auEnergy, p_au2eV ] = theModule.getAUinSI();
+		[ p_NNr, p_NNb, p_dx, p_dt ] = theModule.getSysParam();
+		hh = xBoxSize/p_NNb;
+		
+		// scene
+		scene = new THREE.Scene();
+
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xffffff, 0.7 );
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xffffff, 0.5);
+		scene.add(light);
+		
+		
+		// replica
+		// spheres = m3js_spheres( p_nn, x_y_z_r_material_func );
+		reps = m3js_spheres( p_NNr,
+			function(i) { // x_y_z_r_material_func: (i) --> [ x, y, z, r, [material] ]
+				const sc = xBoxSize/(p_NNb*p_dx);
+				const material = new THREE.MeshStandardMaterial({ color: 0x0088cc });
+				let x, y, z;
+				[ x, y, z ] = theModule.getRepPos(i);
+				return [ x*sc, y*sc, z*sc, 0.2*hh, material ];
+			}
+		);
+		scene.add( reps );
+		
+		// psi 3D
+		// grid3D = m3js_grid3D( p_nx, p_ny, p_nz, xBoxSize );
+		grid3D = m3js_grid3D( p_NNb, p_NNb, p_NNb, xBoxSize );
+		scene.add( grid3D );
+		
+		// psi 2D
+		// agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+		pgrid = m3js_grid2D( p_NNb, p_NNb, xBoxSize );
+		pgrid.setPallet( 372, '#446644' );
+		scene.add( pgrid );
+		
+		// Vext 2D
+		// agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+		vgrid = m3js_grid2D( p_NNb, p_NNb, xBoxSize );
+		scene.add( vgrid );
+
+		// line box
+		{
+			const geometry = new THREE.BoxGeometry( xBoxSize, yBoxSize, zBoxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial({ color: 0x666644 }) );
+			scene.add( line_box );
+		}
+		
+		// canvas sprite
+		//cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 600, 600, 400 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+
+	}
+
+	// loop animation
+	function animate() {
+		
+		// system reset
+		if (resetFlag==1) {
+			resetFlag = 0;
+			
+			constructScene();
+			dispModeChanged = true;
+			count = 0;
+		}
+		
+		if ( viewHomeRequested ) {
+			camera.position.set(0, -0.6*r_camera,0.8*r_camera);
+			viewHomeRequested = false;
+		}
+		
+		// clear world (object.visible -> false)
+		if ( dispModeChanged ) {
+			dispModeChanged = false;
+			
+			line_box.visible = (dispMode<=5) ? true : false;
+			reps.visible = false;
+			pgrid.visible = false;
+			vgrid.visible = false;
+			grid3D.visible = false;
+			cnvsprite.visible = false;
+		}
+		
+		// DMC3D update
+		if (pauseFlag==0) {
+			theModule.evolve( v_nCalc );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( 1 );
+		}
+		
+		
+		// threejs world object update
+		{
+			const pmag = 25.0;
+			const vmag = 10.0;
+			
+			// replica update
+			if ( dispMode==0 ) {
+				const sc = xBoxSize/(p_NNb*p_dx);
+				// spheres.update( x_y_z_rmag_col_func );
+				reps.update(
+					function(i) { // x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+						if ( theModule.getRepStatus(i)==0 ) return 0; // i-th dead replica --> invisible
+						let x, y, z;
+						[ x, y, z ] = theModule.getRepPos(i);
+						return [ x*sc, y*sc, z*sc ]; // r, col --> initial value
+					}
+				);
+			}
+		
+			// phi(x,y,z) update
+			if ( dispMode==1 ) {
+				// grid3D.update( field_func, [hue_func] );
+				grid3D.update( function(i,j,k) { return pmag*theModule.getPsi(i,j,k); } );
+			}
+		
+			// phi(x,y,0) update
+			if ( dispMode==2 || dispMode==4 ) {
+				const kc = p_NNb/2;
+				// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+				pgrid.update( 
+					function(i,j) {
+						const z = pmag*theModule.getPsi(i,j,kc);
+						const hue = ( Math.abs(z)<0.5*hh ) ? 363 : Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						return  [ z, hue ];
+					}
+				);
+			}
+		
+			// Vext(x,y,0) update
+			if ( dispMode==3 || dispMode==4 ) {
+				const kc = p_NNb/2;
+				// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+				vgrid.update(
+					function(i,j) {
+						const vext = vmag*theModule.getVext(i,j,kc);
+						const hue = ( vext>20.1*vmag ) ? 360 : 120; // black
+						return [ vext, hue ];
+					}
+				);
+			}
+		
+			// (phi+Vext)(x,y,0) update
+			if ( dispMode==5 ) {
+				const kc = p_NNb/2;
+				// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+				pgrid.update(
+					function(i,j) {
+						const psi = pmag*theModule.getPsi(i,j,kc);
+						const vext = vmag*theModule.getVext(i,j,kc);
+						let hue = ( Math.abs(psi)<0.5*hh ) ? 372 : Math.floor(36180.0 - 180.0*(psi/z0)) % 360;
+						if ( vext>vmag*20.1 ) hue = 360; // black
+						return [ psi + vext, hue ];
+					}
+				);
+			}
+		
+			// sprite update
+			if ( dispMode>=6 ) {
+				//cnvsprite.update( drawFunc )
+				cnvsprite.update(
+					function( sprite ) { // drawFunc(sprite)
+						const ctx = sprite.ctx;
+						const canvasWidth = sprite.canvas.width;
+						const canvasHeight = sprite.canvas.height;
+					
+						// clear canvas
+						ctx.fillStyle = "#bbbbbb";
+						ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+						theModule.draw( ctx, dispMode-6 );
+					}
+				);
+			}
+		}
+		
+		// output to innerHTML
+		if (count % 10 == 0) {
+			const xMax = p_NNb*p_dx, yMax = p_NNb*p_dx, zMax = p_NNb*p_dx;
+			let sysCount, energy100, energy1000, energy10000, NN1;
+			[ sysCount, energy100, energy1000, energy10000, NN1 ] = theModule.getNow();
+			let msg = "box="+xMax+"x"+yMax+"x"+zMax
+				+ "(au) ~ "+(xMax*p_auLength*1.0e9).toFixed(2)
+				+ "x"+(yMax*p_auLength*1.0e9).toFixed(2)
+				+ "x"+(zMax*p_auLength*1.0e9).toFixed(2)
+				+ "(nm), count="+sysCount+"<br>"
+				+ "total energy(1000 average)(au) ="+energy1000.toFixed(6)
+				+ "(au) ~ "+(energy1000*p_au2eV).toFixed(4)+"(eV) <br>"
+				+ "total energy (100 average)="+energy100.toFixed(6)+"<br>"
+				+ "total energy (10000 average)="+energy10000.toFixed(6)+"<br>";
+			if ( v_vIndex==0 ) msg += "(theoreticial energy = 1.5 (au))";
+			if ( v_vIndex==2 ) msg += "(theoreticial energy = -0.5 (au))";
+			
+			document.getElementById("text_caption").innerHTML = msg;
+
+			if ( legendFlag && dispMode<=5) {
+				let msg = "<span style='color:hsl(210,100%,50%)'>alive replica N="+NN1+"</span>"
+				document.getElementById('textOnCanvas').innerHTML = msg;
+			} else {
+				document.getElementById('textOnCanvas').innerHTML = "";
+			}
+
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_spheres function  ---------------------------
+	//
+	//    ver 0.0.0  2022.10.26 created, last updated on 2022.12.20
+	//
+	//  spheres = m3js_spheres( p_nn, x_y_z_r_material_func );
+	//     p_nn: number of arrows
+	//     x_y_z_r_material_func: (i) --> [ x, y, z, r, [material] ]
+	//        x,y,z: i-th sphere position in the threejs world
+	//        r: i-th sphere radius in the threejs world
+	//        material: such as = new THREE.MeshStandardMaterial({ color:"#ff0000", opacity:1.0, transparent:true });
+	//  scene.add( spheres );
+	//
+	//  spheres.update( x_y_z_rmag_col_func ); // x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+	//     x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+	//        x,y,z: i-th sphere position in the threejs world
+	//        rmag: i-th sphere radius magnified ratio: 0.0 ... 1.0
+	//        col: such as "#ff0000" or "red" or "rgb(255,0,0)" or 0xff0000 or ...
+	//
+	//  spheres.setOpacity( opacity );
+	//     opacity: 0.0 (transparent) ..... 1.0 (opaque)
+	//
+	//  spheres.visible = true | false;
+	//
+	
+	function m3js_spheres( p_nn, x_y_z_r_material_func ) {
+		const nn = p_nn;
+		const defaultMaterial = new THREE.MeshStandardMaterial({ color:"#ff0000", opacity:1.0, transparent:true });
+		const spheres = new THREE.Group();
+		spheres.array = [];
+		
+		for (let i=0; i<nn; i++) {
+			let x, y, z, r, mater;
+			[ x, y, z, r, mater ] = x_y_z_r_material_func(i);
+			const geometry = new THREE.SphereGeometry(r, 18, 10);
+			const material = ( mater != undefined ) ? mater : defaultMaterial;
+			spheres.array[i] = new THREE.Mesh(geometry, material);
+			spheres.array[i].position.set(x, y, z);
+			spheres.array[i].visible = true;
+			spheres.add( spheres.array[i] );
+		}
+		
+		spheres.update = spheresUpdate;
+		spheres.setOpacity = setSheresOpacity;
+		return spheres;
+		
+		
+		function spheresUpdate( x_y_z_rmag_col_func ) {
+			for (let i=0; i<nn; i++) {
+				const vec = x_y_z_rmag_col_func(i);
+				if ( !Array.isArray(vec) ) {
+					spheres.array[i].visible = false;
+					continue;
+				}
+				let x, y, z, rmag, col;
+				[ x, y, z, rmag, col ] = vec;
+				spheres.array[i].position.set(x, y, z);
+				if ( rmag != undefined ) spheres.array[i].scale.set(rmag,rmag,rmag);
+				if ( col != undefined ) spheres.array[i].material.color = new THREE.Color( col );
+				spheres.array[i].visible = true;
+			}
+			spheres.visible = true;
+		}
+		
+		function setSheresOpacity( opa ) {
+			for (let i=0; i<nn; i++) {
+				spheres.array[i].material.opacity = opa;
+			}
+		}
+	}
+	
+	// -----------------------  m3js_spheres function end
+	
+	
+	// -----------------------  m3js_grid3D function  ----------------------------------
+	//
+	//    ver 0.0.0  2022.06.07 created, last updated on 2022.12.22
+	//
+	//   grid3D = m3js_grid3D( p_nx, p_ny, p_nz, xBoxSize );
+	//      nx:sphere number of x-direction,
+	//      ny:sphere number of y-direction, 
+	//      nz:sphere number of z-direction,
+	//      xBoxSize: x-box size in the threejs-world
+	//
+	//   scene.add( grid3D );
+	//
+	//   grid3D.update( field_func, [hue_func] );
+	//      field_func: (i,j,k) --> field
+	//         (i,j,k) : index of 3D lattice
+	//         field : field value of lattce point
+	//      hue_func: (i,j,k) --> hue   // if undefined, use inner hue function hue(field))
+	//         hue : hsl color index 0,1,2, ... , 359
+	//         if typeof(hue)!='number', hue treat as color string
+	//
+	//   grid3D.setThreshold( th ) 
+	//      th: 0.0 ... 1.0 // if diameter of the sphere < hh*th, this sphere set to invisible
+	//          default th = 0.2
+	//
+	//   grid3D.visibility
+	//      grid3D.visible = true | false;
+	//
+		
+	const m3js_grid3D = function( p_nx, p_ny, p_nz, xBoxSize ) {
+		const gridArray = [];
+		const nx = p_nx;
+		const ny = p_ny;
+		const nz = p_nz;
+		const hh = xBoxSize/nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*ny/2.0;
+		const z0 = hh*nz/2.0;
+		let threshold = 0.2;
+		const grid3D = new THREE.Group();
+
+		const geometry = new THREE.IcosahedronGeometry( 0.5, 1 );
+		for ( let i=0; i<nx; i++ ) {
+			gridArray[i] = [];
+			for ( let j=0; j<ny; j++ ) {
+				gridArray[i][j] = [];
+				for ( let k=0; k<nz; k++ ) {
+					const material = new THREE.MeshBasicMaterial({ color: 0xaaaa00 });
+					const icosa = new THREE.Mesh( geometry, material );
+					icosa.position.x = i*hh - x0;
+					icosa.position.y = j*hh - y0;
+					icosa.position.z = k*hh - z0;
+					icosa.visible = false;
+					gridArray[i][j][k] = icosa;
+					grid3D.add( gridArray[i][j][k] );
+				}
+			}
+		}
+		
+		grid3D.update = grid3D_update; // grid3D_update( fieldFunc, hueFunc )
+		grid3D.setThreshold = setThreshold; // setThreshold( th )
+		return grid3D;
+		
+		// private function
+	
+		function grid3D_update( field_func, hue_func ) {
+			const th = threshold*hh;
+			const maxMag = 0.9*hh;
+			const adeg = 120.0/maxMag;
+			let hue;
+			for ( let i=0; i<nx; i++ ) {
+				for ( let j=0; j<ny; j++ ) {
+					for ( let k=0; k<nz; k++ ) {
+						const icosa = gridArray[i][j][k];
+						const field = field_func(i,j,k);
+						const afield = Math.abs(field);
+						if ( afield<th ) {
+							icosa.visible = false;
+							continue;
+						}
+						let mag = Math.pow(afield,0.5);
+						if ( mag>maxMag ) mag = maxMag;
+						icosa.scale.set(mag,mag,mag);
+						
+						if ( hue_func==undefined ) {
+							const hue = (field>=0.0) ? Math.floor(120.5-adeg*mag) : Math.floor(120.5+adeg*mag);
+							icosa.material.color = new THREE.Color(`hsl(${hue},100%,50%)`);
+						} else {
+							const hue = hue_func(i,j,k);
+							if ( typeof(hue)==='number' ) {
+								icosa.material.color = new THREE.Color(`hsl(${hue},100%,50%)`);
+							} else {
+								icosa.material.color = new THREE.Color( hue );
+							}
+						}
+						icosa.visible = true;
+					}
+				}
+			}
+			grid3D.visible = true;
+		}
+		
+		function setThreshold( th ) { 
+			threshold = th;
+		}
+		
+	};
+	
+	// -----------------------  m3js_grid3D function end
+	
+	
+	// -----------------------  m3js_grid2D function  -----------------------------------------
+	//
+	//    ver 0.0.0  2022.10.08 created, last updated on 2022.12.20
+	//
+	//  agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+	//      p_nx: number of x-direction lines, p_ny: number of y-direction lines
+	//      xBoxSize: x-box size in the threejs-world
+	//		[zBoxSize]: z-box size in the threejs-world
+	//      [mode]: if mode=='xLineOnly' -->  grid change to x-lines only
+	//            if mode=='yLineOnly' -->  grid change to y-lines only
+	//            else or undefined --> grid x-lines and y-lines
+	//
+	//  scene.add( agrid );
+	//
+	//  agrid.setPallet( pallet, color );
+	//      pallet: pallet number 372 ... 399, (371:inner pallet)
+	//      color: col = new THREE.Color( color )
+	//
+	//  agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+	//      z_hue_func(i,j) { ... return [ z, [hue] ]; }
+	//          z: threejs world z-position at grid point (i,j)
+	//          hue: 0...359 huedeg, 360(black) ...gray...370(white) 371(inner pallet) 372...399 free
+	//              or string shch as 'red', '#ff0000', 'rgb(255,0,0)', 'hsl(0,100%,50%)'
+	//
+	// agrid.visible = false;
+	//
+	
+	const m3js_grid2D = function( p_nx, p_ny, xBoxSize, zBoxSize, mode ) {
+		const hueArray = []; // red:hue[deg][0]  green:hue[deg][1]  blue:hue[deg][2]
+		const gridArray = [];
+		const nx = p_nx;
+		const ny = p_ny
+		const hh = xBoxSize/nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*ny/2.0;
+		const z0 = ( zBoxSize==undefined ) ? y0 : zBoxSize/2.0;
+		const xLineOnly = ( mode==undefined || mode!='xLineOnly' ) ? false : true;
+		const yLineOnly = ( mode==undefined || mode!='yLineOnly' ) ? false : true;
+		const agrid = new THREE.Group();
+		
+		if ( hueArray.length<1 ) init_hueArray();
+		
+		if ( ! yLineOnly ) {
+			for (let j=0; j<ny; j++) {
+ 				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( nx * 3 );
+				const colors = new Float32Array( nx * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, nx );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[j] = line;
+    			agrid.add( gridArray[j] );
+			}
+		}
+		if ( ! xLineOnly ) {
+			for (let i=0; i<nx; i++) {
+				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( ny * 3 );
+				const colors = new Float32Array( ny * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, ny );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[ny+i] = line;
+    			agrid.add( gridArray[ny+i] );
+    		}
+    	}
+    	
+    	agrid.setPallet = setPallet; // setPallet( pallet, color )
+		agrid.update = gridUpdate; // gridUpdate( fieldFunc, [hueFunc|huedeg|hueStr] )
+		agrid.visible = false;
+		
+		return agrid;
+
+
+		// private functions
+		
+		function gridUpdate( z_hue_Func ) {
+			if ( ! yLineOnly ) {
+				for (let j=0; j<ny; j++) {
+					const line = gridArray[j];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let i= 0; i<nx; i++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[i*3]   = hh*i - x0;
+						positions[i*3+1] = hh*j - y0;
+						positions[i*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[i*3]   = r;
+						colors[i*3+1] = g;
+						colors[i*3+2] = b;
+					}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			if ( ! xLineOnly ) {
+				for (let i=0; i<nx; i++) {
+					const line = gridArray[ny+i];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let j= 0; j<ny; j++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[j*3]   = hh*i - x0;
+						positions[j*3+1] = hh*j - y0;
+						positions[j*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[j*3]   = r;
+            			colors[j*3+1] = g;
+            			colors[j*3+2] = b;
+    				}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			agrid.visible = true;
+		}
+		
+		function setPallet( pallet, color ) {
+			const deg = Math.floor(pallet);
+			const col = new THREE.Color( color );
+			hueArray[deg][0] = col.r;
+			hueArray[deg][1] = col.g;
+			hueArray[deg][2] = col.b;
+		}
+		
+		function init_hueArray() {
+			// deg= 0...359 hue color, 360: black ... gray ...  370:white,
+			// 371: inner use, 372...399 as pallete
+			for (let deg=0; deg<360; deg++) {
+				hueArray[deg] = [];
+				const col = new THREE.Color( 'hsl('+deg+',100%,50%)');
+				hueArray[deg][0] = col.r;
+				hueArray[deg][1] = col.g;
+				hueArray[deg][2] = col.b;
+			}
+			for (let deg=360; deg<400; deg++) {
+				hueArray[deg] = [];
+				const x = (deg<371) ? (deg-360)*0.1 : 0.0;
+				hueArray[deg][0] = x;
+				hueArray[deg][1] = x;
+				hueArray[deg][2] = x;
+			}
+		}
+		
+	};
+	
+	// -----------------------  m3js_grid2D function end
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+	
+	// ----------  dom control
+
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = (pauseFlag+1)%2; 
+		if (pauseFlag==0) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==1 ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		// dom control
+		reset:			function() { resetFlag = 1; },
+		pause:			pause,			// pause()
+		step:			function() { stepFlag = 1; },
+		
+		setTheme:		function() {
+							v_vIndex = 0 + document.getElementById("slct_theme").selectedIndex;
+							resetFlag = 1;
+						},
+		setDispMode:	function() {
+							dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+							dispModeChanged = true;	
+						},
+		setLegendFlag:	function() {
+							const leg = 0 + document.getElementById("slct_legend").selectedIndex;
+							legendFlag = (leg==1);
+						},
+		viewHome:		function() { viewHomeRequested = true; },
+	};
+
+})(); // ====================  tjs034 module end  ====================
+
+
+// event
+const tjs = tjs034;
+window.addEventListener('load', tjs.main );
+
+
+
+// --------------------  end of javaScript
+
+  </script>
+  <style type="text/css">
+    body { color:#000000; background-color:#fff8dd;}
+  </style>
+</head>
+
+<body>
+<p>[tjs034] ground state and energy - diffusion Monte-Carlo method 3D</p>
+<div style="position: relative; overflow: hidden; width: 500px; height: 480px">
+  <canvas id="myCanvas" style="position: absolute; top: 0px; left: 0px"></canvas>
+  <div id="textOnCanvas" 
+    style="position:absolute; top:5px; left:5px; color:#888888; background-color:rgba(0, 0, 0, 0);
+           font-size:0.9rem"> ... One moment, please.<br> ... setting up the studio ... </div>
+</div>
+ solve time independent Schroedinger equation (ground state)<br>
+<label>theme:</label>
+<select id="slct_theme" onChange="tjs.setTheme()">
+<option selected> parabolic: V(r) = 0.5 r^2</option>
+<option> well: V(r) =0(r&lt;3) =20(else)</option>
+<option> H like atom: V(r) = -1/r </option>
+<!--<option> Na like atom: V(r) = 0.0(r&lt;1.70) = -1/r(else)</option> -->
+</select>
+    <span style="margin-right: 80px;"></span>
+<button onClick="tjs.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="tjs.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="tjs.step()">step</button>
+<br>
+
+<label>disp mode:</label>
+<select id="slct_dispMode" onChange="tjs.setDispMode()">
+<option>replicas</option>
+<option>psi(x,y,z)</option>
+<option>psi(x,y,0)</option>
+<option>Vext(x,y,0)</option>
+<option>psi(x,y,0)+Vext(x,y,0)</option>
+<option>(psi+Vext)(x,y,0)</option>
+<option>canvas2d along x-axis</option>
+<option>canvas2d replicas</option>
+<option>canvas2d psi(x,y,z)</option>
+<option>canvas2d density(x,y,z)/2</option>
+</select>
+<br>
+
+<button onClick="tjs.viewHome()">return to initial view</button>
+    <span style="margin-right: 50px;"></span>
+drag mouse to rotate view point
+<br>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+</body>
+</html>
+
