@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>tjs035_gasSPH2D</title>
+  <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+  <!--
+  <script src="../lib/three.min.js"></script>
+  <script src="../lib/OrbitControls.js"></script>
+  -->
+  <script>
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tjs035_gasSPH2D
+//    Copyright(C) 2022 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2022.01.12 created, last updated on 2022.01.15
+//    ver 0.0.1  2022.07.06 v1, last updated on 2022.12.28
+//    ver 0.0.2  2023.10.21 v2, last updated on 2023.10.21
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  smoothed particle hydrodynamics 2D
+//
+// - particle base Lagrangian method
+//    Monaghan; "Smoothed Particle Hydrodynamics" 
+//              Annu. Rev. Astron. Astrophys.1992. 30:543-74
+//
+//    W(x-xi,h) : kernel weight function (q=|x-xi|/h)
+//      = aKernel*(1-1.5*q^2+0.75*q^3)  (q<1)
+//      = aKernel*0.25*(2-q)^3  (1<=q<2)
+//      = 0  (q>=2)
+//
+//      aKernel = 2/3/h (1D)
+//              = 10/(7Pi)/h^2 (2D)
+//              = 1/Pi/h^3 (3D)
+//
+//    f(x) --> sum[mj/rhoj*f(xj)*W(x-xj,h), j]
+//    grad f(x) --> -sum[mj/rhoj*f(xj)*grad W(x-xj,h), j]
+//
+// - time step
+//   (1) registration - set section[][][]  (not implemented in this code)
+//   (2) set density[]
+//   (3) set pressure[]
+//   (4) Verlet step1 (t = t + dt/2)
+//   (5) set acceleration ax[] ay[] and power[] <-- x(t+dt/2),y(t+dt/2)
+//   (6) Verlet step2 (t = (t + dt/2) + dt/2)
+//   (7) set boundary
+//   goto (1)
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const gasSPH2D = (function(){ // ====================  gasSPH2D Module  ====================
+
+	let g_xMax = 5.0;           // (m) x-Box size
+	let g_yMax = 5.0;           // (m) y-Box size
+	let g_sysTime = 0.0;        // (s) system time
+	let g_dt = 0.0001;          // (s) time step
+	let g_hh0 = 0.25;           // (m) diameter of smoothed particles
+	let g_NNp = 400;            // number of smoothed particles
+
+	let g_xBoxSize = 480;       // in pixel
+	let g_yBoxSize = 400;       // in pixel
+	let g_yTextSize = 80;       // in pixel
+
+	const g_xx = dim1(g_NNp);   // (m) smooth particle pos-x
+	const g_yy = dim1(g_NNp);   // (m) smooth particle pos-y
+	const g_vx = dim1(g_NNp);   // (m/s) smooth particle velocity-x
+	const g_vy = dim1(g_NNp);   // (m/s) smooth particle velocity-y
+	const g_ax = dim1(g_NNp);   // (m/s^2) smooth particle total accelaration-x
+	const g_ay = dim1(g_NNp);   // (m/s^2) smooth particle total accelaration-y
+	const g_hh = dim1(g_NNp);   // (m) smooth particle diameter
+	const g_mass = dim1(g_NNp); // (kg) smooth particle mass
+	const g_cp = dim1(g_NNp);   // (J/(kg*K)) smooth particle specific heat
+	const g_density = dim1(g_NNp);  // (kg/m^3) smooth particle density
+	const g_pressure = dim1(g_NNp); // (N/m^2) smooth particle pressure
+	const g_energy = dim1(g_NNp);   // (J) smooth particle energy = mass*cp*temp
+	const g_power = dim1(g_NNp);    // (W) smooth particle power : energy(t+dt) = energy(t)+power*dt
+
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+
+
+	// --------------------  set initial condition  --------------------
+
+	// public
+	function setInitialCondition() {
+		const nnp = g_NNp;
+		g_sysTime = 0.0;
+		for (let i=0; i<nnp; i++) {
+			g_mass[i] = (0.029/0.0224)/4.0; //air
+			g_cp[i] = 1000.0; //air
+			g_xx[i] = 0.1*(i%20)+0.5;
+			g_yy[i] = 0.1*Math.floor(i/20)+1.0;
+			g_vx[i] = 0.0;
+			g_vy[i] = 0.0;
+			g_ax[i] = 0.0;
+			g_ay[i] = 0.0;
+			g_hh[i] = g_hh0;
+		}
+
+		for (let i=0; i<nnp; i++) {
+			g_energy[i] = g_mass[i]*g_cp[i]*300; //300=temp(K)
+			g_power[i] = 0.0;
+		}
+
+		//set density
+		for (let i=0; i<nnp; i++) {
+			let s = 0.0;
+			for (let j=0; j<nnp; j++) {
+				s += g_mass[j]*kernel(distance(i,j), (g_hh[i]+g_hh[j])/2.0);
+			}
+			g_density[i] = s;
+		}
+	}
+
+
+	// --------------------  time evolution  --------------------
+
+	// public
+	function timeEvolution( nCalc ) {
+		for (let i=0; i<nCalc; i++) {
+			timeStep();
+			g_sysTime += g_dt;
+		}
+	}
+
+	function timeStep() {
+		const nnp = g_NNp, dtv2 = g_dt/2.0;
+
+		// (2) set density
+		for (let i=0; i<nnp; i++) {
+			let s = 0.0;
+			for (let j=0; j<nnp; j++) {
+				s += g_mass[j]*kernel(distance(i,j), (g_hh[i]+g_hh[j])/2.0);
+			}
+			g_density[i] = s;
+		}
+    
+		// (3) set pressure
+		for (let i=0; i<nnp; i++) {
+			g_pressure[i] = 8.31*g_density[i]*(g_energy[i]/(g_mass[i]*g_cp[i]));
+		}
+
+		// (4) Verlet step1 (t = t + dt/2)
+		for (let i=0; i<nnp; i++) {
+			g_vx[i] += dtv2*g_ax[i];
+			g_vy[i] += dtv2*g_ay[i];
+			g_xx[i] += g_vx[i]*g_dt;
+			g_yy[i] += g_vy[i]*g_dt;
+		}
+
+		// (5) set acceleration ax[] ay[] and power[]
+		accCalc();
+
+		// (6) Verlet step2 (t = t + dt/2 + dt/2)
+		for (let i=0; i<nnp; i++) {
+			g_vx[i] += dtv2*g_ax[i];
+			g_vy[i] += dtv2*g_ay[i];
+			g_energy[i] += g_power[i]*g_dt;
+		}
+
+		// (7) boundary
+		const rr = 1.0;
+		for (let i=0; i<nnp; i++) {
+			if (g_xx[i] < 0.0) { 
+				g_xx[i] = 0.0; g_vx[i] = -rr*g_vx[i]; g_vy[i] = rr*g_vy[i]; 
+			}
+			if (g_xx[i] > g_xMax) {
+				g_xx[i] = g_xMax; g_vx[i] = -rr*g_vx[i]; g_vy[i] = rr*g_vy[i]; 
+			}
+			if (g_yy[i] < 0.0) { 
+				g_yy[i] = 0.0; g_vx[i] = rr*g_vx[i]; g_vy[i] = -rr*g_vy[i]; 
+			}
+			if (g_yy[i] > g_yMax) {
+				g_yy[i] = g_yMax; g_vx[i] = rr*g_vx[i]; g_vy[i] = -rr*g_vy[i];
+			}
+		}
+	}
+
+	// --- (5) set acceleration ax[] ay[] and power[]
+
+	function accCalc() {
+		const nnp = g_NNp;
+		for (let i=0; i<nnp; i++) {
+			g_ax[i] = 0.0; g_ay[i] = 0.0;
+			g_power[i] = 0.0;
+			const ai = g_pressure[i]/(g_density[i]*g_density[i]);
+			for (let j=0; j<nnp; j++) {
+				const rij = Math.sqrt((g_xx[i]-g_xx[j])*(g_xx[i]-g_xx[j])+(g_yy[i]-g_yy[j])*(g_yy[i]-g_yy[j]));
+				if (rij>0) {
+					const aj = g_pressure[j]/(g_density[j]*g_density[j]);
+					const b = g_mass[j]*(ai+aj);
+					const gradW = dwwvdr(rij, (g_hh[i]+g_hh[j])/2.0);
+					const gradWx = gradW*(g_xx[i]-g_xx[j])/rij;
+					const gradWy = gradW*(g_yy[i]-g_yy[j])/rij;
+					g_ax[i] += -b*gradWx;
+					g_ay[i] += -b*gradWy;
+					g_power[i] += 0.5*b*((g_vx[i]-g_vx[j])*gradWx+(g_vy[i]-g_vy[j])*gradWy);
+				}
+			}
+		}
+	}
+
+	// --- smooth particle
+
+	function distance( i, j ) {
+		const x = g_xx[i]-g_xx[j], y = g_yy[i]-g_yy[j];
+		return Math.sqrt(x*x+y*y);
+	}
+
+	function kernel( r, h ) {
+		const q = r/h;
+		const a = 10.0/(7.0*3.141592)/(h*h);
+		let ret = 0.0;
+		if (q<1.0) {
+			ret = a*(1.0-1.5*q*q+0.75*q*q*q);
+		} else if (q<2.0) {
+			ret = a*0.25*(2.0-q)*(2.0-q)*(2.0-q);
+		}
+		return ret;
+	}
+
+	function dwwvdr( r, h ) {
+		const q = r/h;
+		const a = 10.0/(7.0*3.141592)/(h*h*h);
+		let ret = 0.0;
+		if (q<1.0) {
+			ret = a*(-3.0*q+2.25*q*q);
+		} else if (q<=2.0) {
+			ret = -a*0.75*(2.0-q)*(2.0-q);
+		}
+		return ret;
+	}
+
+
+	// --------------------  draw  --------------------
+
+	// public
+	function draw( ctx, drawMode ) {
+		const xp=40, yp=10, xBox=400, yBox=400, yText=yp+yBox+30;
+
+		ctx.fillStyle = "rgb(120,120,120)";
+		ctx.fillRect(xp,yp,xBox,yBox);
+
+		if (drawMode<=3) {
+			drawSPfield(ctx, drawMode,xp,yp);
+		} else if (drawMode==4) {
+			drawFlow(ctx,xp,yp);
+		}
+		
+		ctx.fillStyle = "rgb(40, 40, 40)";
+		ctx.fillText("Box = "+g_xMax.toFixed(1)+"x"+g_yMax.toFixed(1)+" (m)", xp, yText);
+		ctx.fillText("N = "+g_NNp, xp+xBox/2, yText);
+		ctx.fillText("time = "+g_sysTime.toFixed(3)+" (s)", xp, yText+25);
+	}
+
+	function drawSPfield( ctx, drawMode, xp, yp ) {
+		const nnp = g_NNp, sc = 400.0/g_xMax;
+		for (let i=0; i<nnp; i++) {
+			if (drawMode==0) { // smooth particle
+				ctx.strokeStyle = "rgb(0,250,250)";
+			} else if (drawMode==1) { // density
+				ctx.strokeStyle = "hsl("+(180-g_density[i]*5.0)+",100%,50%)"
+			} else if (drawMode==2) { // density
+				ctx.strokeStyle = "hsl("+(180-g_pressure[i]*0.003)+",100%,50%)"
+			}  else if (drawMode==3) { // temp
+				const temp = (g_energy[i]/(g_mass[i]*g_cp[i])-273.0);
+				ctx.strokeStyle = "hsl("+(240-temp*2.0)+",100%,50%)";
+			}
+			ctx.beginPath();
+			ctx.arc(g_xx[i]*sc+xp, (g_yMax-g_yy[i])*sc+yp, g_hh[i]*sc, 0, 2.0*Math.PI, false);
+			ctx.stroke();
+		}
+	}
+
+	function drawFlow( ctx, xp, yp ) {
+		const nnp = g_NNp, sc = 400.0/g_xMax, mag=3000.0;
+		for (let i=0; i<nnp; i++) {
+			if (g_vx[i]>=0) {
+				ctx.strokeStyle = "rgb(80,80,250)";
+			} else {
+				ctx.strokeStyle = "rgb(250,80,80)";
+			}
+			ctx.beginPath();
+			ctx.moveTo(g_xx[i]*sc+xp, (g_yMax-g_yy[i])*sc+yp);
+			ctx.lineTo(g_xx[i]*sc+xp+g_vx[i]*mag*g_dt, (g_yMax-g_yy[i])*sc+yp-g_vy[i]*mag*g_dt);
+			ctx.stroke();
+		}
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:           setInitialCondition, // setInitialCondition()
+		evolve:         timeEvolution, // timeEvolution( nCalc )
+		draw:           draw, // draw( ctx, drawMode )
+		
+		getSysParam:    function() { return [ g_xMax, g_yMax, g_dt, g_hh0, g_NNp ]; },
+		getSysTime:     function() { return g_sysTime; },
+		getSPData:      function(i) { return [ g_hh[i], g_mass[i], g_cp[i] ]; },
+		getPosition:    function(i) { return [ g_xx[i], g_yy[i] ]; },
+		getVelocity:    function(i) { return [ g_vx[i], g_vy[i] ]; },
+		getAcc:         function(i) { return [ g_ax[i], g_ay[i] ]; },
+		getDensity:     function(i) { return g_density[i]; },
+		getPressure:    function(i) { return g_pressure[i]; },
+		getTemp:        function(i) { return (g_energy[i]/(g_mass[i]*g_cp[i])); },
+		getEnergy:      function(i) { return g_energy[i]; },
+		getPower:       function(i) { return g_power[i]; },
+	};
+
+})(); // ====================  gasSPH2D end  ====================
+
+
+const tjs035 = (function(){ // ====================  tjs Module  ====================
+
+	const theModule = gasSPH2D;
+	let v_theme = 0; // no use
+	let v_nCalc = 2;
+	
+	let p_xMax, p_yMax, p_dt, p_hh0, p_NNp; // <-- theModule.getSysParam()
+
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let heatSW = 0;
+	let viewHomeRequested = false;
+	let nTimes = 1;
+	let dispMode = 1; // 0:sph particles  1:density  2:pressure  3:temperature  4:velocity
+	let dispModeChanged = true;
+	let count = 0;
+
+	// sizes in threejs world
+	const xBoxSize = 500;
+	const x0 = xBoxSize/2;
+	let scale, yBoxSize, zBoxSize, y0, z0;
+
+	// threejs objects in the scene
+	let sphs;
+	let flows;
+	let line_box;
+	let cnvsprite;
+
+	// three.js , OrbitControls.js
+	const width = 500;
+	const height = 480;
+	const r_camera = 1200;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+
+
+	// --------------------  main
+	
+	function main() {
+		// constract renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, 0, r_camera);
+		controls = new THREE.OrbitControls(camera,renderer.domElement); // lib/OrbitControls.js
+		
+		initDom();
+		
+		constructScene();
+		animate();
+	}
+
+	function constructScene() {
+		
+		// init SPH
+		theModule.init();
+		[ p_xMax, p_yMax, p_dt, p_hh0, p_NNp ] = theModule.getSysParam();
+		scale = xBoxSize/p_xMax;
+		yBoxSize = p_yMax*scale;
+		zBoxSize = 2*p_hh0*scale;
+		y0 = yBoxSize/2;
+		z0 = zBoxSize/2;
+		
+		// scene
+		scene = new THREE.Scene();
+		
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xFFFFFF,0.5);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xFFFFFF, 0.7);
+		scene.add(light);
+		
+		
+		// sph particles
+		// spheres = m3js_spheres( p_nn, x_y_z_r_material_func );
+		sphs = m3js_spheres( p_NNp, 
+			function(i) { // x_y_z_r_material_func: (i) --> [ x, y, z, r, [material] ]
+				let x, y;
+				[ x, y ] = theModule.getPosition(i);
+				const material = new THREE.MeshStandardMaterial({ color:0x0088ff, opacity:0.5, transparent:true }); 
+				return [ x*scale-x0, y*scale-y0, 0, p_hh0*scale, material ];
+			}
+		);
+		scene.add( sphs );
+		
+		// flows
+		// arrows = m3js_arrows( p_nn, [defaultColor] );
+		flows = m3js_arrows( p_NNp );
+		scene.add( flows );
+		
+		// line_box
+		{
+			const geometry = new THREE.BoxGeometry( xBoxSize, yBoxSize, zBoxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial({ color: 0x444433 }) );
+			scene.add( line_box );
+		}
+		
+		// canvas sprite
+		//cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 600, 600, 480 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+		
+	}
+
+	// loop animation
+	function animate() {
+		
+		// reset
+		if (resetFlag==1) {
+			resetFlag = 0;
+			constructScene();
+			dispModeChanged = true;
+			count = 0;
+		}
+		
+		if ( viewHomeRequested ) {
+			camera.position.set(0, 0, r_camera);
+			viewHomeRequested = false;
+		}
+		
+		// disp mode 
+		if ( dispModeChanged ) {
+			dispModeChanged = false;
+			
+			line_box.visible = (dispMode<=4) ? true : false;
+			sphs.visible = false;
+			flows.visible = false;
+			cnvsprite.visible = false;
+		}
+		
+		// SPH2D update
+		if (pauseFlag==0) {
+			theModule.evolve( v_nCalc );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( 1 );
+		}
+		
+		
+		// sph particles update
+		if ( dispMode==0 ) { // 0: sph particles
+			// spheres.update( x_y_z_rmag_col_func ); // x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+			sphs.update(
+				function(i) {
+					let x, y;
+					[ x, y ] = theModule.getPosition(i);
+					return [ x*scale-x0, y*scale-y0, 0.0, , 0x0088ff ];
+				}
+			);
+		} else if ( dispMode==1 ) { // 1: density
+			// spheres.update( x_y_z_rmag_col_func ); // x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+			sphs.update(
+				function(i) {
+					let x, y;
+					[ x, y ] = theModule.getPosition(i);
+					const zPos = 5.0*theModule.getDensity(i);
+					const hue = (Math.floor(36240-zPos)+360)%360;
+					return [ x*scale-x0, y*scale-y0, zPos, , `hsl(${hue},100%,50%)` ];
+				}
+			);
+		} else if ( dispMode==2 ) { // 2: pressure
+			// spheres.update( x_y_z_rmag_col_func ); // x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+			sphs.update(
+				function(i) {
+					let x, y;
+					[ x, y ] = theModule.getPosition(i);
+					const zPos = 2.5e-3*theModule.getPressure(i);
+					const hue = (Math.floor(36240-zPos)+360)%360;
+					return [ x*scale-x0, y*scale-y0, zPos, , `hsl(${hue},100%,50%)` ];
+				}
+			);
+		} else if ( dispMode==3 ) { // 3: temperature
+			// spheres.update( x_y_z_rmag_col_func ); // x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+			sphs.update(
+				function(i) {
+					let x, y;
+					[ x, y ] = theModule.getPosition(i);
+					const temp = theModule.getTemp(i);
+					const zPos = 1.0*(temp-273.0);
+					const hue = (Math.floor(36240-zPos)+360)%360;
+					return [ x*scale-x0, y*scale-y0, zPos, , `hsl(${hue},100%,50%)` ];
+				}
+			);
+		}
+		
+		// velocity vector update
+		if ( dispMode==4 ) {
+			const vmag = 50*p_dt*scale;
+			const zPos = 0;
+			const vz = 0.0;
+			// arrows.update( x_y_z_vx_vy_vz_col_func );
+			flows.update(
+				function(i) { // x_y_z_vx_vy_vz_col_func: (i) --> [px, py, pz, vx, vy, vz, [col] ]
+					let x, y, vx, vy;
+					[ x, y ] = theModule.getPosition(i);
+					[ vx, vy ] = theModule.getVelocity(i);
+					const hue = Math.floor(Math.atan2(vy,vx)*180.0+0.5)/Math.PI+180.0;
+					return [ x*scale-x0, y*scale-y0, zPos, vx*vmag, vy*vmag, vz*vmag, `hsl(${hue},100%,50%)` ];
+				}
+			);
+		}
+		
+		// update sprite
+		if ( dispMode>=5 ) {
+			cnvsprite.update( 
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					const drawMode = dispMode - 5;
+					theModule.draw(ctx, drawMode );
+				}
+			);
+		}
+		
+		// output to innerHTML
+		if (count % 10 == 0) {
+			const time = theModule.getSysTime();
+			const msg =
+				"box(m)="+(p_xMax).toFixed(1)+"x"+(p_yMax).toFixed(1)
+				+ ", SPH particles N="+p_NNp
+				+ ", time(ms)="+(time*1.0e3).toFixed(1)+"<br>";
+			document.getElementById("text_caption").innerHTML = msg;
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_spheres function  ---------------------------
+	//
+	//    ver 0.0.0  2022.10.26 created, last updated on 2022.12.20
+	//
+	//  spheres = m3js_spheres( p_nn, x_y_z_r_material_func );
+	//     p_nn: number of arrows
+	//     x_y_z_r_material_func: (i) --> [ x, y, z, r, [material] ]
+	//        x,y,z: i-th sphere position in the threejs world
+	//        r: i-th sphere radius in the threejs world
+	//        material: such as = new THREE.MeshStandardMaterial({ color:"#ff0000", opacity:1.0, transparent:true });
+	//  scene.add( spheres );
+	//
+	//  spheres.update( x_y_z_rmag_col_func ); // x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+	//     x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+	//        x,y,z: i-th sphere position in the threejs world
+	//        rmag: i-th sphere radius magnified ratio: 0.0 ... 1.0
+	//        col: such as "#ff0000" or "red" or "rgb(255,0,0)" or 0xff0000 or ...
+	//
+	//  spheres.setOpacity( opacity );
+	//     opacity: 0.0 (transparent) ..... 1.0 (opaque)
+	//
+	//  spheres.visible = true | false;
+	//
+	
+	function m3js_spheres( p_nn, x_y_z_r_material_func ) {
+		const nn = p_nn;
+		const defaultMaterial = new THREE.MeshStandardMaterial({ color:"#ff0000", opacity:1.0, transparent:true });
+		const spheres = new THREE.Group();
+		spheres.array = [];
+		
+		for (let i=0; i<nn; i++) {
+			let x, y, z, r, mater;
+			[ x, y, z, r, mater ] = x_y_z_r_material_func(i);
+			const geometry = new THREE.SphereGeometry(r, 18, 10);
+			const material = ( mater != undefined ) ? mater : defaultMaterial;
+			spheres.array[i] = new THREE.Mesh(geometry, material);
+			spheres.array[i].position.set(x, y, z);
+			spheres.array[i].visible = true;
+			spheres.add( spheres.array[i] );
+		}
+		
+		spheres.update = spheresUpdate;
+		spheres.setOpacity = setSheresOpacity;
+		return spheres;
+		
+		
+		function spheresUpdate( x_y_z_rmag_col_func ) {
+			for (let i=0; i<nn; i++) {
+				const vec = x_y_z_rmag_col_func(i);
+				if ( !Array.isArray(vec) ) {
+					spheres.array[i].visible = false;
+					continue;
+				}
+				let x, y, z, rmag, col;
+				[ x, y, z, rmag, col ] = vec;
+				spheres.array[i].position.set(x, y, z);
+				if ( rmag != undefined ) spheres.array[i].scale.set(rmag,rmag,rmag);
+				if ( col != undefined ) spheres.array[i].material.color = new THREE.Color( col );
+				spheres.array[i].visible = true;
+			}
+			spheres.visible = true;
+		}
+		
+		function setSheresOpacity( opa ) {
+			for (let i=0; i<nn; i++) {
+				spheres.array[i].material.opacity = opa;
+			}
+		}
+	}
+	
+	// -----------------------  m3js_spheres function end
+	
+	
+	// -----------------------  m3js_arrows function  ---------------------------
+	//
+	//    ver 0.0.0  2022.10.25 created, last updated on 2022.12.19
+	//
+	//  arrows = m3js_arrows( p_nn, [defaultColor] );
+	//     nn: number of arrows
+	//     defaultColor: default color of arrows
+	//  scene.add( arrows );
+	//
+	//  arrows.update( x_y_z_vx_vy_vz_col_func );
+	//     x_y_z_vx_vy_vz_col_func: (i) --> [px, py, pz, vx, vy, vz, [col] ]
+	//        x,y,z: i-th arrow starting point in the threejs world
+	//        vx,vy,vz: i-th arrow vector (vx, vy, vz) in the threejs world
+	//        col: such as "#ff0000" or "red" or "rgb(255,0,0)" or 0xff0000 or ...
+	//
+	//  arrows.visible = true | false;
+	//
+	
+	function m3js_arrows( p_nn, defaultColor ) {
+		const nn = p_nn;
+		const dcol = ( defaultColor==undefined ) ? "#ff0000" : defaultColor;
+		const lines = new THREE.Group();
+		lines.array = [];
+		
+		for (let i=0; i<nn; i++) {
+			const geometry = new THREE.BufferGeometry();
+			const positions = new Float32Array( 2 * 3 ); // MAX_POINTS = 2,  3 vertices per point
+			geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+			geometry.setDrawRange( 0, 2 );
+			const material = new THREE.LineBasicMaterial( { color: dcol } );
+			const line = new THREE.Line( geometry, material );
+			line.visible = false;
+			lines.array[i] = line;
+    		lines.add( lines.array[i] );
+		}
+		
+		lines.update = linesUpdate;
+		
+		return lines;
+		
+		
+		function linesUpdate( x_y_z_vx_vy_vz_col_func ) {
+			for (let i=0; i<nn; i++) {
+				const line = lines.array[i];
+				const positions = line.geometry.attributes.position.array;
+				const vec = x_y_z_vx_vy_vz_col_func(i);
+				if ( !Array.isArray(vec) ) {
+					line.visible = false;
+					continue;
+				}
+				
+				let x, y, z, vx, vy, vz, col;
+				[ x, y, z, vx, vy, vz, col ] = vec;
+				if ( col==undefined ) col = dcol;
+				
+				positions[0] = x; // point 0
+				positions[1] = y;
+				positions[2] = z;
+				positions[3] = x + vx; // point 1
+				positions[4] = y + vy;
+				positions[5] = z + vz;
+				line.visible = true;
+				line.material.color = new THREE.Color( col );
+				line.geometry.attributes.position.needsUpdate = true;
+			}
+			lines.visible = true;
+		}
+	}
+	
+	// -----------------------  m3js_arrows function end
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+
+	// ----------  dom control
+	
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = (pauseFlag+1)%2; 
+		if (pauseFlag==0) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==1 ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		// dom control
+		reset:			function() { resetFlag = 1; },
+		pause:			pause,			// pause();
+		step:			function() { stepFlag = 1; },
+		setTheme:		function() {
+							v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
+							resetFlag = 1;
+						},
+		setDispMode:	function() {
+							dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+							dispModeChanged = true;	
+						},
+		viewHome:		function() { viewHomeRequested = true; },
+		
+	};
+
+})(); // ====================  tjs035 module end  ====================
+
+
+// event
+const tjs = tjs035;
+window.addEventListener('load', tjs.main );
+
+
+// --------------------  end of javaScript
+
+  </script>
+  <style type="text/css">
+    body { color:#000000; background-color:#fff8dd;}
+  </style>
+</head>
+<body>
+<p>[tjs035] gas - smoothed particle hydrodynamics 2D (SPH2D)</p>
+<canvas id="myCanvas" width="500" height="480" ></canvas><br>
+
+<label>disp mode:</label>
+<select id="slct_dispMode" onChange="tjs.setDispMode()">
+<option>sph particles</option><option selected>density</option>
+<option>pressure</option><option>temperature</option>
+<option>sph velocity</option>
+<option>canvas2d sph particles</option><option>canvas2d density</option>
+<option>canvas2d pressure</option><option>canvas2d temperature</option>
+<option>canvas2d sph velocity</option>
+</select>
+    <span style="margin-right: 80px;"></span>
+<button onClick="tjs.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="tjs.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="tjs.step()">step</button>
+<br>
+
+<button onClick="tjs.viewHome()">return to initial view</button>
+    <span style="margin-right: 50px;"></span>
+drag mouse to rotate view point
+<br>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<br>
+</body>
+</html>
+
