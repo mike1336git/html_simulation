@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8"/>
-<title>tm021_fasterMixMMD2D</title>
+<title>tm023_NaClIonMD2D</title>
 
 <style type="text/css">
 	body { color:#000000; background-color:#fff8dd; }
@@ -49,70 +49,65 @@ import { GUI } from 'lil-gui';
 
 /* =================================================================================================================
 //
-//  tm021_fasterMixMMD2D
+//  tm023_NaClIonMD2D
 //    Copyright(C) 2023 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
-//    ver 0.0.0  2023.01.24 created, last updated on 2023.01.26
-//    ver 0.0.1  2023.10.21 v2, last updated on 2023.10.21
+//    ver 0.0.0  2023.01.25 created, last updated on 2023.01.26
+//    ver 0.0.1  2023.10.23 v2, last updated on 2023.10.23
 //
 //
 //------------------------------------------------------------------------------------------------------------------
 //
-//   faster molecular dynamics 2D - Morse potential
+//   fast molecular dynamics 2D - ion potential
 //
-//  method: velocity Verlet Algorithm
+//
+//   method: velocity Verlet Algorithm
 //      (1) vi = vi + (Fi/mi)*(0.5dt)
 //      (2) ri = ri + vi*dt
 //      (3) calculation Fi <- {r1,r2,...,rn} Fi=sum(Fij,j=1 to n),Fij=F(ri-rj)
 //      (4) vi = vi + (Fi/mi)*(0.5dt)
-//      (6) goto (1)
+//      goto (1)
 //
-//  potential: Morse V(r) = D*((1-EXP(-A*(r-r0)))^2-1)
-//                        = D*(EXP(-2*A*(r-r0))-2*EXP(-A*(r-r0)))
-//     (D:dissociation energy, r0:bond length, A:width parameter A=SQR(k/(2*D))
-//             force F(r) = -dV(r)/dr
-//                        = 2*D*A*y*(y-1), y=EXP(-A*(r-r0))
+//   force: ion f(r) = fc + fr + fa,  fc:Debye-screened Coulomb force
+//      fc = eForceConst*zi*zj*(EXP(-r/6.5e-10)/r)*(1.0/r+1.0/6.5e-10)
+//      fr = 6.9742e-11*EXP((a-r)/b)    :repulsive force
+//      fa = -6.9742e-21*(c/r^6)        :attractive force
 //
-//  for faster calculation: O(N) // fast calculation (without pre-registration): O(N^2)
-//    ignore F(r) r>rCutoff 
-//    force F(r) <- force table + linear interpolation (see setForceTable() and cutoff(r))
-//    registration with pre-registration
-//      pre-registration O(N), see preRegistration()
-//        particles pre-regist into lattice section[i][j],
-//        and register into reg[ni][k] every particle ni
-//      registration reg[][] (see registration()), 'near' means r<rCutoff+20*2000*dt 
+//    for fast calculation
+//      ignore F(r) r>rCutoff 
+//      force F(r) <- force table + linear interpolation (see setForceTable() and cutoff(r))
+//      register near particles reg[][] (see registerNearParticles()), 'near' means r<rCutoff+20*2000*dt 
 //        reg[][] use 20 times, assuming particle max speed < 2000m/s
-//    force calculation: sum up force(r) (r<rCutoff) 
+//      force calculation: sum up force(r) (r<rCutoff)
 //
 //
 //------------------------------------------------------------------------------------------------------------------
 */
 
-const fasterMixMMD2D = (function(){ // ====================  fasterMixMMD2D Module  ====================
+const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ====================
 
 	const g_AMU = 1.66053904e-27;   // (kg) atomic mass unit
 	const g_kB = 1.380649e-23;      // (J/K) Boltzmann's constant
 	const g_EE = 1.602176634e-19;   // (C) electron charge, energy : 1(eV) = EE(J)
-	const g_nMax = 8000;            // array max
+	const g_eForceConst = 1.0/(4.0*Math.PI*8.85418782e-12); // epsilon0=8.85418782e-12
+	const g_nMax = 2000;            // array max
 
-	let g_molecKind1 = 3;           // 3:Fe
-	let g_molecKind2 = 5;           // 5:Al
+	let g_ionKind1 = 3;             // 3:Na+
+	let g_ionKind2 = 7;             // 7:Cl-
 	let g_nParticles = 100;         // number of particles
 	let g_sysTime = 0.0;            // (s) system time
-	let g_timeStep =  5.0*1.0e-15;  // (s) time step
+	let g_timeStep =  2.0*1.0e-15;  // (s) time step dt
 	let g_xMax = 6.0E-9;            // (m) x-Box size
 	let g_yMax = 6.0E-9;            // (m) y-Box size
-	let g_Nsx = 48;                 // use pre-registration section(0 to Nsx,0 to Nsy)
-	let g_Nsy = 48;                 // use pre-registration section(0 to Nsx,0 to Nsy)
-	let g_kineticEnergy = 0.0;      // (J) total kinetic energy
-	let g_potentialEnergy = 0.0;    // (J) total potential energy
 	let g_rCutoff = 1.0e-9;         // force cutoff length
 	let g_hh = 1.0e-12;             // forceTable r-division
+	let g_kineticEnergy = 0.0;      // (J) total kinetic energy
+	let g_potentialEnergy = 0.0;    // (J) total potential energy
 
-	let g_xBoxSize = 400;           // in pixel
+	let g_xBoxSize = 480;           // in pixel
 	let g_yBoxSize = 400;           // in pixel
-	let g_yTextSize = 70;           // in pixel
+	let g_yTextSize = 80;           // in pixel
 
 	const g_xx = dim1(g_nMax);      // (m) x-component of i-th particle position
 	const g_yy = dim1(g_nMax);      // (m) y-component of i-th particle position
@@ -121,13 +116,11 @@ const fasterMixMMD2D = (function(){ // ====================  fasterMixMMD2D Modu
 	const g_ffx = dim1(g_nMax);     // (N) x-component of total force applied i-th particle
 	const g_ffy = dim1(g_nMax);     // (N) y-component of total force applied i-th particle
 	const g_mas = dim1(g_nMax);     // (kg) mass of i-th particle
-	const g_kind = dimInt1(g_nMax); // kind of i-th particle
-	const g_potentialTable = dim3(21,21,1002);  // potential table(ki,kj) [V[0], V[hh], V[2hh],..., V[rCutoff]]
-	const g_forceTable = dim3(21,21,1002);      // force table(ki,kj) [F[0], F[hh], F[2hh],..., F[rCutoff]]
-	const g_reg = dimInt2(g_nMax,100);          // reg[i][0]: total number of particles near i-th particle
-												// reg[i][j]: particle number near i-th particle, (j>0)
-	const g_section = dimInt3(100,100,20);      // section[i][j][0]: total number of particles in section[i][j]
-												// section[i][j][k]: k-th particle number in section[i][j]
+	const g_kind = dimInt1(g_nMax); // kind of i-th particle 0:He 1:Ne 2:Ar 3:Kr 4:Xe 5:Hg
+	const g_potentialTable = dim3(18,18,1002);  // potential table [V[0], V[hh], V[2hh],..., V[rCutoff] ]
+	const g_forceTable = dim3(18,18,1002);      // force table [F[0], F[hh], F[2hh],..., F[rCutoff] ]
+	const g_reg = dimInt2(g_nMax,100);          // reg[i][0]:total number of particles near i-th particle
+												// reg[i][j]:particle number near i-th particle, (j>0)
 
 	function dim1( n ) {
 		return new Float64Array( n );
@@ -156,61 +149,50 @@ const fasterMixMMD2D = (function(){ // ====================  fasterMixMMD2D Modu
 		return a;
 	}
 
-	function dimInt3( ni, nj, nk ) {
-		let a = [];
-		for (let i=0; i<ni; i++) {
-			a[i] = [];
-			for (let j=0; j<nj; j++) {
-				a[i][j] = new Int32Array( nk );
-			}
-		}
-		return a;
-	}
 
+	// --------------------  SXion potential data  --------------------
 
-	// --------------------  Morse potential data  --------------------
+	//    0 mass,1 charge,     2  a ,     3  b , 4 c , 5  r-ion,  6  color,  7 str
+	const g_SXion = [
+		[ 10.81*g_AMU,  3.0*g_EE, 0.720e-10, 0.080e-10,  0.0, 0.23e-10, "#ff4060", "B+++"  ], //  0
+		[ 16.00*g_AMU, -2.0*g_EE, 1.626e-10, 0.085e-10, 20.0, 1.40e-10, "#4000ff", "O--"   ], //  1
+		[ 19.00*g_AMU, -1.0*g_EE, 1.565e-10, 0.085e-10, 20.0, 1.33e-10, "#0040ff", "F-"    ], //  2
+		[ 22.99*g_AMU,  1.0*g_EE, 1.260e-10, 0.080e-10, 20.0, 1.02e-10, "#ff0000", "Na+"   ], //  3
+		[ 24.31*g_AMU,  2.0*g_EE, 1.161e-10, 0.080e-10, 10.0, 0.72e-10, "#ff6000", "Mg++"  ], //  4
+		[ 26.98*g_AMU,  3.0*g_EE, 1.064e-10, 0.080e-10,  2.0, 0.53e-10, "#ff4080", "Al+++" ], //  5
+		[ 28.09*g_AMU,  4.0*g_EE, 1.012e-10, 0.080e-10,  0.0, 0.40e-10, "#ff8040", "Si++++"], //  6
+		[ 35.45*g_AMU, -1.0*g_EE, 1.950e-10, 0.090e-10, 30.0, 1.81e-10, "#0000ff", "Cl-"   ], //  7
+		[ 39.10*g_AMU,  1.0*g_EE, 1.595e-10, 0.080e-10, 15.0, 1.38e-10, "#ff4000", "K+"    ], //  8
+		[ 40.08*g_AMU,  2.0*g_EE, 1.414e-10, 0.080e-10, 10.0, 1.00e-10, "#ff8000", "Ca++"  ], //  9
+		[ 47.88*g_AMU,  4.0*g_EE, 1.235e-10, 0.080e-10,  0.0, 0.61e-10, "#ff8060", "Ti++++"], // 10
+		[ 87.62*g_AMU,  2.0*g_EE, 1.632e-10, 0.080e-10, 15.0, 1.16e-10, "#ffaf00", "Sr++"  ], // 11
+		[ 137.3*g_AMU,  2.0*g_EE, 1.820e-10, 0.080e-10, 20.0, 1.36e-10, "#ffbf00", "Ba++"  ], // 12
+		[ 4.003*g_AMU,  0.0*g_EE, 1.200e-10, 0.110e-10, 4.76, 1.28e-10, "#00ff80", "He"    ], // 13
+		[ 20.18*g_AMU,  0.0*g_EE, 1.415e-10, 0.112e-10,11.03, 1.37e-10, "#00ff40", "Ne"    ], // 14
+		[ 39.95*g_AMU,  0.0*g_EE, 1.878e-10, 0.117e-10,38.53, 1.70e-10, "#00ff00", "Ar"    ], // 15
+		[ 83.80*g_AMU,  0.0*g_EE, 2.041e-10, 0.130e-10,55.33, 1.83e-10, "#40ff00", "Kr"    ], // 16
+		[ 131.3*g_AMU,  0.0*g_EE, 2.258e-10, 0.145e-10,85.55, 1.99e-10, "#80ff00", "Xe"    ] ];//17
 
-	//   0 mass(AU),      1 dd(eV),     2 aa(1/m), 3 r0(m),   4 col,     5 molecStr
-	const g_Morse = [
-		[ 183.85 *g_AMU, 0.9906*g_EE, 1.4116e10, 3.032e-10, "#6622ff", "W"  ], //  0
-		[  95.94 *g_AMU, 0.8032*g_EE, 1.5079e10, 2.976e-10, "#4444ff", "Mo" ], //  1
-		[  51.996*g_AMU, 0.4414*g_EE, 1.5721e10, 2.754e-10, "#0088ff", "Cr" ], //  2
-		[  55.847*g_AMU, 0.4174*g_EE, 1.3885e10, 2.845e-10, "#00ffff", "Fe" ], //  3
-		[  58.71 *g_AMU, 0.4205*g_EE, 1.4199e10, 2.780e-10, "#00ff88", "Ni" ], //  4
-		[  26.98 *g_AMU, 0.2703*g_EE, 1.1646e10, 3.253e-10, "#00ff00", "Al" ], //  5
-		[ 207.19 *g_AMU, 0.2348*g_EE, 1.1836e10, 3.733e-10, "#88ff00", "Pb" ], //  6
-		[  63.54 *g_AMU, 0.3429*g_EE, 1.3588e10, 2.866e-10, "#cccc00", "Cu" ], //  7
-		[ 107.87 *g_AMU, 0.3323*g_EE, 1.3690e10, 3.115e-10, "#bbbb66", "Ag" ], //  8
-		[  40.08 *g_AMU, 0.1623*g_EE, 0.8054e10, 4.569e-10, "#ddaa00", "Ca" ], //  9
-		[  87.62 *g_AMU, 0.1513*g_EE, 0.7878e10, 4.988e-10, "#ff8800", "Sr" ], // 10
-		[ 137.34 *g_AMU, 0.1416*g_EE, 0.6570e10, 5.373e-10, "#ff4400", "Ba" ], // 11
-		[  22.99 *g_AMU, 0.0633*g_EE, 0.5900e10, 5.336e-10, "#ff0000", "Na" ], // 12
-		[  39.102*g_AMU, 0.0542*g_EE, 0.4977e10, 6.369e-10, "#ff0044", "K"  ], // 13
-		[  85.47 *g_AMU, 0.0464*g_EE, 0.4298e10, 7.207e-10, "#ff0088", "Rb" ], // 14
-		[ 132.905*g_AMU, 0.0449*g_EE, 0.4157e10, 7.557e-10, "#ff00cc", "Cs" ], // 15
-		[  20.183*g_AMU, 0.0031*g_EE, 1.6500e10, 3.076e-10, "#ff00ff", "Ne" ], // 16
-		[  39.948*g_AMU, 0.0104*g_EE, 1.3400e10, 3.816e-10, "#cc44ff", "Ar" ], // 17
-		[  83.80 *g_AMU, 0.0141*g_EE, 1.2500e10, 4.097e-10, "#8844ff", "Kr" ], // 18
-		[ 131.30 *g_AMU, 0.0200*g_EE, 1.2400e10, 4.467e-10, "#4488ff", "Xe" ], // 19
-		[ 200.59 *g_AMU, 0.0734*g_EE, 1.4900e10, 3.255e-10, "#00ccff", "Hg" ] ]; // 20
-
-	const g_rCollision = [];
-	const g_rBond = [];
-	const g_massOf = [];
-	const g_strOf = [];
-	const g_colorOf = [];		// g_colorOf[kind] : color of kind
+	const g_rCollision = [];		// (m) V(r) = 0 at r==g_rCollision[kind]
+	const g_rBond = [];			// (m) bpnd length == 2.0*g_rBond[kind]
+	const g_massOf = [];			// (kg) massOf[kind] : mass of kind
+	const g_ionStrOf = [];		// strOf[kind] : string of kind, such as "Na+"
+	const g_colorOf = [];			// colorOf[kind] : color of kind
 
 	(function() {
-		const n = g_Morse.length;
-
+		const n = g_SXion.length;
 		for (let i=0; i<n; i++) {
-			g_rCollision[i] = 0.5*g_Morse[i][3]/1.12246;
-			g_rBond[i] = 0.5*g_Morse[i][3];
-			g_massOf[i] = g_Morse[i][0];
-			g_strOf[i] = g_Morse[i][5];
-			g_colorOf[i] = g_Morse[i][4];
+			g_rCollision[i] = g_SXion[i][5]/1.12246;
+			g_rBond[i] = g_SXion[i][5];
+			g_massOf[i] = g_SXion[i][0];
+			g_ionStrOf[i] = g_SXion[i][7];
+			g_colorOf[i] = g_SXion[i][6];
 		}
 	}());
+
+	//					0      1      2     3      4      5      6      7      8      9     
+	const g_strOf = [  "B",  "O",  "F", "Na", "Mg", "Al", "Si", "Cl",  "K", "Ca",
+						"Ti", "Sr", "Ba", "He", "Ne", "Ar", "Kr", "Xe" ];
 
 	function colorStrOf(kind) {
 		return "<span style='color:"+g_colorOf[kind]+"'>"+g_strOf[kind]+"</span>";
@@ -220,29 +202,31 @@ const fasterMixMMD2D = (function(){ // ====================  fasterMixMMD2D Modu
 
 	function setForceTable() {
 		const hh = g_hh;
-		for (let i=0; i<21; i++) {
-			for (let j=0; j<21; j++) {
-				const dd = Math.sqrt(g_Morse[i][1]*g_Morse[j][1]);
-				const aa = 0.5*(g_Morse[i][2]+g_Morse[j][2]);
-				const r0 = 0.5*(g_Morse[i][3]+g_Morse[j][3]);
+		for (let ki=0; ki<18; ki++) {
+			for (let kj=0; kj<18; kj++) {
+				const a = g_SXion[ki][2]+g_SXion[kj][2];
+				const b = g_SXion[ki][3]+g_SXion[kj][3];
+				const c = g_SXion[ki][4]*g_SXion[kj][4]*1.0e-60;
+				const zi = g_SXion[ki][1];
+				const zj = g_SXion[kj][1];
 				for (let ir=1; ir<=1001; ir++) {
 					const r = ir*hh;
-					const y = Math.exp(-aa*(r-r0));
-					g_potentialTable[i][j][ir] = cutoff(r)*dd*y*(y-2.0); // V(r) = D*((1-y)^2-1) = D*y*(y-2)
-					//g_forceTable[i][j][ir] = cutoff(r)*2.0*dd*aa*y*(y-1);
+					const fc = g_eForceConst*zi*zj*(Math.exp(-r/6.5e-10)/r)*(1.0/r+1.0/6.5e-10);
+					const fr = 6.9742e-11*Math.exp((a-r)/b); //repulsive force;
+					const fa = -6.9742e-21*(c/(r*r*r*r*r*r)); //attractive force;
+					g_forceTable[ki][kj][ir] = cutoff(r)*(fc + fr + fa);
 				}
-				g_potentialTable[i][j][0] = g_potentialTable[i][j][1] + g_potentialTable[i][j][2];
-				for (let ir=1; ir<=1000; ir++) {
-					g_forceTable[i][j][ir] = -(g_potentialTable[i][j][ir+1] - g_potentialTable[i][j][ir-1])/(2.0*hh);
+				g_forceTable[ki][kj][0] = g_forceTable[ki][kj][1] + g_forceTable[ki][kj][2];
+				g_potentialTable[ki][kj][1001] = 0.0;
+				for (let ir=1000; ir>=0; ir--) {
+					g_potentialTable[ki][kj][ir] = g_potentialTable[ki][kj][ir+1]+g_forceTable[ki][kj][ir]*hh;
 				}
-				g_forceTable[i][j][1001] = -(0.0 - g_potentialTable[i][j][1000])/(2.0*hh);
-				g_forceTable[i][j][0] = g_forceTable[i][j][1]; 
 			}
 		}
 	}
 
 	function cutoff(r) {
-		let ret = 0;
+		let ret = 0.0;
 		if (r>0 && r<0.8*g_rCutoff) {
 			ret = 1.0;
 		} else if (r>=0.8*g_rCutoff && r<g_rCutoff ) {
@@ -254,71 +238,68 @@ const fasterMixMMD2D = (function(){ // ====================  fasterMixMMD2D Modu
 
 	// --------------------  set initial condition  --------------------
 
-	function setInitialCondition( theme, boxSizeInNM, contTemp ) {
-		let knd1, knd2;
-		if (theme==0) { // Fe-Al
-			knd1 = 3; knd2 = 5;
-		} else if (theme==1) { // Ni-Pb
-			knd1 = 4; knd2 = 6;
-		} else if (theme==2) { // Ni-Cr
-			knd1 = 4; knd2 = 2;
-		} else if ( theme==3 ) { // W-Cu
-			knd1 = 0; knd2 = 7;
-		} else if ( theme==4 ) { // Al-Ca
-			knd1 = 5; knd2 = 9;
-		} else if ( theme==5 ) { // Fe-Fe
-			knd1 = 3; knd2 = 3;
-		} else { // else: Fe-Al
-			knd1 = 3; knd2 = 5;
-		}
-		setCondition(knd1,knd2,boxSizeInNM,contTemp);
-	}
-
-	function setCondition( knd1, knd2, boxSizeInNM, contTemp ) {
-		g_molecKind1 = knd1;
-		g_molecKind2 = knd2;
-		g_rCutoff = Math.min(Math.max(6.0*g_rBond[g_molecKind1],6.0*g_rBond[g_molecKind2]),1.0e-9);
-		setForceTable();
+	function setInitialCondition( material, boxSizeInNM, contTemp ) {
+		const n = 6;
 		g_sysTime = 0.0;
+		setForceTable();
 		g_xMax = boxSizeInNM*1.0e-9;
 		g_yMax = boxSizeInNM*1.0e-9;
-		const xtalSize = 0.4*g_xMax;
-		const gap = 0.5e-9;
-		const s = (g_xMax-2*xtalSize-gap)/2;
-		const ss = s+xtalSize+gap;
-		let ii = setCrystalBlock(0, knd1, s, s, xtalSize, xtalSize, Math.PI/4);
-		ii = setCrystalBlock(ii, knd2, s, ss, xtalSize, xtalSize, 0);
-		ii = setCrystalBlock(ii, knd2, ss, s, xtalSize, xtalSize, Math.PI/8)
-		g_nParticles = setCrystalBlock(ii, knd1, ss, ss, xtalSize, xtalSize, 3*Math.PI/8);
+		let lattice;
+		if (material==0) { // NaCl
+			g_ionKind1 = 3; // Na+
+			g_ionKind2 = 7; // Cl-
+			lattice = 5.6407e-10*0.99; //0.99: correction factor
+		} else if (material==1) { // MgO
+			g_ionKind1 = 4; // Mg++
+			g_ionKind2 = 1; // O--
+			lattice = 4.212e-10*0.94; //0.94: correction factor
+		} else if (material==2) { // CaO
+			g_ionKind1 = 9; // Ca++
+			g_ionKind2 = 1; // O--
+			lattice = 4.80e-10*0.94; //0.94: correction factor
+		} else if (material==3) { // BaO
+			g_ionKind1 = 12; // Ba++
+			g_ionKind2 = 1;  // O--
+			lattice = 5.536e-10*1.00;
+		} else if (material==4) { // NaF
+			g_ionKind1 = 3;  // Na+
+			g_ionKind2 = 2;  // F-
+			lattice = 4.62e-10*0.99;
+		} else if (material==5) { // KF
+			g_ionKind1 = 8;  // K+
+			g_ionKind2 = 2;  // F-
+			lattice = 5.34e-10*1.00;
+		} else if (material==6) { // KCl
+			g_ionKind1 = 8;  // K+
+			g_ionKind2 = 7;  // Cl-
+			lattice = 6.29e-10*0.99;
+		}
+		const s = 0.5*(g_xMax - lattice*n);
+		g_nParticles = setNaClTypeBlock(0, g_ionKind1, g_ionKind2, n, n, lattice, s, s);
 		ajustVelocity(contTemp);
 	}
 
-	function setCrystalBlock( ii, knd, x0, y0, xLen, yLen, theta ) {
-		let iip = ii;
-		const a = 0.98*2.0*g_rBond[knd];
-		const b = 0.866025*a;
-		let leng = xLen;
-		if (leng<yLen) leng = yLen;
-		leng = 1.5*leng;
-		const nx = Math.floor(leng/b) + 1, ny = Math.floor(leng/a) + 1;
-		const sth = Math.sin(theta), cth = Math.cos(theta);
-		for (let i=0; i<nx; i++) {
-			const x = b*i - leng/2.0;
-			for (let j=0; j<ny; j++) {
-				let y = a*j - leng/2.0;
-				if ((i%2)==1) y = y + 0.5*a;
-				const xp = x0 + xLen/2.0 + cth*x - sth*y;
-				const yp = y0 + yLen/2.0 + sth*x + cth*y;
-				if (xp>=x0 && xp<=x0+xLen && yp>=y0 && yp<=y0+yLen) {
-					setParticle(iip, knd, xp, yp);
-					iip = iip + 1;
+	function setNaClTypeBlock( ii, knd1, knd2, nx, ny, lattice, xPos, yPos ) {
+		let ipp = ii;
+		const a = lattice/2.0;
+		for (let i=0; i<2*nx; i++) {
+			for (let j=0; j<2*ny; j++) {
+				const x = xPos + a*i;
+				const y = yPos + a*j;
+				let knd;
+				if ((i+j)%2==0) {
+					knd = knd1;
+				} else {
+					knd = knd2;
 				}
+				setParticle(ipp, knd, x, y)
+				ipp = ipp + 1;
 			}
 		}
-		return iip;
+		return ipp;
 	}
 
-	function setParticle( i, knd, x, y ) {
+	function setParticle(i, knd, x, y) {
 		g_xx[i] = x;
 		g_yy[i] = y;
 		g_vx[i] = 200.0*normalRandom3();
@@ -339,15 +320,14 @@ const fasterMixMMD2D = (function(){ // ====================  fasterMixMMD2D Modu
 
 	function timeEvolution( tempMode, contTemp ) {
 		if (tempMode==1) ajustVelocity(contTemp);
-		//registerNearParticles(); // O(N^2)
-		registration(); // O(N)
+		registerNearParticles();
 		for (let i=0; i<20; i++) {
 			g_sysTime += g_timeStep;
 			moveParticles(g_timeStep);
 		}
 	}
 
-	function moveParticles(dt) {
+	function moveParticles( dt ) {
 		const nn = g_nParticles;
 		for (let i=0; i<nn; i++) {
 			const a = 0.5*dt/g_mas[i];
@@ -372,7 +352,7 @@ const fasterMixMMD2D = (function(){ // ====================  fasterMixMMD2D Modu
 		const nn = g_nParticles, s05 = 0.5*3.418e-10;
 		g_potentialEnergy = 0.0;
 		for (let i=0; i<nn; i++) {
-			g_ffx[i]=0;g_ffy[i]=0;
+			g_ffx[i]=0; g_ffy[i]=0;
 		}
 
 		for (let i=0; i<nn-1; i++) {
@@ -396,7 +376,7 @@ const fasterMixMMD2D = (function(){ // ====================  fasterMixMMD2D Modu
 		}
 	}
 
-	function force( r, kndi, kndj ) { // forceTable - linear interporation
+	function force(r,kndi,kndj) { // forceTable - linear interporation
 		const hh = g_hh;
 		const ir = Math.floor(r/hh);
 		const a = r - ir*hh;
@@ -411,9 +391,9 @@ const fasterMixMMD2D = (function(){ // ====================  fasterMixMMD2D Modu
 		return (24.0*0.5*1.711e-21*r6*(2.0*r6-1.0)/r);
 	}
 
-	//--- registeration: O(N^2)
+	//--- registeration
 
-	function registerNearParticles() { // no use
+	function registerNearParticles() {
 		const nn = g_nParticles, rCut = g_rCutoff+20*2000*g_timeStep;
 		const rcut2 = rCut*rCut;
 		for (let i=0; i<nn-1; i++) {
@@ -430,67 +410,16 @@ const fasterMixMMD2D = (function(){ // ====================  fasterMixMMD2D Modu
 	}
 
 	function maxNearParticles() {
+		const nn = g_nParticles;
 		let mx = 0;
-		for (let i=1; i<nParticles-1; i++) {
+		for (let i=0; i<nn-1; i++) {
 			if (mx<g_reg[i][0]) mx = g_reg[i][0];
 		}
 		return (mx-1);
 	}
 
-	// --- registration with preRegistration: O(N)
 
-	function registration() {
-		const nn = g_nParticles, rreg = g_rCutoff+20*2000*g_timeStep;
-		preRegistration();
-		const rreg2 = rreg*rreg;
-		for (let ipp=0; ipp<nn-1; ipp++) {
-			let kp = 1;
-			let i0 = Math.floor(g_Nsx*(g_xx[ipp]-rreg)/g_xMax);
-			if (i0<0) i0 = 0;
-			let i1 = Math.floor(g_Nsx*(g_xx[ipp]+rreg)/g_xMax ); 
-			if (i1>=g_Nsx) i1 = g_Nsx-1;
-			let j0 = Math.floor(g_Nsy*(g_yy[ipp]-rreg)/g_yMax ); 
-			if (j0<0) j0 = 0;
-			let j1 = Math.floor(g_Nsy*(g_yy[ipp]+rreg)/g_yMax );
-			if (j1>=g_Nsy) j1 = g_Nsy-1;
-			for (let i=i0; i<=i1; i++) {
-				for (let j=j0; j<=j1; j++) {
-					for (let iq=1; iq<=g_section[i][j][0]; iq++) {
-						const jp = g_section[i][j][iq];
-						if (jp>ipp) {
-							const r2 = (g_xx[ipp]-g_xx[jp])*(g_xx[ipp]-g_xx[jp])+(g_yy[ipp]-g_yy[jp])*(g_yy[ipp]-g_yy[jp]);
-							if (r2<rreg2) {
-								g_reg[ipp][kp] = jp;
-								kp = kp + 1;
-							}
-						}
-					}
-				}
-			}
-			g_reg[ipp][0] = kp;
-		}
-	}
-
-	function preRegistration() {
-		const nn = g_nParticles;
-		for (let i=0; i<g_Nsx; i++) {
-			for (let j=0; j<g_Nsy; j++) {
-				g_section[i][j][0] = 0;
-			}
-		}
-		for (let ipp=0; ipp<nn; ipp++) {
-			let i = Math.floor(g_Nsx*g_xx[ipp]/g_xMax);
-			if (i>=g_Nsx) i = g_Nsx-1;
-			let j = Math.floor(g_Nsy*g_yy[ipp]/g_yMax);
-			if (j>=g_Nsy) j = g_Nsy-1;
-			const iq = g_section[i][j][0] + 1;
-			g_section[i][j][0] = iq;
-			g_section[i][j][iq] = ipp
-		}
-	}
-
-
-	// --------------------  utility  -------------------- 
+	//--------------------  utility  --------------------
 
 	function systemTemperature() {
 		const nn = g_nParticles;
@@ -519,42 +448,42 @@ const fasterMixMMD2D = (function(){ // ====================  fasterMixMMD2D Modu
 		ctx.fillStyle = "rgb(125,125,125)"; //background color
 		ctx.fillRect(px, py, boxSize, boxSize); //clear box
 
-		drawBalls(ctx, drawMode, px, py);
-
-		if (drawMode>0) drawBonds(ctx, drawMode, px, py);
-
+		drawBalls( ctx, drawMode, px, py );
+		drawBonds( ctx, drawMode, px, py );
+		
 		ctx.fillStyle = "rgb(0, 0, 0)";
-		ctx.fillText("time = "+(g_sysTime*1.0e12).toFixed(1)+" (ps)", 10, boxSize+34);
-		ctx.fillText("Temp ="+systemTemperature().toFixed(1)+" (k)", 200, boxSize+34);
-		ctx.fillStyle = "rgb(0,200,200)";
-		ctx.fillText(g_strOf[g_molecKind1], 10, boxSize+54);
-		ctx.fillStyle = "rgb(160,160,0)";
-		ctx.fillText(g_strOf[g_molecKind2], 40, boxSize+54);
+		ctx.fillText("time = "+(g_sysTime*1.0e12).toFixed(2)+" (ps)", 10, pCaption+24);
+		ctx.fillText("Temp ="+systemTemperature().toFixed(1)+" (k)", 200, pCaption+24);
+		ctx.fillStyle = "rgb(250,80,80)";
+		ctx.fillText(g_strOf[g_ionKind1], 10, pCaption+44);
+		ctx.fillStyle = "rgb(80,80,250)";
+		ctx.fillText(g_strOf[g_ionKind2], 60, pCaption+44);
 		ctx.fillStyle = "rgb(0, 0, 0)";
-		ctx.fillText(", N = "+g_nParticles, 70, boxSize+54);
+		ctx.fillText(", N = "+g_nParticles, 90, pCaption+44);
 		if (tempMode==0) { // adiabatic
-			ctx.fillText("tempMode : adiabatic", 200, boxSize+54);
+			ctx.fillText("tempMode : adiabatic", 200, pCaption+44);
 		} else if (tempMode==1) { // temp control
-			ctx.fillText("contTemp = "+contTemp.toFixed(1)+" (K)", 200, boxSize+54);
+			ctx.fillText("contTemp = "+contTemp.toFixed(1)+" (K)", 200, pCaption+44);
 		}
-		ctx.fillText("Box = "+(g_xMax*1.0e9).toFixed(1)+"x"+(g_yMax*1.0e9).toFixed(1)+" (nm)", 10, boxSize+74);
-		ctx.fillText("Energy = "+(g_kineticEnergy+g_potentialEnergy).toExponential(4)+" (J)", 200, boxSize+74);
+		ctx.fillText("Box = "+(g_xMax*1.0e9).toFixed(1)+"x"+(g_yMax*1.0e9).toFixed(1)+" (nm)", 10, pCaption+64);
+		ctx.fillText("Energy = "+(g_kineticEnergy+g_potentialEnergy).toExponential(4)+" (J)", 200, pCaption+64);
 	}
 
 	function drawBalls( ctx, drawMode, px, py ) {
 		const nn = g_nParticles, sc = 400.0/g_xMax;
+
 		if (drawMode==0) {
 			for (let i=0; i<nn; i++) {
-				ctx.fillStyle = g_colorOf[g_kind[i]];
+				ctx.fillStyle = (g_kind[i]==g_ionKind1) ? "rgb(250,80,80)" : "rgb(80,80,250)";
 				ctx.beginPath();
-				ctx.arc(g_xx[i]*sc+px, (g_yMax-g_yy[i])*sc+py, g_rCollision[g_kind[i]]*sc, 0, 2.0*Math.PI, false);
+				ctx.arc(g_xx[i]*sc+px, (g_yMax-g_yy[i])*sc+py, g_rCollision[g_kind[i]]*sc, 0, 2*Math.PI, false);
 				ctx.fill();
 			}
 		} else if (drawMode==1 || drawMode==2) {
 			for (let i=0; i<nn; i++) {
-				ctx.strokeStyle = "rgb(80,80,80)";
+				ctx.strokeStyle = (g_kind[i]==g_ionKind1) ? "rgb(250,80,80)" : "rgb(80,80,250)";
 				ctx.beginPath();
-				ctx.arc(g_xx[i]*sc+px, (g_yMax-g_yy[i])*sc+py, g_rBond[g_kind[i]]*sc, 0, 2.0*Math.PI, false);
+				ctx.arc(g_xx[i]*sc+px, (g_yMax-g_yy[i])*sc+py, g_rBond[g_kind[i]]*sc, 0, 2*Math.PI, false);
 				ctx.stroke();
 			}
 		}
@@ -562,25 +491,28 @@ const fasterMixMMD2D = (function(){ // ====================  fasterMixMMD2D Modu
 
 	function drawBonds( ctx, drawMode, px, py ) {
 		const nn = g_nParticles, sc = 400.0/g_xMax;
+		if (drawMode==0) return;
 		for (let i=0; i<nn-1; i++) {
 			for (let k=1; k<g_reg[i][0]; k++) {
 				const j = g_reg[i][k];
 				const d = Math.sqrt((g_xx[i]-g_xx[j])*(g_xx[i]-g_xx[j])+(g_yy[i]-g_yy[j])*(g_yy[i]-g_yy[j]));
-				const d0 = g_rBond[g_kind[i]]+g_rBond[g_kind[j]];
+				const d0 = g_rBond[g_kind[i]] + g_rBond[g_kind[j]];
 				if (d<d0*1.2) {
-					let th, rcol;
-					if (drawMode==1) { // color change - bond length 
-						rcol = Math.floor((d/d0-0.96)*500+120);
+					let rcol, th;
+					if (drawMode==1) { // color change - bond length
+						rcol = Math.floor((d/d0-0.96)*1000+120);
 						if (rcol<0) rcol = 0;
 						if (rcol>240) rcol = 240;
 					} else if (drawMode==2) { // color change - bond direction
-						const yij = g_yy[i]-g_yy[j];
+						let yij = g_yy[i]-g_yy[j];
 						if (yij==0.0) yij = 1e-20;
-						th = 3.0*(Math.atan((g_xx[i]-g_xx[j])/yij)+Math.PI/2.0)/Math.PI;
+						th = 2.0*(Math.atan((g_xx[i]-g_xx[j])/yij)+Math.PI/2.0)/Math.PI;
 						rcol = Math.floor((th-Math.floor(th))*360.0);
 					}
-					drawLine(ctx, g_xx[i]*sc+px, (g_yMax-g_yy[i])*sc+py, g_xx[j]*sc+px, (g_yMax-g_yy[j])*sc+py,
-						'hsl('+rcol+',100%,50%)');
+					if (g_kind[i] != g_kind[j]) {
+						drawLine(ctx, g_xx[i]*sc+px, (g_yMax-g_yy[i])*sc+py, 
+									g_xx[j]*sc+px, (g_yMax-g_yy[j])*sc+py, 'hsl('+rcol+',100%,50%)');
+					}
 				}
 			}
 		}
@@ -602,20 +534,19 @@ const fasterMixMMD2D = (function(){ // ====================  fasterMixMMD2D Modu
 	function setBonds() {
 		const nn=g_nParticles;
 		let iBond = 0;
-
 		for (let i=0; i<nn-1; i++) {
 			for (let k=1; k<g_reg[i][0]; k++) {
 				const j = g_reg[i][k];
+				if (g_kind[i] == g_kind[j]) continue;
 				const xij = g_xx[i]-g_xx[j];
 				const yij = g_yy[i]-g_yy[j];
 				const dij = Math.sqrt(xij*xij+yij*yij);
-				const d0 = ( g_rBond[g_kind[i]] + g_rBond[g_kind[j]] );
-				const dc = 1.2*d0;
-				if ( dij<dc ) {
+				const d0 = g_rBond[g_kind[i]] + g_rBond[g_kind[j]];
+				if ( dij<d0*1.2 ) {
 					let hlen = Math.floor((dij/d0-1.0)*900+120);
 					if (hlen<0) hlen = 0;
 					if (hlen>270) hlen = 240;
-					const th = 3.0*(Math.atan2(yij,xij)+0.5*Math.PI)/Math.PI;
+					const th = 2.0*(Math.atan2(yij,xij)+0.5*Math.PI)/Math.PI;
 					const hdir = Math.floor((th-Math.floor(th))*360.0);
 					g_bondArray[iBond] = [ g_xx[i], g_yy[i], g_xx[j], g_yy[j], hlen, hdir ];
 					iBond++;
@@ -629,20 +560,18 @@ const fasterMixMMD2D = (function(){ // ====================  fasterMixMMD2D Modu
 	// --------------------  public  --------------------
 
 	return {
-		init:           setInitialCondition, // setInitialCondition( theme, boxSizeInNM, contTemp )
+		init:           setInitialCondition, // setInitialCondition( material, boxSizeInNM, contTemp)
 		evolve:         timeEvolution, // timeEvolution( tempMode, contTemp )
-		draw:           draw, // draw( ctx, drawMode, tempMode, contTemp )
+		draw:           draw, // draw( ctx, drawMode, tempMode ,contTemp )
 
 		setTemp:        ajustVelocity, // ajustVelocity( temp )
 		setBonds:       setBonds, // setBonds()
-
+		
 		getSysParam:    function() { return [ g_nParticles, g_timeStep, g_xMax, g_yMax ]; },
 		getNow:         function() {
 							return [ g_sysTime, systemTemperature(), g_kineticEnergy, g_potentialEnergy,
-								g_molecKind1, g_molecKind2 ]; 
+								g_ionKind1, g_ionKind2 ]; 
 						},
-
-		getMorseData:   function(kind,index) { return g_Morse[kind][index]; },
 		getAtomData:    function(i) { return [ g_rBond[g_kind[i]], g_colorOf[g_kind[i]] ]; },
 		getKindStr:     colorStrOf, // colorStrOf( kind )
 		getPosition:    function(i) { return [ g_xx[i], g_yy[i] ]; },
@@ -651,15 +580,15 @@ const fasterMixMMD2D = (function(){ // ====================  fasterMixMMD2D Modu
 		getBonds:       function(iBond) { return g_bondArray[iBond]; },
 	};
 
-})(); // ====================  fasterMixMMD2D end  ====================
+})(); // ====================  NaClIonMD2D end  ====================
 
 
-const tjsm021 = (function(){ // ====================  tjsm Module  ====================
+const tjsm023 = (function(){ // ====================  tjsm Module  ====================
 
-	const theModule = fasterMixMMD2D;
-	let v_theme = 0; // 0:Fe-Al  1:Ni-Pb  2:Ni-Cr  3:W-Cu  4:Al-Ca  5:Fe
+	const theModule = NaClIonMD2D;
+	let v_theme = 0; // 0:NaCl  1:MgO  2:CaO  3:BaO  4:NaF  5:KF  6:KCl
 	let v_boxSizeInNM = 6.0;
-	let v_tempMode = 0;
+	let v_tempMode = 0;	// (K) controled temperature
 	let v_contTemp = 300;
 	
 	let p_nn, p_dt, p_xMax, p_yMax; // <-- theModule.getSysParam()
@@ -701,10 +630,8 @@ const tjsm021 = (function(){ // ====================  tjsm Module  =============
 	// -------------------- lil-gui setup
 	
 	const uParam = {
-		theme: 'Fe-Al',
-		themeMenu: [ 'Fe-Al', 'Ni-Pb', 'Ni-Cr', 'W-Cu', 'Al-Ca', 'Fe' ],
-		boxSize: 6.0,
-		boxSizeMenu: [ 6.0, 8.0, 10.0, 12.0, 14.0, 16.0 ],
+		theme: 'NaCl',
+		themeMenu: [ 'NaCl', 'MgO', 'CaO', 'BaO', 'NaF', 'KF', 'KCl' ],
 		tempMode: 0,
 		tempModeMenu: { adiabatic: 0, controlled: 1 },
 		contTemp: 300,
@@ -725,12 +652,9 @@ const tjsm021 = (function(){ // ====================  tjsm Module  =============
 		gui.add( uParam, 'theme', uParam.themeMenu ).onChange( 
 			str => { v_theme = uParam.themeMenu.indexOf(str); resetFlag = 1; } );
 		
-		gui.add( uParam, 'boxSize', uParam.boxSizeMenu ).name( 'box size in nm' ).onChange(
-			v => { v_boxSizeInNM = v; resetFlag = 1; } );
-		
 		gui.add( uParam, 'tempMode', uParam.tempModeMenu ).onChange( v => { v_tempMode = v; } );
 	
-		gui.add( uParam, 'contTemp', 10, 600, 1 ).name( 'controlled temp.' ).onChange( v => { v_contTemp = v; } );
+		gui.add( uParam, 'contTemp', 10, 2500, 1 ).name( 'controlled temp.' ).onChange( v => { v_contTemp = v; } );
 		
 		gui.add( uParam, 'nCalc', uParam.nCalcMenu ).name( 'ncalc / frame' ).onChange( v => { nTimes = v; } );
 		
@@ -789,7 +713,7 @@ const tjsm021 = (function(){ // ====================  tjsm Module  =============
 		
 		// bonds
 		// bonds = m3js_bonds( nBondMax );
-		bonds = m3js_bonds( p_nn*3+10 );
+		bonds = m3js_bonds( p_nn*3 );
 		scene.add( bonds );
 		
 		// balls
@@ -842,6 +766,7 @@ const tjsm021 = (function(){ // ====================  tjsm Module  =============
 		cnvsprite = m3js_canvasSprite( 600, 600, 480 );
 		cnvsprite.position.set(0,0,0);
 		scene.add( cnvsprite );
+		
 	}
 	
 	
@@ -1347,11 +1272,11 @@ const tjsm021 = (function(){ // ====================  tjsm Module  =============
 		
 	}
 
-})(); // ====================  tjsm021 module end  ====================
+})(); // ====================  tjsm023 module end  ====================
 
 
 // event
-const tjsm = tjsm021;
+const tjsm = tjsm023;
 window.addEventListener('load', tjsm.main );
 
 
@@ -1362,7 +1287,7 @@ window.addEventListener('load', tjsm.main );
 </head>
 
 <body>
-<p>[tm021] faster O(N)-calc. molecular dynamics MMD2D</p>
+<p>[tm023] ionic crystal - ion Molecular Dynamics MD2D</p>
 <canvas id="myCanvas" width="500" height="480" ></canvas>
 <br>
 
@@ -1374,5 +1299,4 @@ window.addEventListener('load', tjsm.main );
 
 </body>
 </html>
-
 
