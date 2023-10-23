@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>tjs036_fastGasSPH2D</title>
+  <title>tjs038_airAndWoodSPH2D</title>
   <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
   <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
   <!--
@@ -15,13 +15,13 @@
 
 /* =================================================================================================================
 //
-//  tjs036_fastGasSPH2D
+//  tjs038_airAndWoodSPH2D
 //    Copyright(C) 2022 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2022.01.13 created, last updated on 2022.01.15
 //    ver 0.0.1  2022.07.10 v1, last updated on 2022.12.28
-//    ver 0.0.2  2023.10.21 v2, last updated on 2023.10.21
+//    ver 0.0.2  2023.10.22 v2, last updated on 2023.10.22
 //
 //
 //------------------------------------------------------------------------------------------------------------------
@@ -54,47 +54,70 @@
 //   (7) set boundary
 //   goto (1)
 //
-//   for fast calculation - O(N) calculation
+// - for fast calculation - O(N) calculation
 //     set section: smoothed particle divided into lattice section (see setSection() )
 //     calculate acceleration: sum up near section (see accCalc() )
 //       near means r<2*hh0
+//
+// - artificial viscosity
+//     dv_a/dt = -sum(P_b/rho_b^2 + P_a/rho_a^2 + pai_ab) grad W_ab
+//       pai_ab = (-alpha c_ab mue_ab + beta mue_ab^2)/rho_ab (v_ab*r_ab<0) or 0 (v_ab*r_ab>0)
+//         mue_ab = (h v_ab*r_ab)/(r_ab^2+etha^2), etha^2 nearly= 0.01*hh0*hh0
 //
 //
 //------------------------------------------------------------------------------------------------------------------
 */
 
-const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  ====================
+const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Module  ====================
 
-	let g_xMax = 10.0;      // (m) x-Box size
-	let g_yMax = 10.0;      // (m) y-Box size
-	let g_sysTime = 0.0;    // (s) system time
-	let g_dt = 0.0001;      // (s) time step
-	let g_hh0 = 0.25;       // (m) diameter of smoothed particles
-	let g_NNp = 1600;       // number of smoothed particles
-	let g_Nsx = 30;         // number of division to x-lattice section
-	let g_Nsy = 30;         // number of division to y-lattice section
+	let g_NNp = 5000;		// number of smoothed particles
+	let g_Nsx = 40;			// number of division to x-lattice section
+	let g_Nsy = 20;			// number of division to y-lattice section
+	let g_xMax = 20.0;		// (m) x-Box size
+	let g_yMax = 10.0;		// (m) y-Box size
+	let g_sysTime = 0.0;	// (s) system time
+	let g_dt = 0.0001;		// (s) time step
+	let g_hh0 = 0.25;		// (m) diameter of smoothed particles
+	let g_rBond = g_hh0*1.2;// (m) bonding upper limit
+	let g_cViscosity = 1.0;	// for air viscosity, alpha=1,beta=2 in this case
+	let g_thermalDiffusivity = 0.1; // (m^2/s) thermal diffusivity eg. 3.4e-5
+	let g_gravity = -9.8;	// (m/s^2) gravity acceleration eg. 9.8;
 
-	let g_xBoxSize = 400;   // in pixel
-	let g_yBoxSize = 400;   // in pixel
-	let g_yTextSize = 70;   // in pixel
+	let g_xBoxSize = 400;	// in pixel
+	let g_yBoxSize = 200;	// in pixel
+	let g_yTextSize = 70;	// in pixel
 
-	const g_xx = dim1(g_NNp);   // (m) smooth particle pos-x
-	const g_yy = dim1(g_NNp);   // (m) smooth particle pos-y
-	const g_vx = dim1(g_NNp);   // (m/s) smooth particle velocity-x
-	const g_vy = dim1(g_NNp);   // (m/s) smooth particle velocity-y
-	const g_ax = dim1(g_NNp);   // (m/s^2) smooth particle total accelaration-x
-	const g_ay = dim1(g_NNp);   // (m/s^2) smooth particle total accelaration-y
-	const g_hh = dim1(g_NNp);   // (m) smooth particle diameter
-	const g_mass = dim1(g_NNp); // (kg) smooth particle mass
-	const g_cp = dim1(g_NNp);   // (J/(kg*K)) smooth particle specific heat
+	const g_kind = dimInt1(g_NNp);  // smooth particle kind 1:air 0:wood-fixed -1:wood-free
+	const g_bond = dimInt2(g_NNp,8);// bonded particle No. with i-th particle
+	const g_xx = dim1(g_NNp);       // (m) smooth particle pos-x
+	const g_yy = dim1(g_NNp);       // (m) smooth particle pos-y
+	const g_vx = dim1(g_NNp);       // (m/s) smooth particle velocity-x
+	const g_vy = dim1(g_NNp);       // (m/s) smooth particle velocity-y
+	const g_ax = dim1(g_NNp);       // (m/s^2) smooth particle total accelaration-x
+	const g_ay = dim1(g_NNp);       // (m/s^2) smooth particle total accelaration-y
+	const g_hh = dim1(g_NNp);       // (m) smooth particle diameter
+	const g_mass = dim1(g_NNp);     // (kg) smooth particle mass
+	const g_cp = dim1(g_NNp);       // (J/(kg*K)) smooth particle specific heat
 	const g_density = dim1(g_NNp);  // (kg/m^3) smooth particle density
 	const g_pressure = dim1(g_NNp); // (N/m^2) smooth particle pressure
 	const g_energy = dim1(g_NNp);   // (J) smooth particle energy = mass*cp*temp
-	const g_power = dim1(g_NNp);   // (W) smooth particle power : energy(t+dt) = energy(t)+power*dt
-	const g_section = dimInt3(g_Nsx,g_Nsy,100); // registration: particles in g_Nsx x Nsy sections
+	const g_power = dim1(g_NNp);    // (W) smooth particle power : energy(t+dt) = energy(t)+power*dt
+	const g_section = dimInt3(g_Nsx,g_Nsy,50); // registration: particles in Nsx x Nsy sections
 
 	function dim1( n ) {
 		return new Float64Array( n );
+	}
+
+	function dimInt1( n ) {
+		return new Int32Array( n );
+	}
+
+	function dimInt2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Int32Array( nj );
+		}
+		return a;
 	}
 
 	function dimInt3( ni, nj, nk ) {
@@ -111,36 +134,77 @@ const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  
 
 	// --------------------  set initial condition  --------------------
 
-	// public
 	function setInitialCondition() {
-		const nnp = g_NNp;
 
 		g_sysTime = 0.0;
-		for (let i=0; i<nnp; i++) {
-			g_mass[i] = (0.029/0.0224)/4.0; //air
-			g_cp[i] = 1000.0; //air
-			g_xx[i] = 0.1*(i%40)+1.0;
-			g_yy[i] = 0.1*Math.floor(i/40)+2.0;
-			g_vx[i] = 0.0;
-			g_vy[i] = 0.0;
-			g_ax[i] = 0.0;
-			g_ay[i] = 0.0;
-			g_hh[i] = g_hh0;
+		let i = 0;
+		
+		// air clump density=(0.029/0.0224)/4.0 kg/m3, specific heat=1000 J/kgK
+		for (let ix=0; ix<40; ix++) { 
+			for (let iy=0; iy<40; iy++) {
+				g_kind[i] = 1; //air
+				g_mass[i] = (0.029/0.0224)/4.0;
+				g_cp[i] = 1000.0;
+				g_xx[i] = 0.1*(ix)+1.0;
+				g_yy[i] = 0.1*(iy)+4.0;
+				g_vx[i] = 0.5*(Math.random()-0.5);
+				g_vy[i] = 0.5*(Math.random()-0.5);
+				g_ax[i] = 0.0;
+				g_ay[i] = 0.0;
+				g_hh[i] = g_hh0;
+				i += 1;
+			}
 		}
 
-		for (let i=0; i<nnp; i++) {
-			g_energy[i] = g_mass[i]*g_cp[i]*300; //300=temp(K)
+		// solid; density=300 kg/m3, specific heat=1500 J/kgK
+		for (let ix=0; ix<4; ix++) {
+			for (let iy=0; iy<16; iy++) {
+				g_kind[i] = -1; //wood-free
+				g_mass[i] = 300.0/4.0;
+				g_cp[i] = 1500.0;
+				g_xx[i] = 7.0+0.866*g_rBond*ix;
+				g_yy[i] = 2.5+g_rBond*iy+0.5*g_rBond*(ix%2);
+				g_vx[i] = 0.0;
+				g_vy[i] = 0.0;
+				g_ax[i] = 0.0;
+				g_ay[i] = 0.0;
+				g_hh[i] = g_hh0;
+				i += 1;
+			}
+		}
+
+		// solid; density=300 kg/m3, specific heat=1500 J/kgK
+		for (let ix=0; ix<4; ix++) {
+			for (let iy=0; iy<16; iy++) {
+				g_kind[i] = 0; //wood-fixed
+				g_mass[i] = 300.0/4.0;
+				g_cp[i] = 1500.0;
+				g_xx[i] = 10.0+0.866*g_rBond*ix;
+				g_yy[i] = 0.2+g_rBond*iy+0.5*g_rBond*(ix%2);
+				g_vx[i] = 0.0;
+				g_vy[i] = 0.0;
+				g_ax[i] = 0.0;
+				g_ay[i] = 0.0;
+				g_hh[i] = g_hh0;
+				i += 1;
+			}
+		}
+		g_NNp = i;
+
+		bonding();
+		setSection();
+		setDensity();
+		for (let i=0; i<g_NNp; i++) {
+			g_energy[i] = g_mass[i]*g_cp[i]*300;
 			g_power[i] = 0.0;
 		}
-
-		setDensity();
 	}
 
 
 	// --------------------  time evolution  --------------------
 
-	// public
 	function timeEvolution( nCalc ) {
+
 		for (let i=0; i<nCalc; i++) {
 			timeStep();
 			g_sysTime += g_dt;
@@ -150,19 +214,24 @@ const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  
 	function timeStep() {
 		const nnp = g_NNp, dtv2 = g_dt/2.0;
 
-		// (1) registration - set section[][][]
+		// (1) registration - set section[]
 		setSection();
 
 		// (2) set density
 		setDensity();
-
+    
 		// (3) set pressure
 		for (let i=0; i<nnp; i++) {
-			g_pressure[i] = 8.31*g_density[i]*(g_energy[i]/(g_mass[i]*g_cp[i]));
+			if (g_kind[i]>0) {
+				g_pressure[i] = 8.31*g_density[i]*(g_energy[i]/(g_mass[i]*g_cp[i]));
+			} else {
+				g_pressure[i] = 0.5*g_density[i];
+			}
 		}
 
 		// (4) Verlet step1 (t = t + dt/2)
 		for (let i=0; i<nnp; i++) {
+			if (g_kind[i]==0) continue;
 			g_vx[i] += dtv2*g_ax[i];
 			g_vy[i] += dtv2*g_ay[i];
 			g_xx[i] += g_vx[i]*g_dt;
@@ -174,6 +243,7 @@ const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  
 
 		// (6) Verlet step2 (t = t + dt/2 + dt/2)
 		for (let i=0; i<nnp; i++) {
+			if (g_kind[i]==0) continue;
 			g_vx[i] += dtv2*g_ax[i];
 			g_vy[i] += dtv2*g_ay[i];
 			g_energy[i] += g_power[i]*g_dt;
@@ -218,7 +288,8 @@ const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  
 	}
 
 	function maxSection() {
-		const nsx = g_Nsx, nsy = g_Nsy;
+		const nnp = g_NNp, nsx = g_Nsx, nsy = g_Nsy;
+
 		let m = 0;
 		for (let i=0; i<nsx; i++) {
 			for (let j=0; j<nsy; j++) {
@@ -228,14 +299,16 @@ const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  
 		return m;
 	}
 
-	// --- (2) set density[]
+	// --- (2) set density
 
 	function setDensity() {
 		const nnp = g_NNp, nsx = g_Nsx, nsy = g_Nsy;
+
 		const rcc = g_hh0*2.0;
 		const rcc2 = rcc*rcc;
 
 		for (let i=0; i<nnp; i++) {
+			const ikind = g_kind[i];
 			let s = 0.0;
 			let i0 = Math.floor(nsx*(g_xx[i]-rcc)/g_xMax); if (i0<0) i0 = 0;
 			let i1 = Math.floor(nsx*(g_xx[i]+rcc)/g_xMax); if (i1>=nsx) i1 = nsx-1;
@@ -245,10 +318,12 @@ const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  
 				for (let jj=j0; jj<=j1; jj++) {
 					for (let iq=1; iq<=g_section[ii][jj][0]; iq++) {
 						const j = g_section[ii][jj][iq];
-						const r2 = (g_xx[i]-g_xx[j])*(g_xx[i]-g_xx[j])+(g_yy[i]-g_yy[j])*(g_yy[i]-g_yy[j]);
-						if (r2<rcc2) {
-							const rij = Math.sqrt(r2);
-							s += g_mass[j]*kernel(rij, (g_hh[i]+g_hh[j])/2.0);
+						if (g_kind[j]==ikind) {
+							const r2 = (g_xx[i]-g_xx[j])*(g_xx[i]-g_xx[j])+(g_yy[i]-g_yy[j])*(g_yy[i]-g_yy[j]);
+							if (r2<rcc2) {
+								const rij = Math.sqrt(r2);
+								s += g_mass[j]*kernel(rij, (g_hh[i]+g_hh[j])/2.0);
+							}
 						}
 					}
 				}
@@ -261,13 +336,17 @@ const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  
 
 	function accCalc() {
 		const nnp = g_NNp, nsx = g_Nsx, nsy = g_Nsy;
+		const alpha=1.0, beta=2.0, cv=g_cViscosity; // for viscosity
+
 		const rcc = g_hh0*2.0;
 		const rcc2 = rcc*rcc;
 
 		for (let i=0; i<nnp; i++) {
-			g_ax[i] = 0.0; g_ay[i] = 0.0;
+			g_ax[i] = 0.0; g_ay[i] = g_gravity;
+			boundaryForce(i, rcc, 1000000.0);
 			g_power[i] = 0.0;
 			const ai = g_pressure[i]/(g_density[i]*g_density[i]);
+
 			let i0 = Math.floor(nsx*(g_xx[i]-rcc)/g_xMax); if (i0<0) i0 = 0;
 			let i1 = Math.floor(nsx*(g_xx[i]+rcc)/g_xMax); if (i1>=nsx) i1 = nsx-1;
 			let j0 = Math.floor(nsy*(g_yy[i]-rcc)/g_yMax); if (j0<0) j0 = 0;
@@ -280,14 +359,28 @@ const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  
 						if (r2<rcc2) {
 							const rij = Math.sqrt(r2);
 							if (rij>0) {
-								const aj = g_pressure[j]/(g_density[j]*g_density[j]);
-								const b = g_mass[j]*(ai+aj);
-								const gradW = dwwvdr(rij, (g_hh[i]+g_hh[j])/2.0);
-								const gradWx = gradW*(g_xx[i]-g_xx[j])/rij;
-								const gradWy = gradW*(g_yy[i]-g_yy[j])/rij;
-								g_ax[i] += -b*gradWx;
-								g_ay[i] += -b*gradWy;
-								g_power[i] += 0.5*b*((g_vx[i]-g_vx[j])*gradWx+(g_vy[i]-g_vy[j])*gradWy);
+								if (g_kind[j]>0 && g_kind[i]>0) { // i and j are SPH particle
+									const aj = g_pressure[j]/(g_density[j]*g_density[j]);
+									const vr = (g_xx[i]-g_xx[j])*(g_vx[i]-g_vx[j])+(g_yy[i]-g_yy[j])*(g_vy[i]-g_vy[j]); //
+									let paiij = 0; // for viscosity
+									if (vr<0.0) { // for viscosity
+										const mu = 0.5*vr/(r2+0.01*g_hh0*g_hh0);
+										paiij = (-alpha*cv*mu+beta*mu*mu)/((g_density[i]+g_density[j])/2.0);
+									}
+									const b = g_mass[j]*(ai+aj+paiij); // for viscosity
+									const gradW = dwwvdr(rij, (g_hh[i]+g_hh[j])/2.0);
+									const gradWx = gradW*(g_xx[i]-g_xx[j])/rij;
+									const gradWy = gradW*(g_yy[i]-g_yy[j])/rij;
+									g_ax[i] += -b*gradWx;
+									g_ay[i] += -b*gradWy;
+									const lapW = d2wwvdr2(rij, (g_hh[i]+g_hh[j])/2.0);
+									g_power[i] += 0.5*b*((g_vx[i]-g_vx[j])*gradWx+(g_vy[i]-g_vy[j])*gradWy) +
+										g_thermalDiffusivity*g_mass[j]/g_density[j]*(g_energy[j]-g_energy[i])*lapW;
+								} else { // i or j is not SPH particle
+									const a = force(rij,i,j)/g_mass[i];
+									g_ax[i] += a*(g_xx[i]-g_xx[j])/rij;
+									g_ay[i] += a*(g_yy[i]-g_yy[j])/rij;
+								}
 							}
 						}
 					}
@@ -296,15 +389,149 @@ const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  
 		}
 	}
 
-	// --- smooth particle
+	// called only if (ii or jj is not SPH particle)
+	function force( r, ii, jj ) {
 
-	function distance( i, j ) {
-		const x = g_xx[i]-g_xx[j], y = g_yy[i]-g_yy[j];
-		return Math.sqrt(x*x+y*y);
+		if (g_kind[ii]>=0 || g_kind[jj]>=0) {
+			const rc = g_hh0*1.2;
+			let ret = 0.0;
+			if (r<rc) {
+				const ra = (rc-r)/rc;
+				ret = 50000000.0*ra*ra;
+				return ret;
+			}
+		}
+
+		if ( g_kind[ii]<0 && g_kind[jj]<0 ) {
+			const kc = 50000000.0;
+			const ra = g_rBond;
+			const ra1 = 1.2*ra;
+			const ra2 = 1.5*ra;
+			const ram = (ra1+ra2)/2.0;
+			const fa = 2.0/((ra2-ra1)*(ra2-ra1));
+			let i, j;
+			if (ii<jj) {
+				i= ii; j=jj;
+			} else {
+				i= jj; j=ii;
+			}
+			if (r>ra2) {
+				bondUnreg(i,j); bondUnreg(j,i);
+				return 0.0;
+			}
+
+			let f = 0.0;
+			if (bondQ(i,j)==0) {
+				if (r<ra) {
+					f = kc*(r-ra);
+				}
+			} else {
+				if (r<=ra1) {
+					f = kc*(r-ra);
+				} else if (r>=ra2) {
+					f = 0.0;
+					bondUnreg(i,j); bondUnreg(j,i);
+				} else if (ra1<=r && r<ram) {
+					f = kc*(r-ra)*(1.0-fa*(r-ra1)*(r-ra1));
+				} else if (ram<=r && r<ra2) {
+					f = kc*(r-ra)*fa*(r-ra2)*(r-ra2);
+				}
+			}
+			return -f;
+		}
+		return 0.0;
 	}
 
-	function kernel( r, h ) {
+	function boundaryForce( i, rc, k ) {
+
+		if (g_xx[i] < rc) {
+			const r = rc-g_xx[i];
+			g_ax[i] += k*r*r; 
+		}
+		if (g_xx[i] > g_xMax-rc) {
+			const r = g_xx[i]-(g_xMax-rc);
+			g_ax[i] += -k*r*r; 
+		}
+		if (g_yy[i] < rc) {
+			const r = rc-g_yy[i];
+			g_ay[i] += k*r*r; 
+		}
+		if (g_yy[i] > g_yMax-rc) {
+			const r = g_yy[i]-(g_yMax-rc);
+			g_ay[i] += -k*r*r; 
+		}
+	}
+
+	// --- bonding manager
+
+	function bonding() {
+		const nnp = g_NNp, rb = g_rBond*1.2;
+		const rb2 = rb*rb;
+
+		bondInit();
+		for (let i=0; i<nnp; i++) {
+			if (g_kind[i]<=0) {
+				for (let j=i+1; j<nnp; j++) {
+					if (g_kind[j]<=0) {
+						const r2 = (g_xx[i]-g_xx[j])*(g_xx[i]-g_xx[j])+(g_yy[i]-g_yy[j])*(g_yy[i]-g_yy[j]);
+						if (r2<=rb2) {
+							bondReg(i, j); bondReg(j, i);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	function bondInit() {
+		const nnp = g_NNp;
+
+		for (let i=0; i<nnp; i++) {
+			for (let j=0; j<8; j++) {
+				g_bond[i][j]=-1;
+			}
+		}
+	}
+
+	function bondReg( ii, jj ) {
+
+		for (let j=0; j<8; j++) {
+			if (g_bond[ii][j]==-1) {
+				g_bond[ii][j] = jj;
+				break;
+			}
+		}
+	}
+
+	function bondUnreg( ii, jj ) {
+
+		for (let j=0; j<8; j++) {
+			if (g_bond[ii][j]==jj) {
+				g_bond[ii][j] = -1;
+				break;
+			}
+		}
+	}
+
+	function bondQ( ii, jj ) {
+		const rb = g_rBond*1.2;
+		const rb2 = rb*rb;
+
+		let q = 0;
+		for (let j=0; j<8; j++) {
+			if (g_bond[ii][j]==jj) {
+				q = 1;
+				break;
+			}
+		}
+		return q;
+	}
+
+	// --- smoothed particle kernel
+
+	function kernel(r, h) {
 		const q = r/h, a = 10.0/(7.0*3.141592)/(h*h);
+
 		let ret = 0.0;
 		if (q<1.0) {
 			ret = a*(1.0-1.5*q*q+0.75*q*q*q);
@@ -314,8 +541,9 @@ const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  
 		return ret;
 	}
 
-	function dwwvdr( r, h ) {
+	function dwwvdr(r, h) {
 		const q = r/h, a = 10.0/(7.0*3.141592)/(h*h*h);
+
 		let ret = 0.0;
 		if (q<1.0) {
 			ret = a*(-3.0*q+2.25*q*q);
@@ -325,12 +553,24 @@ const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  
 		return ret;
 	}
 
+	function d2wwvdr2(r, h) {
+		const q = r/h, a = 10.0/(7.0*3.141592)/(h*h*h*h);
+
+		let ret = 0.0;
+		if (q<1.0) {
+			ret = a*(-3.0+4.5*q);
+		} else if (q<=2.0) {
+			ret = a*0.75*(2.0-q);
+		}
+		return ret;
+	}
+
 
 	// --------------------  draw  --------------------
 
 	// public
 	function draw( ctx, drawMode ) {
-		const xp=40, yp=10, xBox=400, yBox=400, yText=yp+yBox+30;
+		const xp=10, yp=10, xBox=400, yBox=200, yText=yp+yBox+25;
 
 		ctx.fillStyle = "rgb(120,120,120)";
 		ctx.fillRect(xp,yp,xBox,yBox);
@@ -340,25 +580,35 @@ const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  
 		} else if (drawMode==4) {
 			drawFlow(ctx,xp,yp);
 		}
-		
+
 		ctx.fillStyle = "rgb(40, 40, 40)";
 		ctx.fillText("Box = "+g_xMax.toFixed(1)+"x"+g_yMax.toFixed(1)+" (m)", xp, yText);
 		ctx.fillText("N = "+g_NNp, xp+xBox/2, yText);
-		ctx.fillText("time = "+g_sysTime.toFixed(3)+" (s)", xp, yText+25);
+		ctx.fillText("time = "+g_sysTime.toFixed(3)+" (s)", xp, yText+20);
+		ctx.fillText("gravity = "+g_gravity.toFixed(1)+" (m/s^2)", xp+xBox/2, yText+20);
+		ctx.fillText("max reg = "+maxSection(), xp, yText+40);
 	}
 
-	function drawSPfield( ctx, drawMode, xp, yp ) {
+	function drawSPfield(ctx, drawMode, xp, yp ) {
 		const nnp = g_NNp, sc = 400.0/g_xMax;
+
 		for (let i=0; i<nnp; i++) {
-			if (drawMode==0) { // smooth particle
-				ctx.strokeStyle = "rgb(0,250,250)";
-			} else if (drawMode==1) { // density
-				ctx.strokeStyle = "hsl("+(180-g_density[i]*5.0)+",100%,50%)"
-			} else if (drawMode==2) { // density
-				ctx.strokeStyle = "hsl("+(180-g_pressure[i]*0.003)+",100%,50%)"
-			}  else if (drawMode==3) { // temp
-				const temp = (g_energy[i]/(g_mass[i]*g_cp[i])-273.0);
-				ctx.strokeStyle = "hsl("+(240-temp*2.0)+",100%,50%)";
+			const ikind = g_kind[i];
+			if (g_kind[i]==1) { //1:air
+				if (drawMode==0) { // smooth particle
+					ctx.strokeStyle = "rgb(0,250,250)";
+				} else if (drawMode==1) { // density
+					ctx.strokeStyle = "hsl("+(180-g_density[i]*5.0)+",100%,50%)"
+				} else if (drawMode==2) { // density
+					ctx.strokeStyle = "hsl("+(180-g_pressure[i]*0.003)+",100%,50%)"
+				}  else if (drawMode==3) { // temp
+					const temp = (g_energy[i]/(g_mass[i]*g_cp[i])-273.0);
+					ctx.strokeStyle = "hsl("+(240-temp*2.0)+",100%,50%)";
+				}
+			} else if (ikind==0) { // 0:wood-fixed
+				ctx.strokeStyle = "rgb(250,125,0)";
+			} else if (ikind==-1) { // -1:wood-free
+				ctx.strokeStyle = "rgb(200,200,0)";
 			}
 			ctx.beginPath();
 			ctx.arc(g_xx[i]*sc+xp, (g_yMax-g_yy[i])*sc+yp, g_hh[i]*sc, 0, 2.0*Math.PI, false);
@@ -368,6 +618,20 @@ const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  
 
 	function drawFlow( ctx, xp, yp ) {
 		const nnp = g_NNp, sc = 400.0/g_xMax, mag = 3000.0;
+
+		for (let i=0; i<nnp; i++) {
+			const ikind = g_kind[i];
+			if (g_kind[i]==1) { //1:air
+				continue;
+			} else if (ikind==0) { // 0:wood-fixed
+				ctx.strokeStyle = "rgb(250,125,0)";
+			} else if (ikind==-1) { // -1:wood-free
+				ctx.strokeStyle = "rgb(200,200,0)";
+			}
+			ctx.beginPath();
+			ctx.arc(g_xx[i]*sc+xp, (g_yMax-g_yy[i])*sc+yp, g_hh[i]*sc, 0, 2.0*Math.PI, false);
+			ctx.stroke();
+		}
 		for (let i=0; i<nnp; i++) {
 			if (g_vx[i]>=0) {
 				ctx.strokeStyle = "rgb(80,80,250)";
@@ -388,9 +652,10 @@ const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  
 		init:           setInitialCondition, // setInitialCondition()
 		evolve:         timeEvolution, // timeEvolution( nCalc )
 		draw:           draw, // draw( ctx, drawMode )
-		
+
 		getSysParam:    function() { return [ g_xMax, g_yMax, g_dt, g_hh0, g_NNp ]; },
-		getSysTime:     function() { return g_sysTime; },
+		getNow:         function() { return [ g_sysTime, g_gravity ]; },
+		getSPKind:      function(i) { return g_kind[i]; },
 		getSPData:      function(i) { return [ g_hh[i], g_mass[i], g_cp[i] ]; },
 		getPosition:    function(i) { return [ g_xx[i], g_yy[i] ]; },
 		getVelocity:    function(i) { return [ g_vx[i], g_vy[i] ]; },
@@ -402,30 +667,32 @@ const fastGasSPH2D = (function(){ // ====================  fastGasSPH2D Module  
 		getPower:       function(i) { return g_power[i]; },
 	};
 
-})(); // ====================  fastGasSPH2D end  ====================
+})(); // ====================  airAndWoodSPH2D end  ====================
 
 
-const tjs036 = (function(){ // ====================  tjs Module  ====================
+const tjs038 = (function(){ // ====================  tjs Module  ====================
 
-	const theModule = fastGasSPH2D;
-	let v_nCalc = 2;
+	const theModule = airAndWoodSPH2D;
+	let v_nCalc = 1;
 	
 	let p_xMax, p_yMax, p_dt, p_hh0, p_NNp; // <-- theModule.getSysParam()
-
+	const kindColor = [ 0xdddd00, 0xdd9900, 0x0088ff ]; // kind -1:wood-free, 0:wood-fixed 1:air
 	let resetFlag = 0;
 	let pauseFlag = 0;
 	let stepFlag = 0;
 	let heatSW = 0;
 	let viewHomeRequested = false;
-	let nTimes = 1;
 	let dispMode = 1; // 0:sph particles  1:density  2:pressure  3:temperature  4:velocity
 	let dispModeChanged = true;
+	let legendFlag = true;
 	let count = 0;
 
 	// sizes in threejs world
-	const xBoxSize = 500; // in three.js world
+	const xBoxSize = 600; // in three.js world
+	const zBoxSize = 200;
 	const x0 = xBoxSize/2;
-	let scale, yBoxSize, zBoxSize, y0, z0;
+	const z0 = zBoxSize/2;
+	let scale, yBoxSize, y0;
 
 	// threejs objects in the scene
 	let sphs;
@@ -444,7 +711,7 @@ const tjs036 = (function(){ // ====================  tjs Module  ===============
 
 
 	// --------------------  main
-	
+
 	function main() {
 		// constract renderer
 		renderer = new THREE.WebGLRenderer({
@@ -470,12 +737,11 @@ const tjs036 = (function(){ // ====================  tjs Module  ===============
 		[ p_xMax, p_yMax, p_dt, p_hh0, p_NNp ] = theModule.getSysParam();
 		scale = xBoxSize/p_xMax;
 		yBoxSize = p_yMax*scale;
-		zBoxSize = 2*p_hh0*scale;
 		y0 = yBoxSize/2;
-		z0 = zBoxSize/2;
 		
 		// scene
 		scene = new THREE.Scene();
+		
 		
 		// light - DirectionalLight
 		const directionalLight = new THREE.DirectionalLight(0xFFFFFF,0.5);
@@ -487,13 +753,27 @@ const tjs036 = (function(){ // ====================  tjs Module  ===============
 		
 		
 		// sph particles
-		// spheres = m3js_spheres( p_nn, x_y_z_r_material_func );
-		sphs = m3js_spheres( p_NNp, 
-			function(i) { // x_y_z_r_material_func: (i) --> [ x, y, z, r, [material] ]
-				let x, y;
+		// meshes = m3js_meshes( p_nn, x_y_z_meshi_func );
+		sphs = m3js_meshes( p_NNp, 
+			function(i) { // x_y_z_meshi_func(i) --> [ x, y, z, meshi ]
+				const r = p_hh0*scale; // radius
+				let x, y, meshi;
 				[ x, y ] = theModule.getPosition(i);
-				const material = new THREE.MeshStandardMaterial({ color:0x0088ff, opacity:0.5, transparent:true }); 
-				return [ x*scale-x0, y*scale-y0, 0, p_hh0*scale, material ];
+				
+				const kind = theModule.getSPKind(i);
+				if ( kind == 1 ) { // air --> sphere
+					const geometry = new THREE.SphereGeometry(r, 18, 10);
+					const material = new THREE.MeshStandardMaterial({ 
+						color: kindColor[kind+1], opacity: 0.5,transparent: true});
+					meshi = new THREE.Mesh(geometry, material);
+				} else { // other --> cylinder
+					const geometry = new THREE.CylinderGeometry( r, r, zBoxSize, 8);
+					const material = new THREE.MeshStandardMaterial({ 
+						color:kindColor[kind+1], opacity: 0.5,transparent: true});
+					meshi = new THREE.Mesh(geometry, material);
+					meshi.rotation.x = Math.PI/2;
+				}
+				return [ x*scale-x0, y*scale-y0, 0, meshi ];
 			}
 		);
 		scene.add( sphs );
@@ -513,7 +793,7 @@ const tjs036 = (function(){ // ====================  tjs Module  ===============
 		
 		// canvas sprite
 		//cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
-		cnvsprite = m3js_canvasSprite( 600, 600, 480 );
+		cnvsprite = m3js_canvasSprite( 600, 400, 280 );
 		cnvsprite.position.set(0,0,0);
 		scene.add( cnvsprite );
 		
@@ -545,7 +825,7 @@ const tjs036 = (function(){ // ====================  tjs Module  ===============
 			cnvsprite.visible = false;
 		}
 		
-		// MD2D update
+		// SPH2D update
 		if (pauseFlag==0) {
 			theModule.evolve( v_nCalc );
 		} else if ( pauseFlag==1 && stepFlag==1 ) {
@@ -561,7 +841,11 @@ const tjs036 = (function(){ // ====================  tjs Module  ===============
 				function(i) {
 					let x, y;
 					[ x, y ] = theModule.getPosition(i);
-					return [ x*scale-x0, y*scale-y0, 0.0, , 0x0088ff ];
+					const kind = theModule.getSPKind(i);
+					if ( kind == 1 ) { // air particle
+						return [ x*scale-x0, y*scale-y0, -0.2*z0, , 0x0088ff ];
+					}
+					return [ x*scale-x0, y*scale-y0, 0 ];
 				}
 			);
 		} else if ( dispMode==1 ) { // 1: density
@@ -571,8 +855,12 @@ const tjs036 = (function(){ // ====================  tjs Module  ===============
 					let x, y;
 					[ x, y ] = theModule.getPosition(i);
 					const zPos = 5.0*theModule.getDensity(i);
-					const hue = (Math.floor(36240-zPos)+360)%360;
-					return [ x*scale-x0, y*scale-y0, zPos, , `hsl(${hue},100%,50%)` ];
+					const kind = theModule.getSPKind(i);
+					if ( kind == 1 ) { // air particle
+						const hue = (Math.floor(36240-zPos)+360)%360;
+						return [ x*scale-x0, y*scale-y0, zPos-0.2*z0, , `hsl(${hue},100%,50%)` ];
+					}
+					return [ x*scale-x0, y*scale-y0, 0 ];
 				}
 			);
 		} else if ( dispMode==2 ) { // 2: pressure
@@ -582,8 +870,12 @@ const tjs036 = (function(){ // ====================  tjs Module  ===============
 					let x, y;
 					[ x, y ] = theModule.getPosition(i);
 					const zPos = 2.5e-3*theModule.getPressure(i);
-					const hue = (Math.floor(36240-zPos)+360)%360;
-					return [ x*scale-x0, y*scale-y0, zPos, , `hsl(${hue},100%,50%)` ];
+					const kind = theModule.getSPKind(i);
+					if ( kind == 1 ) { // air particle
+						const hue = (Math.floor(36240-zPos)+360)%360;
+						return [ x*scale-x0, y*scale-y0, zPos-0.2*z0, , `hsl(${hue},100%,50%)` ];
+					}
+					return [ x*scale-x0, y*scale-y0, 0 ];
 				}
 			);
 		} else if ( dispMode==3 ) { // 3: temperature
@@ -594,25 +886,39 @@ const tjs036 = (function(){ // ====================  tjs Module  ===============
 					[ x, y ] = theModule.getPosition(i);
 					const temp = theModule.getTemp(i);
 					const zPos = 1.0*(temp-273.0);
-					const hue = (Math.floor(36240-zPos)+360)%360;
-					return [ x*scale-x0, y*scale-y0, zPos, , `hsl(${hue},100%,50%)` ];
+					const kind = theModule.getSPKind(i);
+					if ( kind == 1 ) { // air particle
+						const hue = (Math.floor(36240-zPos)+360)%360;
+						return [ x*scale-x0, y*scale-y0, zPos-0.2*z0, , `hsl(${hue},100%,50%)` ];
+					}
+					return [ x*scale-x0, y*scale-y0, 0 ];
 				}
 			);
 		}
 		
 		// velocity vector update
 		if ( dispMode==4 ) {
-			const vmag = 50*p_dt*scale;
-			const zPos = 0;
-			const vz = 0.0;
+			const vmag = 100*p_dt*scale;
 			// arrows.update( x_y_z_vx_vy_vz_col_func );
 			flows.update(
 				function(i) { // x_y_z_vx_vy_vz_col_func: (i) --> [px, py, pz, vx, vy, vz, [col] ]
 					let x, y, vx, vy;
 					[ x, y ] = theModule.getPosition(i);
 					[ vx, vy ] = theModule.getVelocity(i);
+					const zPos = 2.5e-3*theModule.getPressure(i);
 					const hue = Math.floor(Math.atan2(vy,vx)*180.0+0.5)/Math.PI+180.0;
-					return [ x*scale-x0, y*scale-y0, zPos, vx*vmag, vy*vmag, vz*vmag, `hsl(${hue},100%,50%)` ];
+					return [ x*scale-x0, y*scale-y0, zPos-0.2*z0, vx*vmag, vy*vmag, 0, `hsl(${hue},100%,50%)` ];
+				}
+			);
+			
+			// spheres.update( x_y_z_rmag_col_func ); // x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+			sphs.update(
+				function(i) {
+					const kind = theModule.getSPKind(i);
+					if ( kind == 1 ) return 0; // i-th sph particle == air, --> invisible
+					let x, y;
+					[ x, y ] = theModule.getPosition(i);
+					return [ x*scale-x0, y*scale-y0, 0 ];
 				}
 			);
 		}
@@ -637,12 +943,24 @@ const tjs036 = (function(){ // ====================  tjs Module  ===============
 		
 		// output to innerHTML
 		if (count % 10 == 0) {
-			const time = theModule.getSysTime();
+			let sysTime, gravity;
+			[ sysTime, gravity ] = theModule.getNow();
 			const msg =
 				"box(m)="+(p_xMax).toFixed(1)+"x"+(p_yMax).toFixed(1)
 				+ ", SPH particles N="+p_NNp
-				+ ", time(ms)="+(time*1.0e3).toFixed(1)+"<br>";
+				+ ", time(ms)="+(sysTime*1.0e3).toFixed(1)+"<br>"
+				+ "gravity(m/s^2)="+gravity;
 			document.getElementById("text_caption").innerHTML = msg;
+			
+			if (legendFlag) {
+				let msg = "<span style='color:#ffff00'>movable wood block</span>"
+					+ ",<span style='margin-right: 20px;'></span>"
+					+ "<span style='color:orange'>fixed wood block</span>"
+					+ "<br>"
+				document.getElementById('textOnCanvas').innerHTML = msg;
+			} else {
+				document.getElementById('textOnCanvas').innerHTML = "";
+			}
 		}
 		
 		
@@ -654,77 +972,73 @@ const tjs036 = (function(){ // ====================  tjs Module  ===============
 	
 	
 	
-	// -----------------------  m3js_spheres function  ---------------------------
+	// -----------------------  m3js_meshes function  ---------------------------
 	//
-	//    ver 0.0.0  2022.10.26 created, last updated on 2022.12.20
+	//    ver 0.0.0  2022.11.18 created, last updated on 2022.12.28
 	//
-	//  spheres = m3js_spheres( p_nn, x_y_z_r_material_func );
-	//     p_nn: number of arrows
-	//     x_y_z_r_material_func: (i) --> [ x, y, z, r, [material] ]
+	//  meshes = m3js_meshes( p_nn, x_y_z_meshi_func );
+	//     p_nn: number of meshes
+	//     x_y_z_meshi_func: (i) --> [ x, y, z, meshi ]
 	//        x,y,z: i-th sphere position in the threejs world
-	//        r: i-th sphere radius in the threejs world
-	//        material: such as = new THREE.MeshStandardMaterial({ color:"#ff0000", opacity:1.0, transparent:true });
-	//  scene.add( spheres );
+	//        meshi: i-th mesh in the threejs world
+	//  scene.add( meshes );
 	//
-	//  spheres.update( x_y_z_rmag_col_func ); // x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
-	//     x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+	//  meshes.update( x_y_z_mag_col_func );
+	//     x_y_z_mag_col_func: (i) --> [ x, y, z, [mag], [col] ]
 	//        x,y,z: i-th sphere position in the threejs world
-	//        rmag: i-th sphere radius magnified ratio: 0.0 ... 1.0
-	//        col: such as "#ff0000" or "red" or "rgb(255,0,0)" or 0xff0000 or ...
+	//        mag: i-th mesh magnified ratio: 0.0 ... 1.0
+	//        col: such as "#ff0000" or 0xff0000 or "red" or "rgb(255,0,0)" or `hsl(0,100%,50%)` or ...
 	//
-	//  spheres.setOpacity( opacity );
+	//  meshs.setOpacity( opacity );
 	//     opacity: 0.0 (transparent) ..... 1.0 (opaque)
 	//
-	//  spheres.visible = true | false;
+	//  meshs.visible = true | false;
 	//
 	
-	function m3js_spheres( p_nn, x_y_z_r_material_func ) {
+	function m3js_meshes( p_nn, x_y_z_meshi_func ) {
 		const nn = p_nn;
-		const defaultMaterial = new THREE.MeshStandardMaterial({ color:"#ff0000", opacity:1.0, transparent:true });
-		const spheres = new THREE.Group();
-		spheres.array = [];
+		const meshes = new THREE.Group();
+		meshes.array = [];
 		
 		for (let i=0; i<nn; i++) {
-			let x, y, z, r, mater;
-			[ x, y, z, r, mater ] = x_y_z_r_material_func(i);
-			const geometry = new THREE.SphereGeometry(r, 18, 10);
-			const material = ( mater != undefined ) ? mater : defaultMaterial;
-			spheres.array[i] = new THREE.Mesh(geometry, material);
-			spheres.array[i].position.set(x, y, z);
-			spheres.array[i].visible = true;
-			spheres.add( spheres.array[i] );
+			let x, y, z, meshi, r;
+			[ x, y, z, meshi ] = x_y_z_meshi_func(i);
+			meshes.array[i] = meshi;
+			meshes.array[i].position.set(x, y, z);
+			meshes.array[i].visible = true;
+			meshes.add( meshes.array[i] );
 		}
 		
-		spheres.update = spheresUpdate;
-		spheres.setOpacity = setSheresOpacity;
-		return spheres;
+		meshes.update = meshesUpdate;
+		meshes.setOpacity = setMeshesOpacity;
+		return meshes;
 		
 		
-		function spheresUpdate( x_y_z_rmag_col_func ) {
+		function meshesUpdate( x_y_z_mag_col_func ) {
 			for (let i=0; i<nn; i++) {
-				const vec = x_y_z_rmag_col_func(i);
+				const vec = x_y_z_mag_col_func(i);
 				if ( !Array.isArray(vec) ) {
-					spheres.array[i].visible = false;
+					meshes.array[i].visible = false;
 					continue;
 				}
-				let x, y, z, rmag, col;
-				[ x, y, z, rmag, col ] = vec;
-				spheres.array[i].position.set(x, y, z);
-				if ( rmag != undefined ) spheres.array[i].scale.set(rmag,rmag,rmag);
-				if ( col != undefined ) spheres.array[i].material.color = new THREE.Color( col );
-				spheres.array[i].visible = true;
+				let x, y, z, mag, col;
+				[ x, y, z, mag, col ] = vec;
+				meshes.array[i].position.set(x, y, z);
+				if ( mag != undefined ) meshes.array[i].scale.set(mag,mag,mag);
+				if ( col != undefined ) meshes.array[i].material.color = new THREE.Color( col );
+				meshes.array[i].visible = true;
 			}
-			spheres.visible = true;
+			meshes.visible = true;
 		}
 		
-		function setSheresOpacity( opa ) {
+		function setMeshesOpacity( opa ) {
 			for (let i=0; i<nn; i++) {
-				spheres.array[i].material.opacity = opa;
+				meshes.array[i].material.opacity = opa;
 			}
 		}
 	}
 	
-	// -----------------------  m3js_spheres function end
+	// -----------------------  m3js_meshes function end
 	
 	
 	// -----------------------  m3js_arrows function  ---------------------------
@@ -872,7 +1186,7 @@ const tjs036 = (function(){ // ====================  tjs Module  ===============
 	}
 	
 	
-	//--------------------  public  --------------------
+	// --------------------  public  --------------------
 	
 	return {
 		main:			main,			// main()
@@ -893,11 +1207,11 @@ const tjs036 = (function(){ // ====================  tjs Module  ===============
 		
 	};
 
-})(); // ====================  tjs036 module end  ====================
+})(); // ====================  tjs038 module end  ====================
 
 
 // event
-const tjs = tjs036;
+const tjs = tjs038;
 window.addEventListener('load', tjs.main );
 
 
@@ -909,8 +1223,13 @@ window.addEventListener('load', tjs.main );
   </style>
 </head>
 <body>
-<p>[tjs036] gas - fast smoothed particle hydrodynamics 2D (SPH2D)</p>
-<canvas id="myCanvas" width="500" height="480" ></canvas><br>
+<p>[tjs038] air and wood - smoothed particle hydrodynamics 2D (SPH2D)</p>
+<div style="position: relative; overflow: hidden; width: 500px; height: 480px">
+  <canvas id="myCanvas" style="position: absolute; top: 0px; left: 0px"></canvas>
+  <div id="textOnCanvas" 
+    style="position:absolute; top:5px; left:5px; color:#99aa44; background-color:rgba(0, 0, 0, 0);
+           font-size:0.9rem"> ... One moment, please.<br> ... setting up the studio ... </div>
+</div>
 
 <label>disp mode:</label>
 <select id="slct_dispMode" onChange="tjs.setDispMode()">
