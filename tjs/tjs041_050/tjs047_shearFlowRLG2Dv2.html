@@ -1,0 +1,1254 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>tjs047_shearFlowRLG2D</title>
+  <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+  <!--
+  <script src="../lib/three.min.js"></script>
+  <script src="../lib/OrbitControls.js"></script>
+  -->
+  <script>
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tjs047_shearFlowRLG2D
+//    Copyright(C) 2022-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2022.01.24 created, last updated on 2022.01.27
+//    ver 0.0.1  2022.07.26 v1, last updated on 2023.01.02
+//    ver 0.0.2  2023.11.01 v2, last updated on 2023.11.01
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  real-coded lattice gas model 2D 
+//
+//  (1) move particles - particle move in free without collision
+//      r = r + v*dt
+//
+//  (2) collision - all particles collide each other in the same cell
+//      vi: velocity of i-th RLG particle after collision,
+//      vm: mean velocity in the cell,
+//      vi0; initial velocity of i-th RLG particle
+//
+//      vi = vm + rotate(theta)(vi0-vm),  (theta = PI/2 or -PI/2 : minmum viscosity)
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const shearFlowRLG2D = (function(){ // ====================  shearFlowRLG2D Module  ====================
+
+	let g_NNmx = 60;        // x-max mean cell group 5x5 cells
+	let g_NNmy = 60;        // y-max mean cell group 5x5 cells
+	let g_Nsx = g_NNmx*5;   // x-max number of cell[Nsx][Nsy]
+	let g_Nsy = g_NNmy*5;   // y-max number of cell[Nsx][Nsy]
+	let g_NNs = 30;         // n-max number of section[Nsx][Nsy][NNs]
+	let g_NinCell = 4;      // number of particles in the cell
+	let g_NNp = g_Nsx*g_Nsy*g_NinCell; // total number of particlesy
+	let g_sysTime = 0.0;    // system time : dimensionless time
+	let g_timeStep = 1.0;   // time step dt
+	let g_dx = 1.0;         // x-space step  : dimensionless length
+	let g_dy = 1.0;         // y-space step
+	let g_xMax = g_Nsx*g_dx;// x- box size
+	let g_yMax = g_Nsy*g_dy;// y- box size
+	let g_gravity = 0.0;    // gravitational force direction is -y direction
+
+	let g_xBoxSize = 400;   // in pixel
+	let g_yBoxSize = 400;   // in pixel
+	let g_yTextSize = 70;   // in pixel
+
+	const g_xx = dim1(g_NNp);               // x-component of particle posion
+	const g_yy = dim1(g_NNp);               // y-component of particle posion
+	const g_vx = dim1(g_NNp);               // x-component of particle velocity
+	const g_vy = dim1(g_NNp);               // y-component of particle velocity
+	const g_section = dimInt3(g_Nsx,g_Nsy,g_NNs); //section[Nsx][Nsy][NNs]  particle number in cell[i][j]
+	const g_cellAttribute = dimInt2(g_Nsx,g_Nsy); //attribute at cell[i][j]
+	const g_refTemp = [0,0,0,0];            // reference temp. refTemp[ca] : ca = cell attribute
+	const g_meanDens = dim2(g_NNmx,g_NNmy); // mean density
+	const g_meanVx = dim2(g_NNmx,g_NNmy);   // mean flow vx
+	const g_meanVy = dim2(g_NNmx,g_NNmy);   // mean flow vy
+	const g_meanTemp = dim2(g_NNmx,g_NNmy); // mean temperature
+	const g_meanPres = dim2(g_NNmx,g_NNmy); // mean pressure
+	const g_mmDens = dim2(g_NNmx,g_NNmy);   // time averaged meanDens
+	const g_mmTemp = dim2(g_NNmx,g_NNmy);   // time averaged meanTemp
+	const g_mmPres = dim2(g_NNmx,g_NNmy);   // time averaged meanPres
+	const g_mmVx = dim2(g_NNmx,g_NNmy);     // time averaged meanVx
+	const g_mmVy = dim2(g_NNmx,g_NNmy);     // time averaged meanVy
+
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+
+	function dim2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Float64Array( nj );
+		}
+		return a;
+	}
+
+	function dimInt2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Int32Array( nj );
+		}
+		return a;
+	}
+
+	function dimInt3( ni, nj, nk ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = [];
+			for (let j=0; j<nj; j++) {
+				a[i][j] = new Int32Array( nk );
+			}
+		}
+		return a;
+	}
+
+
+	// -------------------- set initial condition --------------------
+
+	function setInitialCondition() {
+		g_sysTime = 0.0;
+		setCellAttribute();
+		setRLGParticles(g_NNp);
+		setShearFlow(0.6); //(vx0)
+		clearMeanField();
+	}
+
+	function setCellAttribute() {
+		const nsx = g_Nsx, nsy = g_Nsy;
+
+		for (let ic=0; ic<nsx; ic++) {
+			for (let jc=0; jc<nsy; jc++) {
+				g_cellAttribute[ic][jc] = 0; // free space
+			}
+		}
+	}
+
+	function setRLGParticles( nn ) {
+		let i = 0;
+		while (i<nn) {
+			const x = g_xMax*Math.random();
+			const y = g_yMax*Math.random();
+			if (cellAttributeAt(x,y)==0) {
+				g_xx[i] = x;
+				g_yy[i] = y;
+				g_vx[i] = 2.0*(Math.random()-0.5);
+				g_vy[i] = 2.0*(Math.random()-0.5);
+				i += 1;
+			}
+		}
+	}
+
+	function setShearFlow( vx0 ) {
+		const nnp = g_NNp, x0 = 0.5*g_xMax, y0 = 0.5*g_yMax, r0 = 0.25*g_xMax;
+
+		for (let i=0; i<nnp; i++) {
+			if (g_yy[i]>0.2*g_yMax && g_yy[i]<0.48*g_yMax) g_vx[i] += vx0;
+			if (g_yy[i]>0.52*g_yMax && g_yy[i]<0.8*g_yMax) g_vx[i] -= vx0;
+		}
+	}
+
+	function clearMeanField() {
+		const nnmx = g_NNmx, nnmy = g_NNmy;
+
+		for (let i=0; i<nnmx; i++) {
+			for (let j=0; j<nnmy; j++) {
+				g_meanDens[i][j] = 0.0;
+				g_meanVx[i][j] = 0.0;
+				g_meanVy[i][j] = 0.0;
+				g_meanTemp[i][j] = 0.0;
+				g_meanPres[i][j] = 0.0;
+			
+				g_mmVx[i][j] = 0.0;
+				g_mmVy[i][j] = 0.0;
+				g_mmDens[i][j] = 0.0;
+				g_mmTemp[i][j] = 0.0;
+				g_mmPres[i][j] = 0.0;
+			}
+		}
+	}
+
+
+	// --------------------  time evolution  --------------------
+
+	function moveParticles( nCalc ) {
+
+		for (let i=0; i<nCalc; i++) {
+			movement(g_timeStep);
+			collision();
+			g_sysTime += g_timeStep;
+		}
+		setMean();
+		setTimeAverage();
+		if (g_sysTime<2*nCalc*g_timeStep) {
+			for (let i=0; i<10; i++) setTimeAverage();
+		}
+	}
+
+	function movement( dt ) {
+		const nnp = g_NNp;
+
+		for (let i=0; i<nnp; i++) {
+			g_vy[i] += g_gravity*dt;
+			g_xx[i] += g_vx[i]*dt;
+			g_yy[i] += g_vy[i]*dt;
+			const ca = cellAttributeAt(g_xx[i],g_yy[i]);
+			if (ca>0) { // not free space
+				g_xx[i] -= g_vx[i]*dt;
+				g_yy[i] -= g_vy[i]*dt;
+				let r = 1.0;
+				if (g_refTemp[ca]>0.0) {
+					temp = 0.5*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
+					r = Math.sqrt(g_refTemp[ca]/temp)*(1.5-Math.random());
+				}
+				g_vx[i] = -r*g_vx[i];
+				g_vy[i] = -r*g_vy[i];
+			}
+		}
+
+		/*
+		// wall reflection
+		const rr = 1.0;
+		for (let i=0; i<nnp; i++) {
+			if (g_xx[i] < 0.0) { 
+				g_xx[i] = 0.0; g_vx[i] = -rr*g_vx[i]; g_vy[i] = rr*g_vy[i]; 
+			}
+			if (g_xx[i] > g_xMax) {
+				g_xx[i] = g_xMax; g_vx[i] = -rr*g_vx[i]; g_vy[i] = rr*g_vy[i]; 
+			}
+			if (g_yy[i] < 0.0) { 
+				g_yy[i] = 0.0; g_vx[i] = rr*g_vx[i]; g_vy[i] = -rr*g_vy[i]; 
+			}
+			if (g_yy[i] > g_yMax) {
+				g_yy[i] = g_yMax; g_vx[i] = rr*g_vx[i]; g_vy[i] = -rr*g_vy[i];
+			}
+		}
+		*/
+
+		// periodic condition
+		for (let i=0; i<nnp; i++) {
+			if (g_xx[i] < 0.0) { 
+				g_xx[i] += g_xMax; 
+			}
+			if (g_xx[i] > g_xMax) {
+				g_xx[i] -= g_xMax; 
+			}
+			if (g_yy[i] < 0.0) { 
+				g_yy[i] += g_yMax; 
+			}
+			if (g_yy[i] > g_yMax) {
+				g_yy[i] -= g_yMax;
+			}
+		}
+	}
+
+	function cellAttributeAt( x, y ) {
+
+		let ix = Math.floor(x/g_dx); if (ix>=g_Nsx) ix = g_Nsx-1;
+		if (ix<0) ix = 0;
+		let iy = Math.floor(y/g_dy); if (iy>=g_Nsy) iy = g_Nsy-1;
+		if (iy<0) iy = 0;
+		return g_cellAttribute[ix][iy];
+	}
+
+	function collision() {
+		const nsx = g_Nsx, nsy = g_Nsy;
+
+		setSection();
+		for (let ic=0; ic<nsx; ic++) {
+			for (let jc=0; jc<nsy; jc++) {
+				const nn = g_section[ic][jc][0];
+				if (nn>1) {
+					if (g_cellAttribute[ic][jc]==0) {
+						collisionInTheCell(ic,jc);
+					}
+				}
+			}
+		}
+	}
+
+	function collisionInTheCell( ic, jc ) {
+		const cTh = 0.0;
+		const sTh = (Math.random()<0.5) ? -1.0 : 1.0;
+		const n = g_section[ic][jc][0];
+		
+		let vxm = 0.0, vym = 0.0;
+		for (let i=1; i<=n; i++) {
+			const k = g_section[ic][jc][i];
+			vxm += g_vx[k]; vym += g_vy[k];
+		}
+		vxm = vxm/n; vym = vym/n;
+		for (let i=1; i<=n; i++) {
+			const k = g_section[ic][jc][i];
+			const vxs = g_vx[k]-vxm;
+			const vys = g_vy[k]-vym;
+			g_vx[k] = vxm +cTh*vxs +sTh*vys;
+			g_vy[k] = vym -sTh*vxs +cTh*vys;
+		}
+	}
+
+	function setSection() {
+		const nsx = g_Nsx, nsy = g_Nsy, nns = g_NNs, nnp = g_NNp;
+
+		for (let i=0; i<nsx; i++) {
+			for (let j=0; j<nsy; j++) {
+				g_section[i][j][0] = 0;
+			}
+		}
+		for (let ip=0; ip<nnp; ip++) {
+			let i = Math.floor(nsx*g_xx[ip]/g_xMax); if (i>=nsx) i = nsx-1;
+			let j = Math.floor(nsy*g_yy[ip]/g_yMax); if (j>=nsy) j = nsy-1;
+			const iq = g_section[i][j][0]+1;
+			if (iq<nns) {
+				g_section[i][j][0] = iq;
+				g_section[i][j][iq] = ip;
+			}
+		}
+	}
+
+	function maxSection() {
+		const nsx = g_Nsx, nsy = g_Nsy;
+		let m = 0;
+		for (let i=0; i<nsx; i++) {
+			for (let j=0; j<nsy; j++) {
+				if (g_section[i][j][0]>m) m = g_section[i][j][0];
+			}
+		}
+		return m;
+	}
+
+	// --- statistics
+
+	function totalKineticEnergy() {
+		const nnp = g_NNp;
+		let tke = 0.0;
+		for (let i=0; i<nnp; i++) {
+			tke += 0.5*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
+		}
+		return tke;
+	}
+
+	function systemTemperature() {
+		return totalKineticEnergy()/g_NNp;
+	}
+
+	function viscosityMin( temp ) {
+		const rho = g_NNp/(1.0*g_Nsx*g_Nsy);
+		return (1.0/12.0+0.5*temp*(1-Math.exp(-rho)/(rho-1+Math.exp(-rho))));
+	}
+
+	function setMean() {
+		const nsx = g_Nsx, nsy = g_Nsy;
+		const nStep = 5;
+		for (let ic=0; ic<nsx; ic+=nStep) {
+			for (let jc=0; jc<nsy; jc+=nStep) {
+				const ii = Math.floor(ic/nStep);
+				const jj = Math.floor(jc/nStep);
+				let n = 0, mvx = 0.0, mvy = 0.0;
+				for (let i=ic; i<ic+nStep; i++) {
+					for (let j=jc; j<jc+nStep; j++) {
+						const nn = g_section[i][j][0];
+						n = n + nn;
+						for (let ipp=1; ipp<nn; ipp++) {
+							const k = g_section[i][j][ipp];
+							mvx = mvx+g_vx[k];
+							mvy = mvy+g_vy[k];
+						}
+					}
+				}
+				if (n>0 && g_cellAttribute[ic+Math.floor(nStep/2)][jc+Math.floor(nStep/2)]==0) {
+					mvx = mvx/n; mvy = mvy/n;
+					const dens = (n/(1.0*nStep*nStep))/g_NinCell;
+					g_meanDens[ii][jj] = dens;
+					g_meanVx[ii][jj] = mvx;
+					g_meanVy[ii][jj] = mvy;
+					let ke = 0;
+					for (let i=ic; i<ic+nStep; i++) {
+						for (let j=jc; j<jc+nStep; j++) {
+							const nn = g_section[i][j][0];
+							for (let ipp=1; ipp<nn; ipp++) {
+								const k = g_section[i][j][ipp];
+								ke = ke + 0.5*((g_vx[k]-mvx)*(g_vx[k]-mvx)+(g_vy[k]-mvy)*(g_vy[k]-mvy));
+							}
+						}
+					}
+					const temp = ke/n;
+					const pres = dens*temp;
+					g_meanTemp[ii][jj] = temp;
+					g_meanPres[ii][jj] = pres;
+				} else {
+					g_meanDens[ii][jj] = 0.0;
+				}
+			}
+		}
+	}
+
+	function setTimeAverage() {
+		const nnmx = g_NNmx, nnmy = g_NNmy, a=0.2;
+
+		for (let i=0; i<nnmx; i++) {
+			for (let j=0; j<nnmy; j++) {
+				g_mmVx[i][j] = (1.0-a)*g_mmVx[i][j]+a*g_meanVx[i][j];
+				g_mmVy[i][j] = (1.0-a)*g_mmVy[i][j]+a*g_meanVy[i][j];
+				g_mmDens[i][j] = (1.0-a)*g_mmDens[i][j] + a*g_meanDens[i][j];
+				g_mmTemp[i][j] = (1.0-a)*g_mmTemp[i][j] + a*g_meanTemp[i][j];
+				g_mmPres[i][j] = (1.0-a)*g_mmPres[i][j] + a*g_meanPres[i][j];
+			}
+		}
+	}
+
+
+	// --------------------  draw  --------------------
+
+	function draw( ctx, drawMode ) {
+		const xp=40, yp=405, sc=400.0/g_NNmx;
+
+		drawBox(ctx, xp,yp,sc);
+		if (drawMode<3) {
+			drawDensField(ctx, xp,yp,sc,drawMode);
+			drawFlow(ctx, xp,yp,sc);
+		} else if (drawMode==3) {
+			drawFlow(ctx, xp,yp,sc);
+		} else if (drawMode==4) {
+			drawTimeAveragedFlow(ctx, xp,yp,sc);
+		} else if (drawMode==5) {
+			drawSample(ctx, 500,xp,yp);
+		}
+
+		ctx.fillStyle = "rgb(0, 0, 0)";
+		ctx.fillText("time = "+g_sysTime.toFixed(1), xp, g_yBoxSize+34);
+		ctx.fillText("particle N = "+g_NNp, xp+200, g_yBoxSize+34);
+		ctx.fillText("total kinetic energy ="+totalKineticEnergy().toFixed(4), xp, g_yBoxSize+54);
+		ctx.fillText("max section = "+maxSection(), xp, g_yBoxSize+74);
+	}
+
+	function drawBox(ctx, xp,yp,sc) {
+		const nnmx=g_NNmx, nnmy=g_NNmy;
+
+		ctx.fillStyle = "#aaaaaa";
+		ctx.fillRect(xp-1, yp-nnmy*sc-1, nnmx*sc+2, nnmy*sc+2);
+		// draw wall
+		for (let i=0; i<nnmx; i++) {
+			for (let j=0; j<nnmy; j++) {
+				if (g_cellAttribute[i*5+2][j*5+2]==1) {
+					drawRect(ctx, xp+i*sc+0,yp-j*sc-5-4,8,8,"rgb(120,120,120)");
+				}
+			}
+		}
+	}
+
+	function drawSample(ctx, n,xp,yp) {
+		const sc=400.0/g_xMax;
+
+		ctx.strokeStyle = "rgb(0,0,250)";
+		for (let i=0; i<n; i++) {
+			ctx.beginPath();
+			ctx.arc(xp+g_xx[i]*sc,yp-g_yy[i]*sc,5,0,2*Math.PI,false);
+			ctx.stroke();
+		}
+		ctx.strokeStyle = "rgb(250,0,0)";
+		for (let i=0; i<n; i++) {
+			ctx.beginPath();
+			ctx.moveTo(xp+g_xx[i]*sc,yp-g_yy[i]*sc);
+			ctx.lineTo(xp+(g_xx[i]+g_vx[i]*10*g_timeStep)*sc,yp-(g_yy[i]+g_vy[i]*10*g_timeStep)*sc);
+			ctx.stroke();
+		}
+	}
+
+	function drawFlow(ctx, xp,yp,sc) {
+		const nnmx=g_NNmx, nnmy=g_NNmy, mag=50;
+
+		for (let i=0; i<nnmx; i++) {
+			for (let j=0; j<nnmy; j++) {
+				if (g_meanDens[i][j]>0) {
+					const color = (g_meanVx[i][j]>=0) ? "rgb(0,0,250)" : "rgb(220,0,120)";
+					//color = (g_meanVy[i][j]>=0) ? "rgb(250,0,0)" : "rgb(120,0,250)";
+					const x = (i+0.5)*sc, y = (j+0.5)*sc;
+					drawLine(ctx, xp+x,yp-y,xp+x+g_meanVx[i][j]*mag,yp-y-g_meanVy[i][j]*mag,color);
+				}
+			}
+		}
+	}
+
+	function drawTimeAveragedFlow(ctx, xp,yp,sc) {
+		const nnmx=g_NNmx, nnmy=g_NNmy, mag=50;
+
+		for (let i=0; i<nnmx; i++) {
+			for (let j=0; j<nnmy; j++) {
+				if (g_meanDens[i][j]>0) {
+					const color = (g_mmVx[i][j]>=0) ? "rgb(0,0,250)" : "rgb(220,0,120)";
+					//color = (g_meanVy[i][j]>=0) ? "rgb(250,0,0)" : "rgb(120,0,250)";
+					const x = (i+0.5)*sc, y = (j+0.5)*sc;
+					drawLine(ctx, xp+x,yp-y,xp+x+g_mmVx[i][j]*mag,yp-y-g_mmVy[i][j]*mag,color);
+				}
+			}
+		}
+	}
+
+	function drawDensField(ctx, xp,yp,sc,drawMode) {
+		const nnmx=g_NNmx, nnmy=g_NNmy;
+
+		for (let i=0; i<nnmx; i++) {
+			for (let j=0; j<nnmy; j++) {
+				const x = (i+0.5)*sc, y = (j+0.5)*sc;
+				const r = Math.min(g_meanDens[i][j]*2.5,0.8*sc);
+				let color;
+				if (r>=1) {
+					if (drawMode==0) {
+						color = "rgb(0,250,0)";
+					} else if (drawMode==1) {
+						let t = Math.max(120-(g_meanTemp[i][j]-0.333)*500,0);
+						t = Math.floor(Math.min(t,240));
+						color = "hsl("+t+",100%,50%)";
+					} else if (drawMode==2) {
+						let p = Math.max(120-(g_meanPres[i][j]-0.333)*200,0);
+						p = Math.floor(Math.min(p,240));
+						color = "hsl("+p+",100%,50%)";
+					}
+					drawDisc(ctx, xp+x,yp-y,r,color);
+				}
+			}
+		}
+	}
+
+	function drawDisc(ctx, x,y,r,color) {
+		ctx.fillStyle = color;
+		ctx.beginPath();
+		ctx.arc(x,y,r,0,2.0*Math.PI,false);
+		ctx.fill();
+	}
+
+	function drawLine(ctx, x1, y1, x2, y2, color) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	}
+
+	function drawRect(ctx, x, y, w, h, color) {
+		ctx.fillStyle = color;
+		ctx.fillRect(x, y, w, h);
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:               setInitialCondition, // setInitialCondition()
+		evolve:             moveParticles, // moveParticles( nCalc )
+		draw:               draw, // draw( ctx, drawMode )
+
+		getSysParam:        function() { return [ g_NNmx, g_NNmy, g_Nsx, g_Nsy, g_xMax, g_NNp, g_timeStep ]; },
+		getNow:             function() { return [ g_sysTime, totalKineticEnergy(), maxSection() ]; },
+		getDensity:         function(i,j) { return g_meanDens[i][j]; },
+		getPressure:        function(i,j) { return g_meanPres[i][j]; },
+		getTemperature:     function(i,j) { return g_meanTemp[i][j]; },	
+		getVelocity:        function(i,j) { return [ g_meanVx[i][j], g_meanVy[i][j] ]; },	
+		getAveDensity:      function(i,j) { return g_mmDens[i][j]; },
+		getAvePressure:     function(i,j) { return g_mmPres[i][j]; },
+		getAveTemperature:  function(i,j) { return g_mmTemp[i][j]; },
+		getAveVelocity:     function(i,j) { return [ g_mmVx[i][j], g_mmVy[i][j] ]; },
+		getCellAttribute:   function(i,j) { return g_cellAttribute[i][j]; }, // [nxx][nsy]
+		getRLGparticle:     function(i) { return [ g_xx[i], g_yy[i], g_vx[i], g_vy[i] ]; },
+	};
+
+})(); // ====================  shearFlowRLG2D end  ====================
+
+
+const tjs047 = (function(){ // ====================  tjs Module  ====================
+
+	const theModule = shearFlowRLG2D;
+	let v_nCalc = 1;
+	
+	let p_nx, p_ny, p_nsx, p_nsy, p_xMax, p_nn, p_dt; // <-- theModule.getSysParam()
+	
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let dispMode =  4;
+	let dispModeChanged = false;
+	let viewHomeRequested = true;
+	let legendFlag = true;
+	let count = 0;
+	
+	// sizes in the threejs world
+	const xBoxSize = 500;
+	const zBoxSize = 200;
+	const x0 = xBoxSize/2;
+	const z0 = zBoxSize/2;
+	let hh, yBoxSize, y0;
+	
+	// threejs world object
+	let agrid;
+	let vfield;
+	let line_box;
+	let cnvsprite;
+
+	// three.js , OrbitControls.js
+	const width = 500;
+	const height = 480;
+	const r_camera = 1200;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+
+	// --------------------  main
+	
+	function main() {
+		// constract renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+		
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, -0.6*r_camera, 0.8*r_camera);
+		controls = new THREE.OrbitControls(camera,renderer.domElement);
+		
+		initDom();
+		
+		constructScene();
+		animate();
+	}
+
+	function constructScene() {
+		
+		// init RLG2D
+		theModule.init();
+		[ p_nx, p_ny, p_nsx, p_nsy, p_xMax, p_nn, p_dt ] = theModule.getSysParam();
+		hh = xBoxSize/p_nx;
+		yBoxSize = hh*p_ny;
+		y0 = yBoxSize/2;
+
+		// scene
+		scene = new THREE.Scene();
+ 
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xffffff,0.5);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xffffff, 1.0);
+		scene.add(light);
+		
+		
+		// agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+		agrid = m3js_grid2D( p_nx, p_ny, xBoxSize );
+		scene.add( agrid );
+		//agrid.setPallet( 372, '#446644' );
+		
+		// flow vector field
+		// vfield = m3js_vField2D( p_nx, p_ny, xBoxSize [, colorMode] ); // colorMode  0:direction color, 1:blue|red
+		vfield = m3js_vField2D( p_nx, p_ny, xBoxSize, 0 ); // direction color: Math.atan2(vy,vx)
+		scene.add( vfield );
+		
+		// line box
+		{
+			const geometry = new THREE.BoxGeometry( xBoxSize, yBoxSize, zBoxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial({ color: 0x666644 }) );
+			scene.add( line_box );
+		}
+		
+		// canvas sprite
+		//cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 600, 600, 480 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+		
+	}
+
+	// loop animation
+	function animate() {
+		
+		// select theme
+		if (resetFlag==1) {
+			resetFlag = 0;
+			constructScene();
+			dispModeChanged = true;
+			count = 0;
+		}
+
+		//  switch visible objects
+		if (dispModeChanged) {
+			dispModeChanged = false;
+			
+			line_box.visible = ( dispMode<=4 ) ? true : false;
+			agrid.visible = false;
+			vfield.visible = false;
+			cnvsprite.visible = false;
+		}
+		
+		// view home
+		if ( viewHomeRequested ) {
+			camera.position.set(0, -0.6*r_camera, 0.8*r_camera);
+			viewHomeRequested = false;
+		}
+		
+		// RLG2D update
+		if (pauseFlag==0) {
+			theModule.evolve( v_nCalc );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( 1 );
+		}
+		
+		// density update
+		if ( dispMode==0 ) {
+			const dmag = 100.0;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			agrid.update(
+				function(i,j) {
+					const z = dmag*(theModule.getDensity(i,j)-1.0);
+					const hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360
+					return [ z, hue ]; 
+				}
+			);
+		}
+		
+		// temperature update
+		if ( dispMode==1 ) {
+			const tmag = 200.0;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			agrid.update(
+				function(i,j) {
+					const z = tmag*(theModule.getTemperature(i,j)-0.3);
+					const hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360
+					return [ z, hue ]; 
+				}
+			);
+		}
+		
+		// pressure update
+		if ( dispMode==2 ) {
+			const pmag = 200.0;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			agrid.update(
+				function(i,j) {
+					const z = pmag*theModule.getPressure(i,j);
+					const hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360
+					return [ z, hue ]; 
+				}
+			);
+		}
+		
+		// flow vector field update
+		if ( dispMode==3 ) {
+			const vmag = 100.0;
+			const pmag = 200.0;
+			// vfield.update( vx_vy_z_col_func [,step] ); // vx_vy_z_col_func: (i,j) --> [vx, vy, z, [col] ]
+			vfield.update(
+				function(i,j) { // vxyFunc
+					let vx, vy;
+					[ vx, vy ] = theModule.getVelocity(i,j);
+					const z = pmag*theModule.getPressure(i,j);
+					return [vmag*vx, vmag*vy, z, ]; 
+				}
+			);
+		}
+		
+		// flow vector field update
+		if ( dispMode==4 ) {
+			const vmag = 100.0;
+			const pmag = 200.0;
+			if (dispMode==4 ) {
+				// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+				agrid.update( 
+					function(i,j) { return [ pmag*theModule.getAvePressure(i,j), 363 ]; } );
+			}
+			// vfield.update( vx_vy_z_col_func [,step] ); // vx_vy_z_col_func: (i,j) --> [vx, vy, z, [col] ]
+			vfield.update(
+				function(i,j) { // vxyFunc
+					let vx, vy;
+					[ vx, vy ] = theModule.getAveVelocity(i,j);
+					const z = pmag*theModule.getAvePressure(i,j);
+					return [vmag*vx, vmag*vy, z, ]; 
+				},
+			);
+		}
+		
+		// update canvas2d sprite
+		if ( dispMode>=5 ) {
+			// cnvsprite.update( drawFunc )
+			cnvsprite.update( 
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					theModule.draw(ctx, dispMode-5 );
+				}
+			);
+		}
+		
+		// output to innerHTML
+		if (count % 10 == 0) {
+			const xMax = p_xMax;
+			const yMax = (p_xMax/p_nx)*p_ny;
+			let sysTime, kineticEnergy, maxSection;
+			[ sysTime, kineticEnergy, maxSection ] = theModule.getNow();
+			let msg =
+				"periodic box = "+xMax.toFixed(0)+"x"+yMax.toFixed(0)
+				+ ", RLG particle="+p_nn
+				+ ", time="+sysTime.toFixed(1) + "<br>"
+				+ "total kinetic energy="+kineticEnergy.toFixed(2)
+				+ ", max section="+maxSection
+			document.getElementById("text_caption").innerHTML = msg;
+			
+			if ( legendFlag && dispMode<=4 ) {
+				let msg1 = "periodic box = "+xMax+" x "+yMax+"<br>"
+				document.getElementById('textOnCanvas').innerHTML = msg1;
+			} else {
+				document.getElementById('textOnCanvas').innerHTML = "";
+			}
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_grid2D function  -----------------------------------------
+	//
+	//    ver 0.0.0  2022.10.08 created, last updated on 2022.12.20
+	//
+	//  agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+	//      p_nx: number of x-direction lines, p_ny: number of y-direction lines
+	//      xBoxSize: x-box size in the threejs-world
+	//		[zBoxSize]: z-box size in the threejs-world
+	//      [mode]: if mode=='xLineOnly' -->  grid change to x-lines only
+	//            if mode=='yLineOnly' -->  grid change to y-lines only
+	//            else or undefined --> grid x-lines and y-lines
+	//
+	//  scene.add( agrid );
+	//
+	//  agrid.setPallet( pallet, color );
+	//      pallet: pallet number 372 ... 399, (371:inner pallet)
+	//      color: col = new THREE.Color( color )
+	//
+	//  agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+	//      z_hue_func(i,j) { ... return [ z, [hue] ]; }
+	//          z: threejs world z-position at grid point (i,j)
+	//          hue: 0...359 huedeg, 360(black) ...gray...370(white) 371(inner pallet) 372...399 free
+	//              or string shch as 'red', '#ff0000', 'rgb(255,0,0)', 'hsl(0,100%,50%)'
+	//
+	// agrid.visible = false;
+	//
+	
+	const m3js_grid2D = function( p_nx, p_ny, xBoxSize, zBoxSize, mode ) {
+		const hueArray = []; // red:hue[deg][0]  green:hue[deg][1]  blue:hue[deg][2]
+		const gridArray = [];
+		const nx = p_nx;
+		const ny = p_ny
+		const hh = xBoxSize/nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*ny/2.0;
+		const z0 = ( zBoxSize==undefined ) ? y0 : zBoxSize/2.0;
+		const xLineOnly = ( mode==undefined || mode!='xLineOnly' ) ? false : true;
+		const yLineOnly = ( mode==undefined || mode!='yLineOnly' ) ? false : true;
+		const agrid = new THREE.Group();
+		
+		if ( hueArray.length<1 ) init_hueArray();
+		
+		if ( ! yLineOnly ) {
+			for (let j=0; j<ny; j++) {
+ 				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( nx * 3 );
+				const colors = new Float32Array( nx * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, nx );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[j] = line;
+    			agrid.add( gridArray[j] );
+			}
+		}
+		if ( ! xLineOnly ) {
+			for (let i=0; i<nx; i++) {
+				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( ny * 3 );
+				const colors = new Float32Array( ny * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, ny );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[ny+i] = line;
+    			agrid.add( gridArray[ny+i] );
+    		}
+    	}
+    	
+    	agrid.setPallet = setPallet; // setPallet( pallet, color )
+		agrid.update = gridUpdate; // gridUpdate( fieldFunc, [hueFunc|huedeg|hueStr] )
+		agrid.visible = false;
+		
+		return agrid;
+
+
+		// private functions
+		
+		function gridUpdate( z_hue_Func ) {
+			if ( ! yLineOnly ) {
+				for (let j=0; j<ny; j++) {
+					const line = gridArray[j];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let i= 0; i<nx; i++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[i*3]   = hh*i - x0;
+						positions[i*3+1] = hh*j - y0;
+						positions[i*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[i*3]   = r;
+						colors[i*3+1] = g;
+						colors[i*3+2] = b;
+					}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			if ( ! xLineOnly ) {
+				for (let i=0; i<nx; i++) {
+					const line = gridArray[ny+i];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let j= 0; j<ny; j++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[j*3]   = hh*i - x0;
+						positions[j*3+1] = hh*j - y0;
+						positions[j*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[j*3]   = r;
+            			colors[j*3+1] = g;
+            			colors[j*3+2] = b;
+    				}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			agrid.visible = true;
+		}
+		
+		function setPallet( pallet, color ) {
+			const deg = Math.floor(pallet);
+			const col = new THREE.Color( color );
+			hueArray[deg][0] = col.r;
+			hueArray[deg][1] = col.g;
+			hueArray[deg][2] = col.b;
+		}
+		
+		function init_hueArray() {
+			// deg= 0...359 hue color, 360: black ... gray ...  370:white,
+			// 371: inner use, 372...399 as pallete
+			for (let deg=0; deg<360; deg++) {
+				hueArray[deg] = [];
+				const col = new THREE.Color( 'hsl('+deg+',100%,50%)');
+				hueArray[deg][0] = col.r;
+				hueArray[deg][1] = col.g;
+				hueArray[deg][2] = col.b;
+			}
+			for (let deg=360; deg<400; deg++) {
+				hueArray[deg] = [];
+				const x = (deg<371) ? (deg-360)*0.1 : 0.0;
+				hueArray[deg][0] = x;
+				hueArray[deg][1] = x;
+				hueArray[deg][2] = x;
+			}
+		}
+		
+	};
+	
+	// -----------------------  m3js_grid2D function end
+	
+	
+	// -----------------------  m3js_vField2D function  ---------------------------
+	//
+	//    ver 0.0.0  2022.02.04 created, last updated on 2022.12.20
+	//
+	//  vfield = m3js_vField2D( p_nx, p_ny, xBoxSize [, colorMode] ); // colorMode  0:direction color, 1:blue|red
+	//     nx: number of x-direction division, ny:number of y-direction division
+	//     xBoxSize: x-box size in threejs world
+	//  scene.add( vfield );
+	//
+	//  vfield.update( vx_vy_z_col_func [,step] ); // vx_vy_z_col_func: (i,j) --> [vx, vy, z, [col] ]
+	//     vx_vy_z_col_func: function(i,j) { return [vx, vy, z, [col] ]; }
+	//     [step]: step of for-loop, 1:default, else 2 or 3 or 4 ... 
+	//
+	//  vfield.visible = false;
+	//
+	
+	function m3js_vField2D( p_nx, p_ny, xBoxSize, colorMode ) {
+		const nx = p_nx;
+		const ny = p_ny;
+		const hh = xBoxSize/p_nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*p_ny/2.0;
+		const vectorArray = [];
+		const lines = new THREE.Group();
+		const cMode = ( colorMode==undefined ) ? 1 : colorMode;
+		
+		for (let i=0; i<nx; i++) {
+			vectorArray[i] = [];
+			for (let j=0; j<ny; j++) {
+				const geometry = new THREE.BufferGeometry();
+				const positions = new Float32Array( 2 * 3 ); // MAX_POINTS = 2,  3 vertices per point
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setDrawRange( 0, 2 );
+				const material = new THREE.LineBasicMaterial( { color: 0x888888 } );
+				const line = new THREE.Line( geometry, material );
+				line.visible = false;
+				vectorArray[i][j] = line;
+    			lines.add( vectorArray[i][j] );
+			}
+		}
+		
+		lines.update = linesUpdate;
+		
+		return lines;
+		
+		
+		function linesUpdate( vx_vy_z_col_func, step ) {
+			const inc = ( step == undefined ) ? 1 : step;
+			for (let i=0; i<nx; i+=inc) {
+				for (let j=1; j<ny; j+=inc) {
+					const line = vectorArray[i][j];
+					const positions = line.geometry.attributes.position.array;
+					const vec = vx_vy_z_col_func(i,j);
+					if ( !Array.isArray(vec) ) {
+						line.visible = false;
+						continue;
+					}
+					let vx, vy, z, col, h=0;
+					[ vx, vy, z, col ] = vec;
+					if ( col==undefined ) {
+						if ( cMode==0 ) {
+							h = Math.floor((Math.atan2(vy,vx))*180.0/Math.PI+180.0);
+
+						} else if ( cMode==1 ) {
+							h = (vx>=0.0) ? 240 : 0;
+						}
+						col = `hsl(${h},100%,50%)`;
+					}
+					let x = hh*i-x0, y = hh*j-y0;
+					positions[0] = x; // point 0
+					positions[1] = y;
+					positions[2] = z;
+					positions[3] = x + vx; // point 1
+					positions[4] = y + vy;
+					positions[5] = z;
+					line.visible = true;
+					line.material.color = new THREE.Color( col );
+					line.geometry.attributes.position.needsUpdate = true;
+				}
+			}
+			lines.visible = true;
+		}
+	}
+	
+	// -----------------------  m3js_vField2D function end
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+
+	// ----------  dom control
+
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = (pauseFlag+1)%2; 
+		if (pauseFlag==0) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==1 ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function setGravity() {  // range gravity 0..-0.01
+		v_gravity = -0.0001*Number(document.getElementById("range_gravity").value);
+		document.getElementById("text_gravity").innerHTML = " " + v_gravity.toFixed(4);
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		// dom control
+		reset:			function() { resetFlag = 1; },
+		pause:			pause,
+		step:			function() { stepFlag = 1; },
+		
+		setGravity:		setGravity,
+		setDispMode:	function() {
+							dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+							dispModeChanged = true;	
+						},
+		viewHome:		function() { viewHomeRequested = true; },
+	};
+
+})(); // ====================  tjs047 module end  ====================
+
+
+// event
+const tjs = tjs047;
+window.addEventListener('load', tjs.main );
+
+
+// --------------------  end of javaScript
+
+  </script>
+  <style type="text/css">
+    body { color:#000000; background-color:#fff8dd;}
+  </style>
+</head>
+
+<body>
+<p>[tjs047] shear flow - periodic RLG2D</p>
+<div style="position: relative; overflow: hidden; width: 500px; height: 480px">
+  <canvas id="myCanvas" style="position: absolute; top: 0px; left: 0px"></canvas>
+  <div id="textOnCanvas" 
+    style="position:absolute; top:5px; left:5px; color:#99aa44; background-color:rgba(0, 0, 0, 0);
+           font-size:0.9rem"> ... One moment, please.<br> ... setting up the studio ... </div>
+</div>
+
+<!--
+<span>gravity=</span><label id="text_gravity"> -0.0050</label>
+<input type="range" id="range_gravity" min="0" max="100" value="50" step="1" 
+style="width:200px" list="tickmarks_g" oninput="tjs.setGravity()">
+<datalist id="tickmarks_g"><option value="0"><option value="50"><option value="100"></datalist>
+-->
+<span>theme: shear flow</span>
+    <span style="margin-right: 200px;"></span>
+<button onClick="tjs.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="tjs.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="tjs.step()">step</button>
+<br>
+
+<label>disp mode:</label>
+<select id="slct_dispMode" onChange="tjs.setDispMode()">
+<option>averaged density</option><option>averaged temperature</option>
+<option>averaged pressure</option><option>averaged flow</option>
+<option selected>averaged pressure + averaged flow</option>
+<option>canvas2d density</option><option>canvas2d temperature</option>
+<option>canvas2d pressure</option><option>canvas2d flow</option>
+<option>canvas2d time-averaged flow</option><option>canvas2d RLG sample500</option>
+</select>
+<br>
+
+<button onClick="tjs.viewHome()">return to initial view</button>
+    <span style="margin-right: 20px;"></span>
+drag mouse to rotate view point
+<br>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
+<br>
+</body>
+</html>
+
