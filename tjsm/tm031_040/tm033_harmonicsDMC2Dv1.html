@@ -1,0 +1,1000 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>tm033_harmonicsDMC2D</title>
+
+<style type="text/css">
+	body { color:#000000; background-color:#fff8dd; }
+</style>
+
+<style type="text/css">
+	.lil-gui {
+		--name-width: 30%;
+	}
+</style>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+<!--
+<script type="importmap">
+{
+  "imports": {
+    "three": "../libm/three.module.js",
+    "orb": "../libm/OrbitControls.js",
+    "lil-gui": "../libm/lil-gui.module.min.js"
+  }
+}
+</script>
+-->
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+    "orb": "https://unpkg.com/three@0.147.0/examples/jsm/controls/OrbitControls.js",
+    "lil-gui": "https://unpkg.com/three@0.147.0/examples/jsm/libs/lil-gui.module.min.js"
+  }
+}
+</script>
+
+<script type="module">
+
+import * as THREE from 'three';
+import { OrbitControls } from 'orb';
+import { GUI } from 'lil-gui';
+
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tm033_harmonicsDMC2D
+//    Copyright(C) 2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2023.01.27 created, last updated on 2023.01.27
+//    ver 0.0.1  2023.11.02 v2, last updated on 2023.11.02
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  diffusion Monte-Carlo method
+//
+// DMC algorithm : I. Kosztin et. al.; e-print arXiv:physics/9702023v1 (1997)
+//                 "Introduction to the Diffusion Monte Carlo Method"
+// (1) replica walk
+//     x -> x + sqrt(dt)*GaussianRandom
+// (2) branch: replica birth-death (branching) processes
+//     weight function W
+//       W = exp( -(V-ER)*dt/hbar ) --> Wi nearly= 1-(Vi-Ei)*dt/h
+//       m = int( wi + random[0-1] )
+//     if (m=0)  death
+//     if (m=1)  alive
+//     if (m=2)  alive + birth one replica
+//     if (m>=3) alive + birth two replica
+// (3) count: number of replicas N1
+// (4) energy calc
+//     ER(k+1) = ER(k) + (hbar/dt)(1-N1/N0)
+//        (N0: target number of replica)
+// goto (1)
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const harmonicsDMC2D = (function(){ // ====================  harmonicsDMC2D Module  ====================
+
+	const g_auLength = 5.29177211e-11;  // (m) 1(au) = auLength (m), (au: atomic unit hBar=1,e=1,me=1,a0=1)
+	const g_auTime = 2.418884326e-17;   // (s) 1(au) = auTime (s)
+	const g_auEnergy = 4.35974465e-18;  // (J) 1(au) = auEnergy (J)
+	const g_au2eV = 27.211386;          // (eV) 1(au) = 27.211386 (eV)
+	const g_hbar = 1.0;                 // hbar = 1 in au(atomic unit)
+
+	let g_NNr = 2000;                   // number of replica
+	let g_NNb = 100;                    // max number of box division 0:x=-5.0 50:x=0.0 100:x=+5.0
+	let g_sysTime = 0.0;                // (au) system time
+	let g_dt = 0.1;                     // (au) time division
+	let g_dx = 0.1;                     // (au) x-division, boxSize = NNb*dx
+	let g_referenceEnergy = 0.0;        // (au) reference energy of the system
+	let g_energy = g_referenceEnergy;   // (au) system energy
+	let g_NN0 = g_NNr/2;                // memory of NN1
+	let g_NN1 = g_NN0;                  // number of alive replicas
+	let g_NN00 = 1000;                  // initial number of alive replicas
+	let g_vIndex = 0;                   // potential index 0:parabolic 1:well 2:well 2
+
+	let g_xBoxSize = 400;               // in pixel
+	let g_yBoxSize = 400;               // in pixel
+
+	const g_repStatus = dimInt1(g_NNr); // status of i-th replica
+	const g_replica = dim2(g_NNr,3);    // replica[i][0] x-coordinate of i-th replica
+	const g_box = dimInt2(g_NNb,g_NNb); // box[ix][iy] number of replica
+	const g_psi = dim2(g_NNb,g_NNb);    // wave function psi[ix][iy]
+
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+
+	function dimInt1( n ) {
+		return new Int32Array( n );
+	}
+
+	function dim2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Float64Array( nj );
+		}
+		return a;
+	}
+
+	function dimInt2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Int32Array( nj );
+		}
+		return a;
+	}
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition( theme ) {
+		const nnr = g_NNr, n0 = g_NNr/2;
+		g_vIndex = theme;
+		g_sysTime = 0.0
+		for (let i=0; i<nnr; i++) {
+			g_repStatus[i] = 0;
+		}
+		for (let i=0; i<n0; i++) {
+			g_repStatus[i] = 1;
+			g_replica[i][0] = 4.0*Math.random()-2.0;
+			g_replica[i][1] = 4.0*Math.random()-2.0;
+		}
+		setPsi(0);
+		g_NN0 = numberOfReplica();
+		g_NN00 = g_NN0;
+		g_referenceEnergy = averagedPotential();
+	}
+
+	function averagedPotential() {
+		const nnr = g_NNr;
+		let s = 0.0, n = 0;
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) {
+				n += 1;
+				s += potential(g_replica[i][0],g_replica[i][1]);
+			}
+		}
+		return s/n;
+	}
+
+
+	// --------------------  evolve DMC  --------------------
+
+	function evolveDMC( nCalc ) {
+		for (let i=0; i<nCalc; i++) {
+			walkReplica();
+		}
+	}
+
+	function walkReplica() {
+		const nnr = g_NNr;
+		g_sysTime = g_sysTime + g_dt
+		const sqrtdt = Math.sqrt(g_dt);
+		// (1) replica walk
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) { // alive
+				g_replica[i][0] += sqrtdt*GaussianRandom();
+				g_replica[i][1] += sqrtdt*GaussianRandom();
+			}
+		}
+		// (2) branch
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) { // alive
+				birthDeathProcess(i);
+			}
+		}
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==2) { // marked
+				g_repStatus[i] = 1;
+			}
+		}
+		// (3) count
+		g_NN1 = numberOfReplica();
+		// (4) energy
+		const er = g_referenceEnergy + g_hbar/g_dt*(1.0-(g_NN1+1.0)/(g_NN0+1.0)*(g_NN1+10.0*nnr)/(g_NN00+10.0*nnr));
+		g_NN0 = g_NN1;
+		g_referenceEnergy = er;
+		g_energy = 0.99*g_energy+0.01*g_referenceEnergy;
+		setPsi(1);
+	}
+
+	function GaussianRandom() {
+		//Box-Muller transform  
+		return Math.sqrt(-2*Math.log(1-Math.random()))*Math.sin(2*Math.PI*Math.random());
+	}
+
+	function birthDeathProcess( i ) {
+		const xi = g_replica[i][0], yi = g_replica[i][1];
+		const mn = Math.floor(weightFunction(xi,yi)+Math.random());
+		if (mn==0) {
+			g_repStatus[i] = 0; // death replica
+		} else if (mn==2) {
+			birthReplica(i);
+		} else if (mn>=3) {
+			birthReplica(i);
+			birthReplica(i);
+		}
+	}
+
+	function weightFunction( xn, yn ) {
+		return Math.exp(-(potential(xn,yn,g_vIndex)-g_referenceEnergy)*g_dt/g_hbar);
+	}
+
+	function potential( x, y, vIndex ) {
+		let ret=0;
+		if (vIndex==0) { // parabolic
+			ret = 0.5*(x*x+y*y);
+		} else if (vIndex==1) { // well 1
+			ret = (Math.sqrt(x*x+y*y)<2.0) ? 0.0 : 20.0;
+		} else if (vIndex==2) { // well 2
+			ret = (Math.sqrt(x*x+y*y)<2.0) ? -1.0 : 0.0;
+		} else if (vIndex==3) { // ring
+			const r = Math.sqrt(x*x+y*y);
+			ret = (2.0<=r && r<=3.0) ? 0.0 : 20.0;
+		}
+		return ret;
+	}
+
+	function birthReplica( i ) {
+		const ip = seekSpace(i);
+		if (ip>=0) {
+			g_repStatus[ip] = 2;
+			g_replica[ip][0] = g_replica[i][0];
+			g_replica[ip][1] = g_replica[i][1];
+		}
+	}
+
+	function seekSpace( istart ) {
+		const nnr = g_NNr;
+		let ip = -1;
+		for (let i=1; i<nnr; i++) {
+			if (g_repStatus[(i+istart)%nnr]==0) {
+				ip = (i+istart)%nnr;
+				break;
+			}
+		}
+		return ip;
+	}
+
+	function numberOfReplica() {
+		const nnr = g_NNr;
+		let n = 0;
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) n+=1;
+		}
+		return n;
+	}
+
+	function setPsi( sw ) {
+		const nnr = g_NNr, nnb = g_NNb;
+		for (let ix=0; ix<nnb; ix++) {
+			for (let iy=0; iy<nnb; iy++) {
+				g_box[ix][iy] = 0;
+			}
+		}
+		for (let i=0; i<nnr; i++) {
+			if (g_repStatus[i]==1) {
+				const ix = Math.floor(nnb/2+g_replica[i][0]*nnb/10.0+0.5);
+				const iy = Math.floor(nnb/2+g_replica[i][1]*nnb/10.0+0.5);
+				if (ix>=0 && ix<nnb && iy>=0 && iy<nnb) g_box[ix][iy] += 1;
+			}
+		}
+		if (sw==1) {
+			for (let ix=0; ix<nnb; ix++) {
+				for (let iy=0; iy<nnb; iy++) {
+					g_psi[ix][iy] = 0.99*g_psi[ix][iy]+0.01*g_box[ix][iy];
+				}
+			}
+		} else {
+			for (let ix=0; ix<nnb; ix++) {
+				for (let iy=0; iy<nnb; iy++) {
+					g_psi[ix][iy] = g_box[ix][iy];
+				}
+			}
+		}
+	}
+
+
+	// --------------------  draw  --------------------
+
+	function draw( ctx, drawMode ) {
+		const xp=50, yp=40, sc=3;
+		if (drawMode==0) {
+			ctx.fillStyle = "rgb(80,80,80)";
+			ctx.fillText("along x-axis", 10, 20);
+			drawAlongXAxis(ctx, 50,300,sc);
+		} else if (drawMode==1) {
+			ctx.fillStyle = "rgb(80,80,80)";
+			ctx.fillText("psi(x,y)", 10, 20);
+			drawPsi2D(ctx, xp,yp,sc);
+		}
+		ctx.fillStyle = "rgb(80,80,80)"; // text
+		ctx.fillText("time = "+g_sysTime.toFixed(1), 10, g_yBoxSize-25);
+		ctx.fillText("energy = "+g_energy.toFixed(6), 200, g_yBoxSize-25);
+		ctx.fillText("number of replica = "+g_NN1, 10, g_yBoxSize-5);
+		//document.getElementById("text_caption").innerHTML = "V(0,0) = "+potential(0,0,vIndex);
+	}
+
+	function drawPsi2D( ctx, xp, yp, sc ) {
+		const nnb = g_NNb, mag = 200.0;
+		for (let i=0; i<nnb; i++) {
+			for (let j=0; j<nnb; j++) {
+				const p = Math.min(Math.floor(g_psi[i][j]*mag),255);
+				ctx.fillStyle = 'rgb('+p+','+potentialColor(i,j)+','+p+')';
+				ctx.fillRect(xp+i*sc,yp+(nnb-j-1)*sc, sc, sc);
+			}
+		}
+	}
+
+	function potentialColor( i, j ) {
+		const vmag = 10.0;
+		const x = (i-g_NNb/2)*g_dx, y = (j-g_NNb/2)*g_dx;
+		const v = Math.min(Math.floor((potential(x,y,g_vIndex)+1.1)*vmag),255);
+		return v;
+	}
+
+	function drawAlongXAxis( ctx, xp, yp, sc ) {
+		const jc = g_NNb/2, nnb = g_NNb, mag = 100.0, vmag = 10.0;
+		ctx.fillStyle = "rgb(0,250,250)";
+		for (let i=1; i<nnb; i++) {
+			const p = Math.floor(g_psi[i][jc]*mag);
+			ctx.fillRect(xp+i*sc,yp-p, sc, p);
+		}
+		ctx.strokeStyle = "rgb(0,150,0)";
+		ctx.beginPath();
+		for (let i=1; i<nnb; i++) {
+			const v = potential((i-nnb/2)*g_dx,0.0,g_vIndex)*vmag;
+			ctx.lineTo(xp+i*sc, yp-v);
+		}
+		ctx.stroke();
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:           setInitialCondition, // setInitialCondition( vIndex )
+		evolve:         evolveDMC, // evolveDMC( nCalc )
+		draw:           draw, // draw( ctx, drawMode )
+
+		getAUinSI:      function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:    function() { return [ g_NNr, g_NNb, g_dx, g_dt ]; },
+		getNow:         function() { return [ g_sysTime, g_energy, g_NN1 ]; },
+		getRepStatus:   function(ir) { return g_repStatus[ir]; },
+		getRepPos:      function(ir) { return [ g_replica[ir][0], g_replica[ir][1] ]; },
+		getPsi:         function(ix,iy) { return g_psi[ix][iy]; },
+		getVext:        function(ix,iy) { return potential((ix-g_NNb/2)*g_dx,(iy-g_NNb/2)*g_dx,g_vIndex); },
+	};
+
+})(); // ====================  harmonicsDMC2D end  ====================
+
+
+const tjsm033 = (function(){ // ====================  tjsm Module  ====================
+
+	const theModule = harmonicsDMC2D;
+	// vIndex  0:parabolic V=0.5*r^2, 1:well V=0(r<2) =20(else), 2:well V=-1(r<2) =0(elese),
+	//         3:ring V=0(2<r<3) =20(else)
+	let v_vIndex = 0;
+	let v_nCalc = 2;
+	
+	let p_auLength, p_auTime, p_auEnergy, p_au2eV // <-- theModule.getAUinSI()
+	let p_NNr, p_NNb, p_dx, p_dt; // <-- theModule.getSysParam()
+
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let dispMode =  2;
+	let dispModeChanged = false;
+	let viewHomeRequested = true;
+	let legendFlag = true;
+	let potentialFlag = true;
+	let phiFlag = true;
+	let count = 0;
+
+	// sizes in three.js world
+	const xBoxSize = 400; // in three.js world
+	const yBoxSize = xBoxSize;
+	const zBoxSize = xBoxSize;
+	const x0 = xBoxSize/2;
+	const y0 = yBoxSize/2;
+	const z0 = zBoxSize/2;
+	let hh;
+	
+	// 3d object added to scene
+	const linesArray = [];
+	let pgrid;
+	let vgrid;
+	let reps;
+	let line_box;
+	let cnvsprite;
+	
+	// three.js global
+	const width = 500;
+	const height = 480;
+	const r_camera = 1200;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+	
+	// -------------------- lil-gui setup
+	
+	const uParam = {
+		theme: 'parabollic V=0.5 r^2',
+		themeMenu: [ 'parabollic V=0.5 r^2', 'well V=0(r&lt;2) =20(else)', 'well V=-1(r&lt;2) =0(else)',
+					'ring V=0(2&lt;r&lt;3) =0(else)' ],
+		dispMode: 'psi(x,y)+replicas',
+		dispMenu: [ 'psi(x,y)', 'Vext(x,y)', 'psi(x,y)+replicas', 'psi(x,y)+Vext(x,y)+replicas',
+					'canvas2d: along x-axis', 'canvas2d: psi(x,y)' ],
+		reset: function() { resetFlag = 1; },
+		pause: false,
+		viewHome: function() { viewHomeRequested = true; }
+	};
+	
+	const gui = new GUI();
+	setupGUI();
+	
+	function setupGUI() {
+		gui.add( uParam, 'theme', uParam.themeMenu ).name( 'an electron in ' ).onChange( 
+			str => { v_vIndex = uParam.themeMenu.indexOf(str); resetFlag = 1; } );
+		
+		gui.add( uParam, 'dispMode', uParam.dispMenu ).name( 'disp. mode' ).onChange( 
+			str => { dispMode = uParam.dispMenu.indexOf(str); dispModeChanged = true; } );
+		
+		gui.add( uParam, 'reset' );
+		gui.add( uParam, 'pause' ).onChange( bool => { pauseFlag = ( bool ) ? 1 : 0; } );
+		gui.add( uParam, 'viewHome' ).name( 'camera: home view' );
+	}
+	
+	
+	// --------------------  main
+	
+	function main() {
+
+		// construct renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, -0.6*r_camera, 0.8*r_camera);
+		controls = new OrbitControls(camera,renderer.domElement);
+		
+		constructScene();
+		animate();
+	}
+
+	function constructScene() {
+		
+		// init DMC2D
+		theModule.init( v_vIndex );
+		[ p_auLength, p_auTime, p_auEnergy, p_au2eV ] = theModule.getAUinSI();
+		[ p_NNr, p_NNb, p_dx, p_dt ] = theModule.getSysParam();
+		hh = xBoxSize/p_NNb;
+
+		// scene
+		scene = new THREE.Scene();
+
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xFFFFFF, 0.4);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xFFFFFF, 0.6);
+		scene.add(light);
+		
+		
+		// add psi
+		// agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+		pgrid = m3js_grid2D( p_NNb, p_NNb, xBoxSize);
+		scene.add( pgrid );
+		
+		// add Vext
+		// agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+		vgrid = m3js_grid2D( p_NNb, p_NNb, xBoxSize);
+		scene.add( vgrid );
+		
+		// add replicas lines array
+		// arrows = m3js_arrows( p_nn, [defaultColor] );
+		reps = m3js_arrows( p_NNr, '#ff0000' );
+		scene.add( reps );
+		
+		// line box
+		{
+			const geometry = new THREE.BoxGeometry( xBoxSize, yBoxSize, zBoxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial({ color: 0x666644 }) );
+			scene.add( line_box );
+		}
+		
+		// canvas sprite
+		//cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 600, 600, 400 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+
+	}
+
+	// loop animation
+	function animate() {
+		
+		// select theme
+		if (resetFlag==1) {
+			resetFlag = 0;
+			constructScene();
+			dispModeChanged = true;
+			count = 0;
+		}
+
+		//  switch visible objects
+		if (dispModeChanged) {
+			dispModeChanged = false;
+			
+			line_box.visible = ( dispMode<=3 ) ? true : false;
+			pgrid.visible = false;
+			vgrid.visible = false;
+			reps.visible = false;
+			cnvsprite.visible = false;
+		}
+		
+		// view home
+		if ( viewHomeRequested ) {
+			camera.position.set(0, -0.6*r_camera, 0.8*r_camera);
+			viewHomeRequested = false;
+		}
+		
+		// DMC2D update
+		if (pauseFlag==0) {
+			theModule.evolve( v_nCalc );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( 1 );
+		}
+		
+		
+		// update psi
+		if ( dispMode==0 || dispMode==2 || dispMode==3 ) {
+			const pmag = 100.0;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			pgrid.update(
+				function(i,j) {
+					const z = pmag*theModule.getPsi(i,j);
+					const hue = ( Math.abs(z)<0.5*hh ) ? 363 : Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+					return [ z, hue ];
+				}
+			);
+		}
+		
+		// update Vext
+		if ( dispMode==1 || dispMode==3 ) {
+			const vmag = 10.0;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			vgrid.update(
+				function(i,j) { return [ vmag*theModule.getVext(i,j), '#00dd00' ]; }
+			);
+		}
+		
+		//  replicas
+		if ( dispMode==2 || dispMode==3 ) {
+			//updateLinesArray();
+			const sc = xBoxSize/(p_NNb*p_dx);
+			const zPos = -z0/2.0;
+			// arrows.update( x_y_z_vx_vy_vz_col_func );
+			reps.update(
+				function(i) { // x_y_z_vx_vy_vz_col_func: (i) --> [px, py, pz, vx, vy, vz, [col] ]
+					if ( theModule.getRepStatus(i)==0 ) return 0; // i-th arrow --> invisible
+					let x, y;
+					[ x, y ] = theModule.getRepPos(i);
+					return [ x*sc, y*sc, zPos, 0, 0, hh ]; // col --> default color
+				}
+			);
+		}
+		
+		// update sprite
+		if ( dispMode>=4 ) {
+			cnvsprite.update( 
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					const drawMode = dispMode - 4;
+					theModule.draw( ctx, drawMode );
+				}
+			);
+		}
+		
+		
+		// output to innerHTML
+		if (count % 10 == 0) {
+			const xMax = p_NNb*p_dx, yMax = p_NNb*p_dx;
+			let sysTime, energy, NN1;
+			 [ sysTime, energy, NN1 ] = theModule.getNow();
+			const msg = 
+				"box="+xMax+"x"+yMax
+				+ "(au) ~ "+(xMax*p_auLength*1.0e9).toFixed(2)
+				+ "x"+(yMax*p_auLength*1.0e9).toFixed(2)
+				+ ", time(au) ="+sysTime.toFixed(1)+"<br>"
+				+ "total energy ="+energy.toFixed(6)
+				+ "(au) ~ "+(energy*p_au2eV).toFixed(4)+"(eV) <br>";
+			document.getElementById("text_caption").innerHTML = msg;
+			
+			if ( legendFlag && dispMode<=3 ) {
+				let msg = "<span style='color:hsl(120,100%,50%)'>potential V(x,y)</span>"
+					+ ",<span style='margin-right: 20px;'></span>"
+					+ "<span style='color:hsl(180,100%,50%)'>wave function psi(x,y)</span>"
+					+ ",<span style='margin-right: 20px;'></span>"
+					+ "<span style='color:hsl(0,100%,50%)'>alive replica(x,y) N="+NN1+"</span>"
+				document.getElementById('textOnCanvas').innerHTML = msg;
+			} else {
+				document.getElementById('textOnCanvas').innerHTML = "";
+			}
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_grid2D function  -----------------------------------------
+	//
+	//    ver 0.0.0  2022.10.08 created, last updated on 2022.12.20
+	//
+	//  agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+	//      p_nx: number of x-direction lines, p_ny: number of y-direction lines
+	//      xBoxSize: x-box size in the threejs-world
+	//		[zBoxSize]: z-box size in the threejs-world
+	//      [mode]: if mode=='xLineOnly' -->  grid change to x-lines only
+	//            if mode=='yLineOnly' -->  grid change to y-lines only
+	//            else or undefined --> grid x-lines and y-lines
+	//
+	//  scene.add( agrid );
+	//
+	//  agrid.setPallet( pallet, color );
+	//      pallet: pallet number 372 ... 399, (371:inner pallet)
+	//      color: col = new THREE.Color( color )
+	//
+	//  agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+	//      z_hue_func(i,j) { ... return [ z, [hue] ]; }
+	//          z: threejs world z-position at grid point (i,j)
+	//          hue: 0...359 huedeg, 360(black) ...gray...370(white) 371(inner pallet) 372...399 free
+	//              or string shch as 'red', '#ff0000', 'rgb(255,0,0)', 'hsl(0,100%,50%)'
+	//
+	// agrid.visible = false;
+	//
+	
+	const m3js_grid2D = function( p_nx, p_ny, xBoxSize, zBoxSize, mode ) {
+		const hueArray = []; // red:hue[deg][0]  green:hue[deg][1]  blue:hue[deg][2]
+		const gridArray = [];
+		const nx = p_nx;
+		const ny = p_ny
+		const hh = xBoxSize/nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*ny/2.0;
+		const z0 = ( zBoxSize==undefined ) ? y0 : zBoxSize/2.0;
+		const xLineOnly = ( mode==undefined || mode!='xLineOnly' ) ? false : true;
+		const yLineOnly = ( mode==undefined || mode!='yLineOnly' ) ? false : true;
+		const agrid = new THREE.Group();
+		
+		if ( hueArray.length<1 ) init_hueArray();
+		
+		if ( ! yLineOnly ) {
+			for (let j=0; j<ny; j++) {
+ 				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( nx * 3 );
+				const colors = new Float32Array( nx * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, nx );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[j] = line;
+    			agrid.add( gridArray[j] );
+			}
+		}
+		if ( ! xLineOnly ) {
+			for (let i=0; i<nx; i++) {
+				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( ny * 3 );
+				const colors = new Float32Array( ny * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, ny );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[ny+i] = line;
+    			agrid.add( gridArray[ny+i] );
+    		}
+    	}
+    	
+    	agrid.setPallet = setPallet; // setPallet( pallet, color )
+		agrid.update = gridUpdate; // gridUpdate( fieldFunc, [hueFunc|huedeg|hueStr] )
+		agrid.visible = false;
+		
+		return agrid;
+
+
+		// private functions
+		
+		function gridUpdate( z_hue_Func ) {
+			if ( ! yLineOnly ) {
+				for (let j=0; j<ny; j++) {
+					const line = gridArray[j];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let i= 0; i<nx; i++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[i*3]   = hh*i - x0;
+						positions[i*3+1] = hh*j - y0;
+						positions[i*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[i*3]   = r;
+						colors[i*3+1] = g;
+						colors[i*3+2] = b;
+					}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			if ( ! xLineOnly ) {
+				for (let i=0; i<nx; i++) {
+					const line = gridArray[ny+i];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let j= 0; j<ny; j++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[j*3]   = hh*i - x0;
+						positions[j*3+1] = hh*j - y0;
+						positions[j*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[j*3]   = r;
+            			colors[j*3+1] = g;
+            			colors[j*3+2] = b;
+    				}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			agrid.visible = true;
+		}
+		
+		function setPallet( pallet, color ) {
+			const deg = Math.floor(pallet);
+			const col = new THREE.Color( color );
+			hueArray[deg][0] = col.r;
+			hueArray[deg][1] = col.g;
+			hueArray[deg][2] = col.b;
+		}
+		
+		function init_hueArray() {
+			// deg= 0...359 hue color, 360: black ... gray ...  370:white,
+			// 371: inner use, 372...399 as pallete
+			for (let deg=0; deg<360; deg++) {
+				hueArray[deg] = [];
+				const col = new THREE.Color( 'hsl('+deg+',100%,50%)');
+				hueArray[deg][0] = col.r;
+				hueArray[deg][1] = col.g;
+				hueArray[deg][2] = col.b;
+			}
+			for (let deg=360; deg<400; deg++) {
+				hueArray[deg] = [];
+				const x = (deg<371) ? (deg-360)*0.1 : 0.0;
+				hueArray[deg][0] = x;
+				hueArray[deg][1] = x;
+				hueArray[deg][2] = x;
+			}
+		}
+		
+	};
+	
+	// -----------------------  m3js_grid2D function end
+	
+	
+	// -----------------------  m3js_arrows function  ---------------------------
+	//
+	//    ver 0.0.0  2022.10.25 created, last updated on 2022.12.19
+	//
+	//  arrows = m3js_arrows( p_nn, [defaultColor] );
+	//     nn: number of arrows
+	//     defaultColor: default color of arrows
+	//  scene.add( arrows );
+	//
+	//  arrows.update( x_y_z_vx_vy_vz_col_func );
+	//     x_y_z_vx_vy_vz_col_func: (i) --> [px, py, pz, vx, vy, vz, [col] ]
+	//        x,y,z: i-th arrow starting point in the threejs world
+	//        vx,vy,vz: i-th arrow vector (vx, vy, vz) in the threejs world
+	//        col: such as "#ff0000" or "red" or "rgb(255,0,0)" or 0xff0000 or ...
+	//
+	//  arrows.visible = true | false;
+	//
+	
+	function m3js_arrows( p_nn, defaultColor ) {
+		const nn = p_nn;
+		const dcol = ( defaultColor==undefined ) ? "#ff0000" : defaultColor;
+		const lines = new THREE.Group();
+		lines.array = [];
+		
+		for (let i=0; i<nn; i++) {
+			const geometry = new THREE.BufferGeometry();
+			const positions = new Float32Array( 2 * 3 ); // MAX_POINTS = 2,  3 vertices per point
+			geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+			geometry.setDrawRange( 0, 2 );
+			const material = new THREE.LineBasicMaterial( { color: dcol } );
+			const line = new THREE.Line( geometry, material );
+			line.visible = false;
+			lines.array[i] = line;
+    		lines.add( lines.array[i] );
+		}
+		
+		lines.update = linesUpdate;
+		
+		return lines;
+		
+		
+		function linesUpdate( x_y_z_vx_vy_vz_col_func ) {
+			for (let i=0; i<nn; i++) {
+				const line = lines.array[i];
+				const positions = line.geometry.attributes.position.array;
+				const vec = x_y_z_vx_vy_vz_col_func(i);
+				if ( !Array.isArray(vec) ) {
+					line.visible = false;
+					continue;
+				}
+				
+				let x, y, z, vx, vy, vz, col;
+				[ x, y, z, vx, vy, vz, col ] = vec;
+				if ( col==undefined ) col = dcol;
+				
+				positions[0] = x; // point 0
+				positions[1] = y;
+				positions[2] = z;
+				positions[3] = x + vx; // point 1
+				positions[4] = y + vy;
+				positions[5] = z + vz;
+				line.visible = true;
+				line.material.color = new THREE.Color( col );
+				line.geometry.attributes.position.needsUpdate = true;
+			}
+			lines.visible = true;
+		}
+	}
+	
+	// -----------------------  m3js_arrows function end
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+	
+	//--------------------  public  --------------------
+	
+	return {
+		main: main, // main()
+		
+	}
+
+})(); // ====================  tjsm033 module end  ====================
+
+
+// event
+const tjsm = tjsm033;
+window.addEventListener('load', tjsm.main );
+
+
+</script>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+</head>
+
+<body>
+<p>[tm033] ground state and energy - diffusion Monte-Carlo method 2D</p>
+<div style="position: relative; overflow: hidden; width: 500px; height: 480px">
+  <canvas id="myCanvas" style="position: absolute; top: 0px; left: 0px"></canvas>
+  <div id="textOnCanvas" 
+    style="position:absolute; top:5px; left:5px; color:#99aa44; background-color:rgba(0, 0, 0, 0);
+           font-size:0.9rem"></div>
+</div>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
