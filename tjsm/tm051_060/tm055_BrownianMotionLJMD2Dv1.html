@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>tm055_BrownianMotionLJMD2D</title>
+
+<style type="text/css">
+	body { color:#000000; background-color:#fff8dd; }
+</style>
+
+<style type="text/css">
+	.lil-gui {
+		--name-width: 40%;
+	}
+</style>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+<!--
+<script type="importmap">
+{
+  "imports": {
+    "three": "../libm/three.module.js",
+    "orb": "../libm/OrbitControls.js",
+    "lil-gui": "../libm/lil-gui.module.min.js"
+  }
+}
+</script>
+-->
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+    "orb": "https://unpkg.com/three@0.147.0/examples/jsm/controls/OrbitControls.js",
+    "lil-gui": "https://unpkg.com/three@0.147.0/examples/jsm/libs/lil-gui.module.min.js"
+  }
+}
+</script>
+
+<script type="module">
+
+import * as THREE from 'three';
+import { OrbitControls } from 'orb';
+import { GUI } from 'lil-gui';
+
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tm055_BrownianMotionLJMD2D
+//    Copyright(C) 2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2023.01.30 created, last updated on 2023.01.31
+//    ver 0.0.1  2023.11.24 v1, last updated on 2023.11.24
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  molecular dynamics 2D
+//
+//    method: velocity Verlet Algorithm
+//      (1) vi = vi + (Fi/mi)*(0.5dt)
+//      (2) ri = ri + vi*dt
+//      (3) calculation Fi <- {r1,r2,...,rn} Fi=sum(Fij,j=1 to n),Fij=F(ri-rj)
+//      (4) vi = vi + (Fi/mi)*(0.5dt)
+//      goto (1)
+//
+//    potential: Lennard-Jones V(r) = 4*epsilon*((sigma/r)^12-(sigma/r)^6)
+//           force F(r) = -dV(r)/dr = 24.0*epsilon*r6*(2.0*r6-1.0)/r, r6=(sigma/r)^6
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const BrownianMotionLJMD2D = (function(){ // ====================  BrownianMotionLJMD2D Module  ====================
+
+	const g_AMU = 1.66053904e-27; // (kg) atomic mass unit
+	const g_kB = 1.380649e-23; // (J/K) Boltzmann's constant
+	const g_nMax = 1000;       // array max
+
+	let g_molecKind1 = 5;       // 5:pollen
+	let g_molecKind2 = 2;       // 2:Ar
+	let g_nn1 = 1;              // number of pollen
+	let g_nn2 = 200;            // numner of molecules
+	let g_nParticles = g_nn1+g_nn2; // number of particles
+	let g_sysTime = 0.0;        // (s) system time
+	let g_timeStep = 10.0*1.0e-15; // (s) time step dt
+	let g_xMax = 10.0E-9;       // (m) x-Box size
+	let g_yMax = 10.0E-9;       // (m) y-Box size
+
+	let g_xBoxSize = 400;       // in pixel
+	let g_yBoxSize = 400;       // in pixel
+	let g_yTextSize = 70;       // in pixel
+
+	const g_xx = dim1(g_nMax);  // (m) x-component of i-th particle position
+	const g_yy = dim1(g_nMax);  // (m) y-component of i-th particle position
+	const g_vx = dim1(g_nMax);  // (m/s) x-component of i-th particle velocity
+	const g_vy = dim1(g_nMax);  // (m/s) y-component of i-th particle velocity
+	const g_ffx = dim1(g_nMax); // (N) x-component of total force applied i-th particle
+	const g_ffy = dim1(g_nMax); // (N) y-component of total force applied i-th particle
+	const g_mas = dim1(g_nMax); // (kg) mass of i-th particle
+	const g_kind = dimInt1(g_nMax); // kind of i-th particle
+
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+
+	function dimInt1( n ) {
+		return new Int32Array( n );
+	}
+
+
+	// --------------------  Lennard-Jones potential data  --------------------
+
+	const g_LJMolec = [
+		//    mass(kg)      E(J)       sigma(m)   string    color
+		[   4.003*g_AMU,  10.2*g_kB, 2.576e-10, "He",     "rgb(200,0,200)" ], // 0 He
+		[  20.183*g_AMU,  36.2*g_kB, 2.976e-10, "Ne",     "rgb(0,0,250)"   ], // 1 Ne
+		[  39.948*g_AMU, 124.0*g_kB, 3.418e-10, "Ar",     "rgb(0,150,250)" ], // 2 Ar
+		[  83.500*g_AMU, 190.0*g_kB, 3.610e-10, "Kr",     "rgb(0,220,220)" ], // 3 Kr
+		[ 131.300*g_AMU, 229.0*g_kB, 4.055e-10, "Xe",     "rgb(0,250,150)" ], // 4 Xe
+		[1000.00 *g_AMU, 124.0*g_kB,20.000e-10, "pollen", "rgb(250,250,0)" ]  // 5 pollen
+	];
+
+	const g_rCollision = [];// (m) = sigma, V(sigma)==0.0
+	const g_rBond = [];     // (m) bond length == 2.0*g_rBond[kind], == sigma*2^(1/6)
+	const g_massOf = [];    // (kg) g_massOf[kind] : mass of kind
+	const g_strOf = [];     // g_strOf[kind] : string of kind, such as "Ar"
+	const g_colorOf = [];   // g_colorOf[kind] : color of kind
+
+	(function() {
+		const n=g_LJMolec.length;
+
+		for (let i=0; i<n; i++) {
+			g_rCollision[i] = g_LJMolec[i][2]*0.5;
+			g_rBond[i] = g_LJMolec[i][2]*0.5*1.12246;
+			g_massOf[i] = g_LJMolec[i][0];
+			g_strOf[i] = g_LJMolec[i][3];
+			g_colorOf[i] = g_LJMolec[i][4];
+		}
+	}());
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition( theme, contTemp ) {
+	
+		g_sysTime = 0.0;
+		g_nParticles = setPollenAndParticles(theme,g_nn2+1);
+		ajustVelocity(contTemp);
+		setInitialPollenPos();
+	}
+
+	function setPollenAndParticles( knd2, nn ) {
+
+		let nParticles = nn;
+		let j = 0;
+		g_xx[j] = g_xMax/2.0; g_yy[j] = g_yMax/2.0; g_kind[j] = g_molecKind1; // pollen
+		for (j=1; j<nn; j++) {
+			let loopCount = 0, i;
+			g_kind[j] = knd2;
+			do {
+				const sgm = 2.0*g_rCollision[g_kind[j]];
+				g_xx[j] = (g_xMax-1.2*sgm)*Math.random() + 0.6*sgm;
+				g_yy[j] = (g_yMax-1.2*sgm)*Math.random() + 0.6*sgm;
+				for (i=0; i<j; i++) {
+					const d = Math.sqrt((g_xx[i]-g_xx[j])*(g_xx[i]-g_xx[j])+(g_yy[i]-g_yy[j])*(g_yy[i]-g_yy[j]));
+					if (d < 1.2*(g_rCollision[g_kind[i]]+g_rCollision[g_kind[j]])) break;
+				}
+				loopCount = loopCount + 1;
+				if (loopCount>1000) break;
+			} while (i<j);
+			if (loopCount>1000) {
+				nParticles = j - 1;
+				break;
+			}
+		}
+
+		for (let i=0; i<nParticles; i++) {
+			const v0 = 200.0/(Math.sqrt(g_massOf[g_kind[i]]/g_massOf[knd2]));
+			g_vx[i] = v0*normalRandom3();
+			g_vy[i] = v0*normalRandom3();
+			g_ffx[i] = 0.0;
+			g_ffy[i] = 0.0;
+			g_mas[i] = g_massOf[g_kind[i]];
+		}
+		return nParticles;
+	}
+
+	// normal distributed random number: -3.0 <= normalRandom3() < 3.0
+	function normalRandom3() {
+		return (Math.random()+Math.random()+Math.random()+Math.random()+Math.random()+Math.random()-3.0);
+	}
+
+
+	// --------------------  time evolution  --------------------
+
+	function timeEvolution( nCalc, tempMode, contTemp ) {
+
+		for (let ii=0; ii<nCalc; ii++) {
+			if (tempMode==1) ajustVelocity(contTemp);
+			for (let i=1; i<=20; i++) {
+				g_sysTime += g_timeStep;
+				moveParticles(g_timeStep);
+			}
+		}
+		setPollenPos();
+	}
+
+	function moveParticles(dt) {
+		const nn=g_nParticles;
+
+		for (let i=0; i<nn; i++) {
+			const a = 0.5*dt/g_mas[i];
+			g_vx[i] += a*g_ffx[i];
+			g_vy[i] += a*g_ffy[i];
+			g_xx[i] += g_vx[i]*dt;
+			g_yy[i] += g_vy[i]*dt;
+		}
+		calcForce();
+		for (let i=0; i<nn; i++) {
+			const a = 0.5*dt/g_mas[i];
+			g_vx[i] += a*g_ffx[i];
+			g_vy[i] += a*g_ffy[i];
+		}
+	}
+
+	function calcForce() {
+		const nn=g_nParticles, s05 = 0.5*3.418e-10; // Ar sigma=3.418e-10
+		const sp05 = 0.5*20.000e-10; // 0.5*pollen sigma
+
+		for (let i=0; i<nn; i++) {
+			g_ffx[i]=0;g_ffy[i]=0;
+		}
+		for (let i=0; i<nn-1; i++) {
+			for (let j=i+1; j<nn; j++) {
+				const xij=g_xx[i]-g_xx[j], yij=g_yy[i]-g_yy[j];
+				const rij = Math.sqrt(xij*xij+yij*yij);
+				const f = force(rij,g_kind[i],g_kind[j]);
+				const fxij = f*xij/rij, fyij = f*yij/rij;
+				g_ffx[i] += fxij;
+				g_ffy[i] += fyij;
+				g_ffx[j] -= fxij;
+				g_ffy[j] -= fyij;
+			}
+		}
+		for (let i=0; i<g_nn1; i++) {
+			g_ffx[i] += pollenBoundaryForce(g_xx[i]+sp05)+pollenBoundaryForce(g_xx[i]-g_xMax-sp05);
+			g_ffy[i] += pollenBoundaryForce(g_yy[i]+sp05)+pollenBoundaryForce(g_yy[i]-g_yMax-sp05);
+		}
+		for (let i=g_nn1; i<nn; i++) {
+			g_ffx[i] += boundaryForce(g_xx[i]+s05)+boundaryForce(g_xx[i]-g_xMax-s05);
+			g_ffy[i] += boundaryForce(g_yy[i]+s05)+boundaryForce(g_yy[i]-g_yMax-s05);
+		}
+	}
+
+	function force( r, ki, kj ) {
+		const ep = Math.sqrt(g_LJMolec[ki][1]*g_LJMolec[kj][1]);
+		const sg = 0.5*(g_LJMolec[ki][2]+g_LJMolec[kj][2]);
+		const ri = (sg/r);
+		const r6 =ri*ri*ri*ri*ri*ri;
+		return 24.0*ep*r6*(2.0*r6-1.0)/r;
+	}
+
+	function pollenBoundaryForce(r) {
+		const ri = (g_LJMolec[5][2]/r);
+		const r6 =ri*ri*ri*ri*ri*ri;
+		return (24.0*0.5*1.711e-21*r6*(2.0*r6-1.0)/r);
+	}
+
+	function boundaryForce(r) {
+		const ri = (3.418e-10/r);
+		const r6 = ri*ri*ri*ri*ri*ri;
+		return (24.0*0.5*1.711e-21*r6*(2.0*r6-1.0)/r);
+	}
+
+	// --- utility
+
+	function systemTemperature() {
+		const nn=g_nParticles;
+		let ek=0.0; //kinetic energy (J)
+		for (let i=0; i<nn; i++) {
+			ek = ek + 0.5*g_mas[i]*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
+		}
+		return ek/(nn*g_kB);
+	}
+
+	function ajustVelocity(temp) {
+		const nn=g_nParticles;
+		const a = Math.sqrt(temp/systemTemperature());
+		for (let i=0; i<nn; i++) {
+			g_vx[i] = a*g_vx[i];
+			g_vy[i] = a*g_vy[i];
+		}
+	}
+
+
+	// --------------------  pollen  --------------------
+
+	const pollenPos = [];
+	pollenPos.pointer = 0;
+	pollenPos.pointerMax =3000;
+	
+	function setInitialPollenPos() {
+		for (let i=0; i<pollenPos.pointerMax; i++) {
+			pollenPos[i] = [ g_xx[0], g_yy[0] ];
+		}
+	}
+
+	function setPollenPos() {
+		pollenPos[pollenPos.pointer] = [ g_xx[0], g_yy[0] ];
+		pollenPos.pointer = (pollenPos.pointer+1)%pollenPos.pointerMax;
+	}
+
+
+	// --------------------  draw  --------------------
+
+	function draw( ctx, tempMode, contTemp ) {
+		const boxSize=400, px=10, py=10, pCaption=410, sc = boxSize/g_xMax;
+
+		ctx.fillStyle = "rgb(125,125,125)"; //background color
+		ctx.fillRect(px, py, boxSize, boxSize); //clear box
+
+		drawParticles( ctx, px, py, sc );
+
+		ctx.fillStyle = "rgb(0, 0, 0)";
+		ctx.fillText("time = "+(g_sysTime*1.0e12).toFixed(1)+" (ps)  ", 10, pCaption+24);
+		ctx.fillText("Temp = "+systemTemperature().toFixed(1)+" (K)  ", 200, pCaption+24);
+		ctx.fillStyle = g_colorOf[g_molecKind1];
+		ctx.fillText(g_strOf[g_molecKind1], 10, pCaption+44);
+		if (g_molecKind1 != g_molecKind2) {
+			ctx.fillStyle = g_colorOf[g_molecKind2];
+			ctx.fillText(g_strOf[g_molecKind2], 70, pCaption+44);
+		}
+		ctx.fillStyle = "rgb(0, 0, 0)";
+		ctx.fillText(", N = "+g_nParticles, 100, pCaption+44);
+		if (tempMode==0) { // adiabatic
+			ctx.fillText("tempMode : adiabatic", 200, pCaption+44);
+		} else if (tempMode==1) { // temp control
+			ctx.fillText("contTemp = "+contTemp.toFixed(1)+" (K)", 200, pCaption+44);
+		}
+		ctx.fillText("Box = "+(g_xMax*1.0e9).toFixed(1)+"x"+(g_yMax*1.0e9).toFixed(1)+" (nm)", 10, pCaption+64);
+	}
+
+	function drawParticles( ctx, px, py, sc ) {
+		const nn=g_nParticles;
+
+		for (let i=0; i<nn; i++) {
+			ctx.fillStyle = g_colorOf[g_kind[i]];
+			ctx.beginPath();
+			ctx.arc(g_xx[i]*sc+px, (g_yMax-g_yy[i])*sc+py, g_rCollision[g_kind[i]]*sc, 0, 2*Math.PI, false);
+			ctx.fill();
+		}
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init: setInitialCondition, // setInitialCondition( theme, contTemp )
+		evolve: timeEvolution, // timeEvolution( ncalc, tempMode, contTemp)
+		draw: draw, // draw( ctx, tempMode, contTemp )
+
+		setTemp: ajustVelocity, // ajustVelocity( temp )
+
+		getSysParam: function() {
+						return [ g_molecKind1, g_molecKind2, g_nParticles, g_timeStep, g_xMax, g_yMax, pollenPos ];},
+		getNow: function() { return [ g_sysTime, systemTemperature() ]; },
+		getStrOf: function(kind) { return g_strOf[kind]; },				
+		getColorOf: function(kind) { return g_colorOf[kind]; },
+		getMolecData: function(i) { const kind = g_kind[i]; return [ g_rCollision[kind], g_colorOf[kind] ]; },
+		getPosition: function(i) { return [ g_xx[i], g_yy[i] ]; },
+		getVelocity: function(i) { return [ g_vx[i], g_vy[i] ]; },
+		getForce: function(i) { return [ g_ffx[i], g_ffy[i] ]; },
+	};
+
+})(); // ====================  BrownianMotionLJMD2D end  ====================
+
+
+const tjsm055 = (function(){ // ====================  tjsm Module  ====================
+
+	const theModule = BrownianMotionLJMD2D;
+	let v_theme = 2;    // theme  1:Ne,2:Ar,3:Kr,4:Xe,5:Hg
+	let v_nCalc = 1;    // number of molecules
+	let v_tempMode = 0; // tempMode: 0:adiabatic  1:controled
+	let v_contTemp = 300.0; // (K) controled temperature
+	
+	let p_kind1, p_kind2, p_nn, p_dt, p_xMax, p_yMax, p_pollenPos; // <-- theModule.getSysParam()
+	let p_time, p_temp; // <-- theModule.getNow();
+	
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let heatSW = 0;
+	let dispMode = 0; // mode: 0:all, 1:pollen only, 2:trace, 3:canvas2d
+	let dispModeChanged = true;
+	let viewHomeRequested = false;
+	let count = 0; // animate count
+	
+	// sizes in the threejs world
+	const xBoxSize = 600;
+	let scale, yBoxSize, x0, y0, z0;
+	
+	// threejs objects in the scene
+	let particles;
+	let pollenTraceLine;
+	let line_Box;
+	let cnvsprite;
+
+	// three.js , OrbitControls.js
+	const width = 500;
+	const height = 480;
+	const r_camera = 1200.0;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+
+
+	// -------------------- lil-gui setup
+	
+	const uParam = {
+		theme: 2,
+		tempMode: 0,
+		tempModeMenu: { adiabatic: 0, controlled: 1 },
+		contTemp: 300,
+		dispMode: 'pollen + molecules',
+		dispMenu: [ 'pollen + molecules', 'pollen only', 'pollen trace', 'canvas2d' ],
+		reset: function() { resetFlag = 1; },
+		pause: false,
+		viewHome: function() { viewHomeRequested = true; }
+	};
+	
+	const gui = new GUI();
+	setupGUI();
+	
+	function setupGUI() {
+		gui.add( uParam, 'theme', { Ne:1, Ar:2, Kr:3, Xe:4 } ).name( 'kind of molecules' ).onChange(
+			v => { v_theme = v; resetFlag = 1; } );
+		
+		gui.add( uParam, 'tempMode', uParam.tempModeMenu ).onChange( v => { v_tempMode = v; } );
+	
+		gui.add( uParam, 'contTemp', 10, 600, 1 ).name( 'controlled temp.' ).onChange( v => { v_contTemp = v; } );
+		
+		gui.add( uParam, 'dispMode', uParam.dispMenu ).onChange( 
+			str => { dispMode = uParam.dispMenu.indexOf(str); dispModeChanged = true; } );
+	
+		gui.add( uParam, 'reset' );
+		gui.add( uParam, 'pause' ).onChange( bool => { pauseFlag = ( bool ) ? 1 : 0; } );
+		gui.add( uParam, 'viewHome' ).name( 'camera: home view' );
+	}
+	
+	
+	// -------------------- main
+	
+	function main() {
+		// construct renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+		
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, 0, r_camera);
+		controls = new OrbitControls(camera,renderer.domElement);
+		
+		constructScene();
+		animate();
+	}
+
+
+	function constructScene() {
+
+		// initialize MD
+		{
+			theModule.init( v_theme, v_contTemp );
+			[ p_kind1, p_kind2, p_nn, p_dt, p_xMax, p_yMax, p_pollenPos ] = theModule.getSysParam();
+			scale = xBoxSize/p_xMax;
+			yBoxSize = p_yMax*scale;
+			x0 = xBoxSize/2;
+			y0 = yBoxSize/2;
+			z0 = 0;
+		}
+
+		// scene
+		scene = new THREE.Scene();
+ 
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xFFFFFF,0.7);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xFFFFFF, 0.3);
+		scene.add(light);
+		
+		
+		// add balls
+		{
+			particles = new THREE.Group();
+			particles.array = [];
+			let r, col, x, y;
+			for (let i=0; i<p_nn; i++) {
+				[ r, col ] = theModule.getMolecData(i);
+				const geometry = new THREE.SphereGeometry(r*scale, 18, 10);
+				const material = new THREE.MeshStandardMaterial({
+								color:col, opacity: 0.9,transparent: true});
+				particles.array[i] = new THREE.Mesh(geometry, material);
+				[ x, y ] = theModule.getPosition(i);
+				particles.array[i].position.set(-x0+x*scale, -y0+y*scale, 0);
+				particles.add( particles.array[i] );
+			}
+			particles.visible = false;
+			scene.add( particles );
+		}
+		
+		// pollen trace line
+		pollenTraceLine = setPollenTraceLine( p_pollenPos, 0xff0000 );
+    	scene.add(pollenTraceLine);
+		
+    	// line box
+		const geometry_cube = new THREE.BoxGeometry( xBoxSize, yBoxSize, 4e-10*scale );
+		const edges_cube = new THREE.EdgesGeometry( geometry_cube );
+		line_Box = new THREE.LineSegments( edges_cube, new THREE.LineBasicMaterial({ color: 0x444433 }) );
+		scene.add( line_Box );
+
+		// canvas sprite
+		//cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 600, 600, 480 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+
+	}
+
+
+	// loop animation
+	function animate() {
+		
+		// select kind
+		if (resetFlag==1) {
+			resetFlag = 0;
+			
+			constructScene();
+			dispModeChanged = true;
+			count = 0;
+		}
+		
+		if ( viewHomeRequested ) {
+			camera.position.set(0, 0, r_camera);
+			viewHomeRequested = false;
+		}
+		
+		if ( dispModeChanged ) {
+			dispModeChanged = false;
+			
+			line_Box.visible = ( dispMode<=2 ) ? true : false;
+			pollenTraceLine.visible = false;
+			particles.visible = false;
+			cnvsprite.visible = false;
+			
+			if ( dispMode==0 ) {
+				for (let i=0; i<p_nn; i++) {
+					particles.array[i].material.opacity = 0.9;
+				}
+			} else if ( dispMode==1 ) {
+				for (let i=0; i<p_nn; i++) {
+					particles.array[i].material.opacity = (i==0) ? 0.9 : 0.1;
+				}
+			} else if ( dispMode==2 ) {
+				for (let i=0; i<p_nn; i++) {
+					particles.array[i].material.opacity = (i==0) ? 0.5 : 0.1;
+				}
+			}
+		}
+		
+		// temperature control
+		if ( heatSW != 0 ) {
+			let tc = p_temp + 10.0*heatSW;
+			if (tc<10.0) tc = 10.0;
+			if (tc>600.0) tc = 600.0;
+			heatSW = 0;
+			theModule.setTemp(tc);
+		}
+		
+		// move balls
+		if ( pauseFlag==0 ) {
+			theModule.evolve( v_nCalc, v_tempMode, v_contTemp );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( 1, v_tempMode, v_contTemp );
+		}
+		
+		[ p_time, p_temp ] = theModule.getNow();
+		
+		
+		if ( dispMode==0 || dispMode==1 || dispMode==2 ) {
+			let x, y;
+			for (let i=0; i<p_nn; i++) { 
+				[ x, y ] = theModule.getPosition(i);
+				particles.array[i].position.set(-x0+x*scale, -y0+y*scale, 0);
+			}
+			particles.visible = true;
+		}
+		
+		// pollen trace line update
+		if ( dispMode==2  ) {
+			pollenTraceLine.update();
+		}
+		
+		// sprite update
+		if ( dispMode==3 ) {
+			// cnvsprite.update( drawFunc )
+			cnvsprite.update(
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					theModule.draw(ctx, v_tempMode, v_contTemp);
+				}
+			);
+		}
+		
+		
+		// output to innerHTML
+		if (count % 20 == 0) {
+			let time, temp;
+			[ time, temp ] =theModule.getNow();
+			const xb = p_xMax*1.0e9;
+			const yb = p_yMax*1.0e9;
+			const str1 = theModule.getStrOf(p_kind1);
+			const str2 = theModule.getStrOf(p_kind2);
+			const molecStr = (p_kind1==p_kind2) ? str1 : str1+" - "+str2;
+			const msg =  
+				"box(nm)="+xb.toFixed(1)+"x"+yb.toFixed(1)+", "+molecStr+", N="+p_nn 
+				+ ", time(ps)="+(time*1.0e12).toFixed(1)+"<br>"
+				+ "Temp(K)="+temp.toFixed(1)+"<br>";
+			document.getElementById("text_caption").innerHTML = msg;
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// ----------- pollen trace line
+
+	function setPollenTraceLine( pollenPos, lineColor ) {
+		const nn = pollenPos.pointerMax;
+		const geometry = new THREE.BufferGeometry();
+		const positions = new Float32Array( nn * 3 );
+		geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+		geometry.setDrawRange( 0, nn );
+    	const material = new THREE.LineBasicMaterial({ color: lineColor });
+    	const line = new THREE.Line(geometry,material);
+    	line.visible = false;
+    	line.update = lineUpdate;
+    	return line;
+    	
+    	function lineUpdate() {
+    		const positions = line.geometry.attributes.position.array;
+    		const pp = pollenPos.pointer;
+    		for(let i= 0; i<nn; i++) {
+    			const j = (pp+i)%nn;
+        		const x = p_pollenPos[j][0]*scale - x0;
+				const y = p_pollenPos[j][1]*scale - y0;
+        		const z = 0.0;
+				positions[i * 3] = x;
+				positions[i * 3 + 1] = y;
+				positions[i * 3 + 2] = z;
+    		}
+    		line.visible = true;
+			line.geometry.attributes.position.needsUpdate = true;
+    	}
+	}
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main: main, // main()
+		
+	}
+
+})(); // ====================  tjsm055 module end  ====================
+
+
+// event
+const tjsm = tjsm055;
+window.addEventListener('load', tjsm.main );
+
+
+</script>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+</head>
+
+<body>
+<p>[tm055] Brownian motion - Lennard-Jones Molecular Dynamics 2D</p>
+<canvas id="myCanvas" width="500" height="480" ></canvas>
+<br>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
