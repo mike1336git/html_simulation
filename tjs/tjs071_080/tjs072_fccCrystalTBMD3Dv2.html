@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>tjs071_bccCrystalTBMD3D</title>
+  <title>tjs072_fccCrystalTBMD3D</title>
   <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
   <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
   <!--
@@ -15,13 +15,13 @@
 
 /* =================================================================================================================
 //
-//  tjs071_bccCrystalTBMD3D
+//  tjs072_fccCrystalTBMD3D
 //    Copyright(C) 2022-2023 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
-//    ver 0.0.0  2022.03.08 created, last updated on 2022.03.12
+//    ver 0.0.0  2022.03.10 created, last updated on 2022.03.12
 //    ver 0.0.1  2022.08.23 v1, last updated on 2023.01.08
-//    ver 0.0.2  2023.11.25 v2, last updated on 2023.11.26
+//    ver 0.0.2  2023.11.26 v2, last updated on 2023.11.26
 //
 //
 //------------------------------------------------------------------------------------------------------------------
@@ -1405,15 +1405,13 @@ const commonTBMD3D = (function(){ // ====================  commonTBMD3D Module  
 })(); // ====================  commonTBMD3D end  ====================
 
 
-const tjs071 = (function(){ // ====================  tjs Module  ====================
+const tjs072 = (function(){ // ====================  tjs Module  ====================
 
 	const theModule = commonTBMD3D;
-	
-	// theme  0:Al  1:Ca  2:Ni  3:Cu  4:Sr  5:Rh  6:Pd  7:Ag  8:Ir  9:Pt 10:Au 11:Pb 12:Th
-	//       13:Fe 14:Cr 15:Mo 16:W  17:V  18:Nb 19:Ta 20:Ba 21:Li 22:Na 23:K  24:Rb 25:Cs
-	//       26:Ti 27:Zr 28:Co 29:Mg
-	// p_kind = g_MAT1 = theme
-	let v_theme = 13;			// 13: Fe
+
+	//theme 0:Al 1:Ca 2:Ni 3:Cu 4:Sr 5:Rh 6:Pd 7:Ag 8:Ir 9:Pt 10:Au 11:Pb 12:Th
+	// kind(=g_MAT1) = theme + 0
+	let v_theme = 0;			// 0: Al
 	let v_boundary = 0;			// (==g_periodicSW)  0:non-periodic 1:periodic
 	let v_contTemp = 300.0;		// (K) controled temperature
 	let v_contPress = 1.0e7;	// (Pa) controled pressure
@@ -1566,7 +1564,7 @@ const tjs071 = (function(){ // ====================  tjs Module  ===============
 
 	// loop animation
 	function animate() {
-		
+
 		// select theme
 		if ( resetFlag==1 ) {
 			resetFlag = 0;
@@ -2098,7 +2096,7 @@ const tjs071 = (function(){ // ====================  tjs Module  ===============
 	}
 	
 	function setTheme() {
-		v_theme = 13 + document.getElementById("slct_theme").selectedIndex;
+		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = 1;
 	}
 	
@@ -2186,11 +2184,11 @@ const tjs071 = (function(){ // ====================  tjs Module  ===============
 		
 	};
 	
-})(); // ====================  tjs071 module end  ====================
+})(); // ====================  tjs072 module end  ====================
 
 
 // event
-const tjs = tjs071;
+const tjs = tjs072;
 window.addEventListener('load', tjs.main );
 
 
@@ -2202,14 +2200,14 @@ window.addEventListener('load', tjs.main );
   </style>
 </head>
 <body>
-<p>[tjs071] bcc crystal - Tight-Binding MD3D</p>
+<p>[tjs072] fcc crystal - Tight-Binding MD3D</p>
 <canvas id="myCanvas" width="500" height="480" ></canvas><br>
 
 <label>theme:</label>
 <select id="slct_theme" onChange="tjs.setTheme()">
-<option selected>Fe</option><option>Cr</option><option>Mo</option><option>W</option><option>V</option>
-<option>Nb</option><option>Ta</option><option>Ba</option><option>Li</option><option>Na</option>
-<option>K</option><option>Rb</option><option>Cs</option>
+<option selected>Al</option><option>Ca</option><option>Ni</option><option>Cu</option>
+<option>Sr</option><option>Rh</option><option>Pd</option><option>Ag</option><option>Ir</option>
+<option>Pt</option><option>Au</option><option>Pb</option><option>Th</option>
 </select>
     <span style="margin-right:10px;"></span>
 <label>boundary:</label>
