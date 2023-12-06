@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>JS082_infectionMCS2D</title>
+  <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+  <!--
+  <script src="../lib/three.min.js"></script>
+  <script src="../lib/OrbitControls.js"></script>
+  -->
+  <script>
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  JS082_infectionMCS2D
+//    Copyright(C) 2022-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2022.03.21 created, last updated on 2022.03.24
+//    ver 0.0.1  2022.08.29 v1, last updated on 2023.01.09
+//    ver 0.0.2  2023.12.06 v2, last updated on 2023.12.06
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  infection  - Monte-Carlo simulation MCS2D
+//
+//  particle in field[i][j]
+//
+//  particle move: random walk : right(E), up(N), left(W), down(S)
+//  particle status: non-infected, infected, immune 
+//    particle status change
+//    if the non-infected particle contact an infected particle,
+//    status of the particle change to infected.
+//    after infected period, particle status change to immune status.
+//    after immune period, particle status change to non-infected status.
+//
+//  infection model resemble a kind of reaction-diffusion system
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const infectionMCS2D = (function(){ // ====================  infectionMCS2D Module  ====================
+
+	const g_nMax = 50000;       // array max
+
+	let g_NNp = 30000;          // number of walker
+	let g_NNx = 360;            // x-division of the field
+	let g_NNy = 360;            // y-division of the field
+	let g_sysTime = 0;          // system time
+	let g_infectionPeriod = 30; // infection period
+	let g_immunePeriod = 150;   // immune period
+	let g_infectionProbability = 0.5; // infection probability at a contact with another walker
+	let g_numberOfNonInfected = 0; // number of non-infected walker
+	let g_numberOfInfected = 0; // number of infected walker
+	let g_numberOfImmune = 0;   // number of immune walker
+
+	let g_xCanvasSize = 400;    // in pixel
+	let g_yCanvasSize = 400;    // in pixel
+	let g_imageData = null;     // imageData = ctx.getImageData(20, 20, NNx, NNy);
+
+	const g_field = dimInt2(g_NNx,g_NNy); // field[i][j]  1...NNp:walker number,  0:free space, -1:wall
+	const g_status = dimInt1(g_nMax);   // status[i] 0:non-infected 1:infected, 2:immune
+	const g_ix = dimInt1(g_nMax);       // ix[i] x-position of i-th walker
+	const g_iy = dimInt1(g_nMax);       // iy[i] y-position of i-th walker
+	const g_period = dimInt1(g_nMax);   // infected/immune period of i-th walker
+
+	function dimInt1( n ) {
+		return new Int32Array( n );
+	}
+
+	function dimInt2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Int32Array( nj );
+		}
+		return a;
+	}
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition() {
+		
+		g_imageData = null
+		g_sysTime = 0;
+		clearField();
+		setParticles();
+		infect();
+	}
+
+	function clearField() {
+		const nnx=g_NNx, nny=g_NNy;
+
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				g_field[i][j] = 0;
+			}
+		}
+	}
+
+	function setParticles() {
+		const nnp=g_NNp, nnx=g_NNx, nny=g_NNy;
+
+		for (let ipp=1; ipp<=nnp; ipp++) {
+			let x, y;
+			do {
+				x = Math.floor(nnx*Math.random());
+				y = Math.floor(nny*Math.random());
+			} while (g_field[x][y]!=0); // field[][] 1.. ipp ..nnp: particle, 0:free space, -1:wall
+			g_field[x][y] = ipp;
+			g_ix[ipp] = x;
+			g_iy[ipp] = y;
+			g_status[ipp] = 0; // 0:non-infected 1:infected, 2:immune
+			g_period[ipp] = 0; 
+		}
+	}
+
+	function infect() {
+		const nnp=g_NNp, nnx0=g_NNx/2, nny0=g_NNy/2;
+		let x, y;
+		for (let ipp=1; ipp<=nnp; ipp++) {
+			x = g_ix[ipp]-nnx0;
+			y = g_iy[ipp]-nny0;
+			if (x*x+y*y<100) {
+				g_status[ipp] = 1; // infected
+				g_period[ipp] = g_infectionPeriod; 
+			}
+		}
+	}
+
+
+	// --------------------  time evolution  --------------------
+
+	function timeEvolution( nCalc, infectionPeriod, immunePeriod ) {
+
+		g_infectionPeriod = infectionPeriod;
+		g_immunePeriod = immunePeriod;
+		for (let i=0; i<nCalc; i++) {
+			timeStep();
+		}
+		stat();
+	}
+
+	function timeStep() {
+		const nnp=g_NNp;
+		g_sysTime += 1;
+
+		for (let ipp=0; ipp<nnp; ipp++) {
+			const st = g_status[ipp]; // status 0:non-infected 1:infected, 2:immune
+			if (st==1) { // infected
+				g_period[ipp] = g_period[ipp] - 1;
+				if (g_period[ipp]<=0) {
+					g_status[ipp] = 2;
+					g_period[ipp] = g_immunePeriod;
+				}
+			} else if (st==2) { // immune
+				g_period[ipp] = g_period[ipp] - 1;
+				if (g_period[ipp]<=0) g_status[ipp] = 0;
+			}
+			moveWarker(ipp);
+		}
+	}
+
+	function moveWarker( ipp ) {
+
+		const dir = Math.floor(Math.random()*4);
+		let ixx, iyy;
+		if (dir==0) { // E
+			ixx = (g_ix[ipp]+1)%g_NNx; iyy = g_iy[ipp];
+		} else if (dir==1) { // W
+			ixx = (g_ix[ipp]-1+g_NNx)%g_NNx; iyy = g_iy[ipp];
+		} else if (dir==2) { // N
+			ixx = g_ix[ipp]; iyy = (g_iy[ipp]+1)%g_NNy;
+		} else if (dir==3) { // S
+			ixx = g_ix[ipp]; iyy = (g_iy[ipp]-1+g_NNy)%g_NNy;
+		}
+		const f = g_field[ixx][iyy]; // field[][] 1...NNp: particle, 0:free space, -1:wall
+		if (f==0) { // free space
+			// move
+			g_field[g_ix[ipp]][g_iy[ipp]] = 0;
+			g_ix[ipp] = ixx; g_iy[ipp] = iyy;
+			g_field[g_ix[ipp]][g_iy[ipp]] = ipp;
+		} else if (f>0) { // other particle
+			// contact
+			if (g_status[ipp]==0 && g_status[f]==1) { // ipp:non-infected and f:infected 
+				g_status[ipp] = 1;
+				g_period[ipp] = g_infectionPeriod;
+			}
+		} else if (f==-1) { // wall
+			// nop
+		}
+	}
+
+	function stat() {
+		const nnp=g_NNp;
+
+		g_numberOfNonInfected = 0;
+		g_numberOfInfected = 0;
+		g_numberOfImmune = 0;
+		for (let ipp=1; ipp<=nnp; ipp++) {
+			const st = g_status[ipp];
+			if (st==0) g_numberOfNonInfected++;
+			if (st==1) g_numberOfInfected++;
+			if (st==2) g_numberOfImmune++;
+		}
+	}
+
+
+	// --------------------  draw  --------------------
+
+	function draw( ctx, drawMode ) {
+
+		if ( g_imageData==null ) {
+			g_imageData = ctx.getImageData(20, 20, 360, 360);
+			setImageData();
+		}
+
+		ctx.clearRect(20, 20, 360, 360);
+		
+		drawField( ctx );
+
+		ctx.fillStyle = "rgb(0, 0, 0)";
+		ctx.fillText("time = "+g_sysTime, 20, g_yCanvasSize-2);
+		ctx.fillText("N ="+g_NNp, 150, g_yCanvasSize-2);
+		ctx.fillStyle = "rgb(0, 160, 0)";
+		ctx.fillText("normal ="+g_numberOfNonInfected, 250, g_yCanvasSize-2);
+		ctx.fillStyle = "rgb(160, 0, 0)";
+		ctx.fillText("infected="+g_numberOfInfected, 20, 18);
+		ctx.fillStyle = "rgb(0, 160, 160)";
+		ctx.fillText("immune="+g_numberOfImmune, 200, 18);
+	}
+
+	function setImageData() {
+		const xSize=360, ySize=360, data = g_imageData.data;
+
+		for (let j=0; j<ySize; j++) {
+			for (let i = 0; i<xSize; i++) {
+				let idx = (j*xSize+i)*4;
+				data[idx] = 0xbb;
+				data[++idx] = 0xbb;
+				data[++idx] = 0xbb;
+				data[++idx] = 0xff;
+			}
+		}
+	}
+
+	function drawField( ctx ) {
+		const nnx=g_NNx, nny=g_NNy, data = g_imageData.data;
+
+		for (let j=0; j<nny; j++) {
+			const jj = nny - j - 1;
+			for (let i = 0; i<nnx; i++) {
+				let idx = (j*nnx+i)*4;
+				const f = g_field[i][jj];
+				let r = 50, g = 50, b = 50;
+				if (f>0) {
+					const st = g_status[f];
+					if (st==0) { // non-infected
+						r = 0; g = 250; b = 0;
+					} else if (st==1) { // infected
+						r = 250; g = 0; b = 0;
+					} else if (st==2) { // immune
+						r = 0; g = 200; b = 200;
+					}
+				} else if (f==-1) {
+					r = 0; g = 0; b = 0;
+				}
+				data[idx] = r;
+				data[++idx] = g;
+				data[++idx] = b;
+			}
+		}
+		ctx.putImageData(g_imageData, 20, 20);
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:			setInitialCondition, // setInitialCondition( )
+		evolve:			timeEvolution, // timeEvolution( nCalc, infectionPeriod, immunePeriod )
+		draw:			draw, // draw( ctx, drawMode )
+		
+		getSysParam:	function() { return [ g_NNp, g_NNx, g_NNy ]; },
+		getNow:			function() { return [ g_sysTime, g_numberOfNonInfected, g_numberOfInfected, g_numberOfImmune ]; },
+		getWalker:		function(i) { return [ g_status[i], g_ix[i], g_iy[i], g_period[i] ]; },
+		getField:		function(ix,iy) { return g_field[ix][iy]; },
+	};
+
+})(); // ====================  infectionMCS2D end  ====================
+
+
+const tjs082 = (function(){ // ====================  tjs Module  ====================
+
+	const theModule = infectionMCS2D;
+	let v_nCalc = 1;
+	let v_infectionPeriod = 30;
+	let v_immunePeriod = 150;
+	let v_infectionProbability = 1.0;
+	
+	let p_nn, p_nx, p_ny; // <-- theModule.getSysParam();
+
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let dispMode = 0; // 0:ball
+	let dispModeChanged = true;
+	let viewHomeRequested = false;
+	let count = 0; // animate count
+
+	// sizes in the threejs world
+	const xBoxSize = 400;
+	let scale, yBoxSize, zBoxSize, x0, y0;
+
+	// threejs objects in the scene
+	let walkers;
+	let line_box;
+	let cnvsprite;
+
+	// three.js , OrbitControls.js
+	const width = 500;
+	const height = 480;
+	const r_camera = 800;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+	
+	// -------------------- main
+	
+	function main() {
+		// construct renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'), antialias: true }); // ------------- antialias
+		renderer.setSize(width, height);
+		
+		initDom();
+		
+		constructScene();
+		animate();
+	}
+
+
+	function constructScene() {
+
+		// initialize
+		theModule.init();
+		[ p_nn, p_nx, p_ny ] = theModule.getSysParam();
+		scale = xBoxSize/p_nx;
+		yBoxSize = p_ny*scale;
+		zBoxSize = 4*scale;
+		x0 = xBoxSize/2.0;
+		y0 = yBoxSize/2.0;
+
+		// scene
+		scene = new THREE.Scene();
+ 
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, 0, r_camera);
+		controls = new THREE.OrbitControls(camera,renderer.domElement); // lib/OrbitControls.js
+ 
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xFFFFFF,0.7);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xFFFFFF, 0.5);
+		scene.add(light);
+
+
+		// waklers
+		{
+			const geometry = new THREE.BufferGeometry();
+			const nn = p_nn;
+			const positions = new Float32Array( nn * 3 );
+			const colors = new Float32Array( nn * 3 );
+			geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+			geometry.setAttribute( 'color', new THREE.BufferAttribute( colors, 3 ) );
+			const material = new THREE.PointsMaterial( { size: 3.8*scale, vertexColors: true } );
+			walkers = new THREE.Points( geometry, material );
+			walkers.visible = false;
+			scene.add( walkers );
+		}
+		
+		// line box
+		{
+			const geometry = new THREE.BoxGeometry( xBoxSize, yBoxSize, zBoxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial({ color: 0x666644 }) );
+			scene.add( line_box );
+		}
+		
+		// canvas sprite
+		// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 400, 400, 400 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+
+	}
+
+
+	// loop animation
+	function animate() {
+
+		// select theme
+		if (resetFlag==1) {
+			resetFlag = 0;
+
+			constructScene();
+			dispModeChanged = true;
+			count = 0;
+		}
+		
+		if ( viewHomeRequested ) {
+			camera.position.set(0, 0, r_camera);
+			viewHomeRequested = false;
+		}
+		
+		if ( dispModeChanged ) {
+			dispModeChanged = false;
+			
+			line_box.visible = (dispMode==0) ? true : false;
+			walkers.visible = false;
+			cnvsprite.visible = false;
+		}
+		
+		// evolve walkers
+		if (pauseFlag==0) {
+			theModule.evolve( v_nCalc, v_infectionPeriod, v_immunePeriod );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( 1, v_infectionPeriod, v_immunePeriod );
+		}
+		
+		
+		// update walkers
+		if ( dispMode==0 ) {
+			const nn = p_nn;
+			const positions = walkers.geometry.attributes.position.array;
+			const colors = walkers.geometry.attributes.color.array;
+			const colorData = [ [ 0.20, 0.99, 0.20 ], [ 0.99, 0.20, 0.20 ], [ 0.20, 0.99, 0.99 ] ];
+		
+			for ( let i=0; i<nn; i++ ) {
+				let status, xi, yi, period;
+				[ status, xi, yi, period ] = theModule.getWalker(i); // status  0:non-infected 1:infected, 2:immune
+				positions[ 3 * i ] = xi*scale-x0;
+				positions[ 3 * i + 1 ] = yi*scale-y0;
+				positions[ 3 * i + 2 ] = 0;
+
+				colors[ 3 * i ] = colorData[status][0]; // red
+				colors[ 3 * i + 1 ] = colorData[status][1]; // green
+				colors[ 3 * i + 2 ] = colorData[status][2]; // blue
+			}
+			walkers.visible = true;
+			walkers.geometry.attributes.position.needsUpdate = true;
+			walkers.geometry.attributes.color.needsUpdate = true;
+		}
+		
+		if ( dispMode==1 ) {
+			// cnvsprite.update( drawFunc )
+			cnvsprite.update(
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					const dRotAy = (pauseFlag==1) ? 0.0 : 0.1;
+					theModule.draw( ctx, dispMode-1 );
+				}
+			);
+		}
+		
+		// output to innerHTML
+		// getNow:			function() { return [ g_sysTime, g_numberOfNonInfected, g_numberOfInfected, g_numberOfImmune ]; },
+		if (count % 10 == 0) {
+			let time, nonInfected, infected, immuned;
+			[ time, nonInfected, infected, immuned ] = theModule.getNow();
+			const msg = 
+				"field =360x360, walker N ="+p_nn+", time="+time+"<br>"
+				+ "infection probability at walker contact="+v_infectionProbability+"<br>"
+				+ "<span style='color:#00cc00'>no infected = "+nonInfected+"</span> , "
+				+ "<span style='color:#ff0000'>infected = "+infected+"</span> , "
+				+ "<span style='color:#00bbbb'>immune =" +immuned+"</span><br>"
+			document.getElementById("text_caption").innerHTML = msg;
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+	
+	// ----------  dom control
+	
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function reset() {
+		resetFlag = 1;
+	}
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = (pauseFlag+1)%2; 
+		if (pauseFlag==0) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==1 ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() {
+		stepFlag = 1;
+	}
+	
+	function setTheme() {
+		theme = 0 + document.getElementById("slct_theme").selectedIndex;
+		resetFlag = 1;
+	}
+	
+	function setInfectionPeriod() {
+		v_infectionPeriod = Number(document.getElementById("range_infp").value);
+		document.getElementById("text_infp").innerHTML = " " + v_infectionPeriod;
+	}
+	
+	function setImmunePeriod() {
+		v_immunePeriod = Number(document.getElementById("range_immp").value);
+		document.getElementById("text_immp").innerHTML = " " + v_immunePeriod;
+	}
+	
+	function setnCalc() {
+		v_nCalc = 1 + document.getElementById("slct_nCalc").selectedIndex;
+	}
+	
+	function setDispMode() {
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+		dispModeChanged = true;
+	}
+	
+	function viewHome() {
+		viewHomeRequested = true;
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		// dom control
+		reset:			reset,			// reset()
+		pause:			pause,			// pause()
+		step:			step,			// step()
+		
+		setTheme:		setTheme,		// setTheme
+		setInfectionPeriod: setInfectionPeriod, // setInfectionPeriod()
+		setImmunePeriod: setImmunePeriod, // setImmunePeriod()
+		setnCalc:		setnCalc,		// setnCalc()
+		setDispMode:	setDispMode,	// setDispMode()
+		viewHome:		viewHome,		// viewHome()
+	};
+	
+})(); // ====================  tjs082 module end  ====================
+
+
+// event
+const tjs = tjs082;
+window.addEventListener('load', tjs.main );
+
+
+// --------------------  end of javaScript
+
+  </script>
+  <style type="text/css">
+    body { color:#000000; background-color:#fff8dd;}
+  </style>
+</head>
+<body>
+<p>[tjs082] infection model - Monte-Carlo simulation MCS2D</p>
+<canvas id="myCanvas" width="500" height="480" ></canvas><br>
+
+<span>infection model</span>
+    <span style="margin-right: 40px;"></span>
+<!--
+<label>theme:</label>
+<select id="slct_theme" onChange="setTheme()">
+<option>0</option></select>
+    <span style="margin-right:10px;"></span>
+-->
+<label>nCalc:</label>
+<select id="slct_nCalc" onChange="tjs.setnCalc()">
+<option selected>1</option><option>2</option><option>3</option><option>4</option>
+<option>5</option><option>6</option>
+</select>
+    <span style="margin-right: 80px;"></span>
+<button onClick="tjs.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="tjs.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="tjs.step()">step</button>
+<br>
+
+<label>infection period =</label>
+<input type="range" id="range_infp" min="0" max="60" value="30" step="1" 
+style="width:300px" list="tick_infp" oninput="tjs.setInfectionPeriod()">
+<datalist id="tick_infp"><option value="0"><option value="20"><option value="40">
+<option value="60"></datalist>
+<label id="text_infp"> 30</label>
+<br>
+
+<label>immune period =</label>
+<input type="range" id="range_immp" min="0" max="300" value="150" step="1" 
+style="width:300px" list="tick_immp" oninput="tjs.setImmunePeriod()">
+<datalist id="tick_immp"><option value="0"><option value="100"><option value="200">
+<option value="300"></datalist>
+<label id="text_immp"> 150</label>
+<br>
+
+<label>disp mode:</label>
+<select id="slct_dispMode" onChange="tjs.setDispMode()">
+<option selected>walkers</option><option>canvas2d</option>
+</select>
+    <span style="margin-right: 250px;"></span>
+<button onClick="tjs.viewHome()">view home</button>
+<br>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
+<br>
+</body>
+</html>
+
