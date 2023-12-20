@@ -1,0 +1,1127 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>tjs096_H2MoleculeDMC3D</title>
+  <meta charset="utf-8"/>
+  <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+  <!--
+  <script src="../lib/three.min.js"></script>
+  <script src="../lib/OrbitControls.js"></script>
+  -->
+  <script>
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tjs096_H2MoleculeDMC3D
+//    Copyright(C) 2022-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2022.04.17 created, last updated on 2022.04.17
+//    ver 0.0.1  2022.09.15 v1, last updated on 2023.01.13
+//    ver 0.0.2  2023.12.20 v2, last updated on 2023.12.20
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  diffusion Monte-Carlo method
+//
+// DMC algorithm : I. Kosztin et. al.; e-print arXiv:physics/9702023v1 (1997)
+//                 "Introduction to the Diffusion Monte Carlo Method"
+// (1) replica walk
+//     x -> x + sqrt(dt)*GaussianRandom
+// (2) branch: replica birth-death (branching) processes
+//     weight function W
+//       W = exp( -(V-ER)*dt/hbar ) --> Wi nearly= 1-(Vi-Ei)*dt/h
+//       m = int( wi + random[0-1] )
+//     if (m=0)  death
+//     if (m=1)  alive
+//     if (m=2)  alive + birth one replica
+//     if (m>=3) alive + birth two replica
+// (3) count: number of replicas N1
+// (4) energy calc
+//     ER(k+1) = ER(k) + (hbar/dt)(1-N1/N0)
+//        (N0: target number of replica)
+// goto (1)
+//
+//
+// minimum energy interatomic distance 
+//
+//  H2+ ion       1.057e-10 m ~ 2.0 au
+//  H2  molecule  0.740e-10 m ~ 1.4 au
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const H2MoleculeDMC3D = (function(){ // ====================  H2MoleculeDMC3D Module  ====================
+
+	// au: atomic unit hBar=1,e=1,me=1,a0=1
+	const g_auLength = 5.29177211e-11;  // (m) 1(au) = g_auLength (m)
+	const g_auTime = 2.418884326e-17;   // (s) 1(au) = g_auTime (s)
+	const g_auEnergy = 4.35974465e-18;  // (J) 1(au) = auEnergy (J)
+	const g_au2eV = 27.211386;          // (eV) 1(au) = 27.211386 (eV)
+	const g_hbar = 1.0;                 // hbar = 1 in au(atomic unit)
+
+	const g_rMin = 1.0e-15/g_auLength; // g_rMin nearly= proton size
+	const g_NNrep = 2000;   // max number of replicant
+	const g_NNpMax = 2;     // max number of nucleus
+	const g_NNdim = 3;      // 3D (0:x, 1:y, 2:z)
+	const g_Ndiv = 40;      // max number of space division
+
+	let g_dmcCount = 0;     // system count
+	let g_sysTime = 0.0;    // (au)
+	let g_deltaTau = 0.1;   // (au) H:0.1, He:0.05
+	let g_NN0 = 1000;       // memory of g_NN1
+	let g_NN1 = g_NN0;      // number of alive replicas
+	let g_NN00 = g_NN0;     // initial number of alive replicas
+	let g_referenceEnergy = 0.0; // (au) reference energy of the system
+	let g_averagedReferenceEnergy = g_referenceEnergy; // (au) averaged reference energy
+	let g_averageCount = 1000; // average count
+	let g_averageFactor = 1.0/g_averageCount; // = 1.0/g_averageCount  eg. 1/1000 1/10000
+	let g_dPP = 1.40;       // (au)H-H distance
+	let g_sysEnergy = g_averagedReferenceEnergy + 1/g_dPP; // (au) avaraged system reference energy
+	let g_sysEnergy10000 = g_sysEnergy;
+	let g_potential = potentialH2Molecule; // function potentialH2Molecule(i)
+	let g_NNe = 2;          // number of electron
+	let g_NNp = 2;          // number of proton
+	let g_themeStr = "H2 molecule";
+
+	let g_average1000 = 0.0;
+	let g_average10000 = 0.0;
+
+	// 3D graphics (DMC) interface 
+	let g_NNx=g_Ndiv, g_NNy=g_Ndiv, g_NNz=g_Ndiv, g_dx=0.5,g_dy=0.5,g_dz=0.5;
+
+	const g_repStatus = dimInt1(g_NNrep);               // 0-not alive, 1-alive, 2-birth mark
+	const g_replica = dim3(g_NNrep,g_NNpMax,g_NNdim);   // g_replica[replica][particle][0:x 1:y 2:z]
+	const g_psiDensity = dim3(g_Ndiv,g_Ndiv,g_Ndiv);    // wave function psi[ix][iy][iy]
+	const g_box = dim3(g_Ndiv,g_Ndiv,g_Ndiv);           // g_box[ix][iy][iz] number of replica
+
+	function dimInt1( n ) {
+		return new Int32Array( n );
+	}
+
+	function dim3( ni, nj, nk ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = [];
+			for (let j=0; j<nj; j++) {
+				a[i][j] = new Float64Array( nk );
+			}
+		}
+		return a;
+	}
+
+
+	// ------------------ theme table
+
+	const g_themeTable = [
+	//   0:theme 1:NNe 2:NNp 3:potential             4:themeStr
+		[  0,     1,    1,    potentialHAtom,         "H atom"       ],
+		[  1,     2,    1,    potentialHeAtom,        "He atom"      ],
+		[  2,     1,    2,    potentialH2PositiveIon, "H2+ ion"      ],
+		[  3,     2,    2,    potentialH2Molecule,    "H2 molecule"  ],
+		[  4,     1,    1,    potentialParabolic,     "hermonics"    ],
+		[  5,     1,    1,    potentialSphereWell,    "sphereWell"   ]
+	]
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition( theme ) {
+		let themeNum;
+		[ themeNum, g_NNe, g_NNp, g_potential, g_themeStr ] = g_themeTable[theme];
+
+		g_sysTime = 0.0;
+		g_dmcCount = 0;
+		setInitialReplica();
+		g_NN0 = numberOfReplica();
+		g_NN00 = g_NN0;
+		g_NN1 = g_NN0;
+		g_referenceEnergy = averagedPotential();
+		g_averagedReferenceEnergy = 0.0;
+		clearPsiDensity();
+	}
+
+	function setInitialReplica() {
+		const nn=g_NNrep, nne=g_NNe, nndim=g_NNdim;
+
+		for (let i=0; i<nn; i++) {
+			g_repStatus[i] = 0;
+		}
+
+		const n0 = nn/2;
+		for (let i=0; i<n0; i++) {
+			g_repStatus[i] = 1;
+			for (let jp=0; jp<nne; jp++) {
+				for (let jd=0; jd<nndim; jd++) {
+					g_replica[i][jp][jd] = 4.0*(Math.random()-0.5);
+				}
+			}
+		}
+	}
+
+
+	// --------------------  potential
+
+	function averagedPotential() {
+		const nn=g_NNrep;
+		let n=0, s=0.0;
+		for (let i=0; i<nn; i++) {
+			if (g_repStatus[i]==1) {
+				n += 1;
+				s += g_potential(i);
+			}
+		}
+		return s/n;
+	}
+
+	// H atom : V(r,R) = -1/|r|
+	function potentialHAtom( i ) {
+		const x = g_replica[i][0][0], y = g_replica[i][0][1], z = g_replica[i][0][2];
+		let r2 = x*x+y*y+z*z; if (r2<g_rMin) r2=g_rMin;
+		return( -1.0/Math.sqrt(r2) );
+	}
+
+	// He Atom :  V(r1,r2,R) = -2/|r1-R|-2/|r2-R| +1/|r1-r2|
+	function potentialHeAtom( i ) {
+		const x1 = g_replica[i][0][0], y1 = g_replica[i][0][1], z1 = g_replica[i][0][2];
+		const x2 = g_replica[i][1][0], y2 = g_replica[i][1][1], z2 = g_replica[i][1][2];
+
+		let r12 = x1*x1+y1*y1+z1*z1; // (r1-R)^2
+		if (r12<g_rMin) r12=g_rMin;
+		let r22 = x2*x2+y2*y2+z2*z2; // (r2-R)^2
+		if (r22<g_rMin) r22=g_rMin;
+		let r32 = (x1-x2)*(x1-x2)+(y1-y2)*(y1-y2)+(z1-z2)*(z1-z2); // (r1-r2)^2
+		if (r32<g_rMin) r32=g_rMin;
+		return(-2.0/Math.sqrt(r12)-2.0/Math.sqrt(r22)+1.0/Math.sqrt(r32));
+	}
+
+	// H2+ ion :  V(r,R1,R2) = -1/|r-R1|-1/|r-R2|
+	function potentialH2PositiveIon( i ) {
+		const rr = g_dPP; // R1=(0.5*g_dPP,0,0), R2=(-0.5*g_dPP,0,0)
+		const x = g_replica[i][0][0], y = g_replica[i][0][1], z = g_replica[i][0][2];
+		let r12 = (x-0.5*rr)*(x-0.5*rr)+y*y+z*z; // (r-R1)^2
+		if (r12<g_rMin) r12=g_rMin;
+		let r22 = (x+0.5*rr)*(x+0.5*rr)+y*y+z*z; // (r-R2)^2
+		if (r22<g_rMin) r22=g_rMin;
+		return(-1.0/Math.sqrt(r12)-1.0/Math.sqrt(r22));
+	}
+
+	// H2 molecule :  V(r1,r2,R1,R2) = sum(-1/|ri-Rj|,{i,j=1,2}) + 1/|r1-r2|
+	function potentialH2Molecule( i ) {
+		const rr = g_dPP; // R1=(0.5*g_dPP,0,0), R2=(-0.5*g_dPP,0,0)
+		const x1 = g_replica[i][0][0], y1 = g_replica[i][0][1], z1 = g_replica[i][0][2];
+		const x2 = g_replica[i][1][0], y2 = g_replica[i][1][1], z2 = g_replica[i][1][2];
+		let r12 = (x1-0.5*rr)*(x1-0.5*rr)+y1*y1+z1*z1; // (r1-R1)^2
+		if (r12<g_rMin) r12=g_rMin;
+		let r22 = (x1+0.5*rr)*(x1+0.5*rr)+y1*y1+z1*z1; // (r1-R2)^2
+		if (r22<g_rMin) r22=g_rMin;
+		let r32 = (x2-0.5*rr)*(x2-0.5*rr)+y2*y2+z2*z2; // (r2-R1)^2
+		if (r32<g_rMin) r32=g_rMin;
+		let r42 = (x2+0.5*rr)*(x2+0.5*rr)+y2*y2+z2*z2; // (r2-R2)^2
+		if (r42<g_rMin) r42=g_rMin;
+		let r52 = (x1-x2)*(x1-x2)+(y1-y2)*(y1-y2)+(z1-z2)*(z1-z2); // (r1-r2)^2
+		if (r52<g_rMin) r52=g_rMin;
+		return(-1.0/Math.sqrt(r12)-1.0/Math.sqrt(r22)-1.0/Math.sqrt(r32)-1.0/Math.sqrt(r42)+1.0/Math.sqrt(r52));
+	}
+
+	// parabolic : V(r) = 0.5*r^2
+	function potentialParabolic( i ) {
+		const x = g_replica[i][0][0], y = g_replica[i][0][1], z = g_replica[i][0][2];
+		const r2 = x*x+y*y+z*z;
+		return 0.5*r2;
+	}
+
+	// parabolic : V(r) = (r<3) ? 0 : 5.0;
+	function potentialSphereWell( i ) {
+		const x = g_replica[i][0][0], y = g_replica[i][0][1], z = g_replica[i][0][2];
+		const r = Math.sqrt(x*x+y*y+z*z);
+		return (r<3.0) ? 0.0 : 5.0;
+	}
+
+
+	// --------------------  evolve DMC  --------------------
+
+	function evolveDMC( nCalc, dpp ) {
+
+		g_dPP = dpp;
+		for (let i=0; i<nCalc; i++) {
+			walkReplica();
+		}
+		g_sysEnergy = g_averagedReferenceEnergy;
+		//g_sysEnergy10000 = g_average10000;
+		if (g_NNp==2) {
+			g_sysEnergy += 1.0/dpp; //P-P potential 
+			//g_sysEnergy10000 += 1.0/dpp;
+		}
+	}
+
+	function walkReplica() {
+		const nn=g_NNrep, nne=g_NNe, nndim=g_NNdim, sqrtdt = Math.sqrt(g_deltaTau);
+
+		g_sysTime += g_deltaTau;
+		g_dmcCount += 1;
+
+		// (1) replica random walk
+		for (let i=0; i<nn; i++) {
+			if (g_repStatus[i]==1) {
+				for (let jp=0; jp<nne; jp++) {
+					for (let jd=0; jd<nndim; jd++) {
+						g_replica[i][jp][jd] += sqrtdt*GaussianRandom();
+					}
+				}
+			}
+		}
+
+		// (2) branch
+		for (let i=0; i<nn; i++) {
+			if (g_repStatus[i]==1) {
+				birthDeathProcess(i);
+			}
+		}
+		for (let i=0; i<nn; i++) {
+			if (g_repStatus[i]==2) { // birth mark
+				g_repStatus[i] = 1;
+			}
+		}
+
+		// (3) count
+		g_NN1 = numberOfReplica();
+
+		// (4) energy
+		g_referenceEnergy += 
+			g_hbar/g_deltaTau*(1.0-(g_NN1+1.0)/(g_NN0+1.0)*(g_NN0+10.0*nn)/(g_NN00+10.0*nn));
+		g_NN0 = g_NN1;
+		g_averagedReferenceEnergy = 
+			(1.0-g_averageFactor)*g_averagedReferenceEnergy + g_averageFactor*g_referenceEnergy;
+		
+		// average 10000
+		/*
+		g_average1000 = 0.999*g_average1000 + 0.001*g_referenceEnergy;
+				
+		if ( g_dmcCount>3000 ) {
+			g_average10000 = 0.9999*g_average10000 + 0.0001*g_referenceEnergy;
+		} else {
+			g_average10000 = g_average1000;
+		}
+		*/
+		
+		// set psi from replica distribution
+		setPsi();
+	}
+
+	// (1)-1 replica walk
+
+	function GaussianRandom() {  // Box-Muller transform  
+		return Math.sqrt(-2*Math.log(1-Math.random()))*Math.sin(2*Math.PI*Math.random());
+	}
+
+	// (2)-1,2,3 branch
+
+	function birthDeathProcess( i ) {
+		const weight = Math.exp(-(g_potential(i)-g_referenceEnergy)*g_deltaTau/g_hbar); // weight function
+		const mn = Math.floor(weight+Math.random());
+		if (mn==0) {
+			g_repStatus[i] = 0; // death replica
+		} else if (mn==2) {
+			birthReplica(i);
+		} else if (mn>=3) {
+			birthReplica(i);
+			birthReplica(i);
+		}
+	}
+
+	function birthReplica(i) {
+		const nne=g_NNe, nndim=g_NNdim;
+
+		const ip = seekSpace(i);
+		if (ip>=0) {
+			g_repStatus[ip] = 2;
+			for (let jp=0; jp<nne; jp++) {
+				for (let jd=0; jd<nndim; jd++) {
+					g_replica[ip][jp][jd] = g_replica[i][jp][jd];
+				}
+			}
+		}
+	}
+
+	function seekSpace(istart) {
+		const nn=g_NNrep;
+
+		let ip = -1;
+		for (let i=1; i<nn; i++) {
+			if (g_repStatus[(i+istart)%nn]==0) {
+				ip = (i+istart)%nn;
+				break;
+			}
+		}
+		return ip;
+	}
+
+	// (3)-1 count replica
+
+	function numberOfReplica() {
+		const nn=g_NNrep;
+
+		let n = 0;
+		for (let i=0; i<nn; i++) {
+			if (g_repStatus[i]==1) n+=1;
+		}
+		return n;
+	}
+
+	// set psi
+
+	function setPsi() {
+		const nn=g_NNrep, nne=g_NNe, ndiv=g_Ndiv;
+
+		for (let ix=0; ix<ndiv; ix++) {
+			for (let iy=0; iy<ndiv; iy++) {
+				for (let iz=0; iz<ndiv; iz++) {
+					g_box[ix][iy][iz] = 0;
+				}
+			}
+		}
+		for (let i=0; i<nn; i++) {
+			for (let ip=0; ip<nne; ip++) {
+				if (g_repStatus[i]==1) {
+					const ix = Math.floor(ndiv/2+g_replica[i][ip][0]/g_dx+0.5);
+					const iy = Math.floor(ndiv/2+g_replica[i][ip][1]/g_dy+0.5);
+					const iz = Math.floor(ndiv/2+g_replica[i][ip][2]/g_dz+0.5);
+					if (ix>=0 && ix<ndiv && iy>=0 && iy<ndiv && iz>=0 && iz<ndiv) g_box[ix][iy][iz] += 1;
+				}
+			}
+		}
+		for (let ix=0; ix<ndiv; ix++) {
+			for (let iy=0; iy<ndiv; iy++) {
+				for (let iz=0; iz<ndiv; iz++) {
+					g_psiDensity[ix][iy][iz] = 0.99*g_psiDensity[ix][iy][iz]+0.01*g_box[ix][iy][iz]/g_NN1;
+				}
+			}
+		}
+	}
+
+	function clearPsiDensity() {
+		const ndiv=g_Ndiv;
+
+		for (let ix=0; ix<ndiv; ix++) {
+			for (let iy=0; iy<ndiv; iy++) {
+				for (let iz=0; iz<ndiv; iz++) {
+					g_psiDensity[ix][iy][iz] = 0.0;
+				}
+			}
+		}
+	}
+
+	function psiDensitySum() {
+		const ndiv=g_Ndiv;
+		let s=0.0;
+		for (let ix=0; ix<ndiv; ix++) {
+			for (let iy=0; iy<ndiv; iy++) {
+				for (let iz=0; iz<ndiv; iz++) {
+					s += g_psiDensity[ix][iy][iz];
+				}
+			}
+		}
+		return s;
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:           setInitialCondition, // setInitialCondition( theme )
+		evolve:         evolveDMC, // evolveDMC( nCalc, dpp )
+
+		getAUinSI:      function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:    function() { return [ g_Ndiv, g_Ndiv, g_Ndiv, 0.5, g_NNrep, g_NNp, g_NNe, g_themeStr ]; },
+		getNow:         function() { return [ g_dmcCount, g_sysTime, g_sysEnergy, g_NN1 ]; },
+
+		getRepStatus:   function(ir) {  return g_repStatus[ir]; }, // 0-not alive, 1-alive, 2-birth mark
+		getRepPosition: function(ir,ip) { return g_replica[ir][ip]; }, // return [ x, y, z ]
+		getPsi:         function(i,j,k) { return g_psiDensity[i][j][k]; },
+		getRho:         function(i,j,k) { return g_psiDensity[i][j][k]*g_psiDensity[i][j][k]; },
+		getPsiSum:      psiDensitySum, // psiDensitySum()
+	};
+
+})(); // ====================  H2MoleculeDMC3D end  ====================
+
+
+const tjs096 = (function(){ // ====================  tjs Module  ====================
+
+	const theModule = H2MoleculeDMC3D;
+	
+	let v_theme = 3;		// 0:H atom, 1:He atom, 2:H2+ ion, 3:H2 molecule, 4:hermonics, 5:sphere well
+	let v_nCalc = 10;
+	let v_dpp = 1.4;		// (au)H-H distance
+
+	let p_auLength, p_auTime, p_auEnergy, p_au2eV // <-- theModule.getAUinSI()
+	let p_nx, p_ny, p_nz, p_dx, p_nr, p_np, p_ne, p_themeStr; // <-- theModule.getSysParam()
+
+	// program flow control
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let dispMode = 0; // 0:replicas, 1:psi(x,y,z), 2:rho(i,j,k), 3:1/2 psi(x,y,z)
+	let dispModeChanged = false;
+	let legendFlag = true;
+	let viewHomeRequested = false;
+	let count = 0; // animate() loop count
+
+	// in three.js world
+	const xBoxSize = 400; // in three.js world
+	const x0 = xBoxSize/2;
+	let hh, yBoxSize, zBoxSize, y0, z0;
+
+	// 3d object added to scene
+	let lineBox;
+	let replicas;
+	let replica3Darray = [];
+	let pgrid;
+	let grid3D;
+
+	// three.js global
+	const r_camera = 1200.0;
+	const width = 500;
+	const height = 480;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+
+
+	// --------------------  main
+	
+	function main() {
+
+		// construct renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, -0.4*r_camera,0.9*r_camera);
+		// lib/OrbitControls.js
+		controls = new THREE.OrbitControls(camera,renderer.domElement);
+		
+		initDom();
+		
+		constructScene();
+		animate();
+	}
+	
+	
+	function constructScene() {
+		
+		// init DMC3D
+		theModule.init( v_theme );
+		[ p_nx, p_ny, p_nz, p_dx, p_nr, p_np, p_ne, p_themeStr ] = theModule.getSysParam();
+ 		hh = xBoxSize/p_nx;
+		yBoxSize = hh*p_ny;
+		zBoxSize = hh*p_nz;
+		y0 = yBoxSize/2;
+		z0 = zBoxSize/2;
+		
+		// scene
+		scene = new THREE.Scene();
+
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xffffff);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xffffff, 0.5);
+		scene.add(light);
+		
+		
+		// add replicas
+		{
+			replicas = new THREE.Group();
+			const geometry = new THREE.IcosahedronGeometry( 0.2*hh, 1 );
+			for ( let i=0; i<p_nr; i++ ) {
+				replica3Darray[i] = [];
+				for (let ip=0; ip<p_ne; ip++) {
+					const material = new THREE.MeshStandardMaterial({ 
+						color: ((ip==0) ? 0x00cccc : 0xcccc00) });
+					const icosa = new THREE.Mesh( geometry, material );
+					icosa.visible = false;
+					replica3Darray[i][ip] = icosa;
+					replicas.add( replica3Darray[i][ip] );
+				}
+			}
+			scene.add( replicas );	
+		}
+		
+		// psi(x,y,z)
+		// grid3D = m3js_grid3D( p_nx, p_ny, p_nz, xBoxSize )
+		grid3D = m3js_grid3D( p_nx, p_ny, p_nz, xBoxSize );
+		scene.add( grid3D );
+		
+		// psi(x,y,0)
+		// agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+		pgrid = m3js_grid2D( p_nx, p_ny, xBoxSize );
+		scene.add( pgrid );
+		
+		// line box
+		const geometry_cube = new THREE.BoxGeometry( xBoxSize, yBoxSize, zBoxSize );
+		const edges_cube = new THREE.EdgesGeometry( geometry_cube );
+		lineBox = new THREE.LineSegments( edges_cube, new THREE.LineBasicMaterial({ color:0x666644 }) );
+		scene.add( lineBox );
+		
+	}
+	
+	
+	// loop animation
+	function animate() {
+		
+		// system reset
+		if (resetFlag==1) {
+			resetFlag = 0;
+			constructScene();
+			
+			if ( p_np==2 ) {
+				v_dpp = 1.4; // H2 molecule ( minimum energy interatomic distance in au )
+				if ( v_theme==2 ) v_dpp = 2.0; // H2+ ion
+				document.getElementById("range_dpp").style.visibility = "visible";
+				document.getElementById("range_dpp").value = v_dpp;
+				document.getElementById("text_dpp").style.visibility = "visible";
+				document.getElementById("text_dpp").innerHTML = "P-P distance: " + v_dpp.toFixed(2);
+			} else {
+				document.getElementById("range_dpp").style.visibility = "hidden";
+				document.getElementById("text_dpp").style.visibility = "hidden";
+			}
+			
+			count = 0;
+		}
+		
+		if ( viewHomeRequested ) {
+			camera.position.set(0, -0.4*r_camera,0.9*r_camera);
+			viewHomeRequested = false;
+		}
+		
+		// DMC3D update
+		if (pauseFlag==0) {
+			theModule.evolve( v_nCalc, v_dpp );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( 1, v_dpp );
+		}
+		
+		// clear world (object.visible -> false)
+		if (dispModeChanged) {
+			dispModeChanged = false;
+			
+			replicas.visible = false;
+			grid3D.visible = false;
+			pgrid.visible = false;
+		}
+		
+		
+		if ( dispMode==0 ) { // 0:replicas update
+			let x, y, z;
+			const sc = xBoxSize/(p_nx*p_dx);
+			for ( let i=0; i<p_nr; i++ ) {
+				for (let ip=0; ip<p_ne; ip++) {
+					const icosa = replica3Darray[i][ip];
+					if ( theModule.getRepStatus(i)==0 ) { //status: 0-not alive, 1-alive, 2-birth mark
+						icosa.visible = false;
+						continue;
+					}
+					[ x, y, z ] = theModule.getRepPosition(i,ip);
+					icosa.position.set(x*sc, y*sc, z*sc);
+					icosa.visible = true;
+					icosa.geometry.attributes.position.needsUpdate = true;
+				}
+			}
+			replicas.visible = true;
+
+			
+		} else if ( dispMode==1 ) { // 1:psi(x,y,z) update
+			const phiMag = 30000.0;
+			// grid3D.update( field_func, [hue_func] )
+			grid3D.update( function(i,j,k) { return phiMag*theModule.getPsi(i,j,k); } );
+			
+		} else if ( dispMode==2 ) { // 2:rho(i,j,k) update
+			const rhoMag = 20000000.0;
+			// grid3D.update( field_func, [hue_func] )
+			grid3D.update( function(i,j,k) { return rhoMag*theModule.getRho(i,j,k); } );
+			
+		} else if ( dispMode==3 ) { // 3:1/2 psi(x,y,z) update
+			const kc = p_nz/2;
+			const phiMag = 30000.0;
+			// grid3D.update( field_func, [hue_func] )
+			grid3D.update(
+				function(i,j,k) { return (k<kc) ? phiMag*theModule.getPsi(i,j,k) : 0.0; } );
+			
+		} else if ( dispMode==4 ) { // 4:2D psi(x,y,0) update
+			const kc = p_nz/2;
+			const phiMag = 30000.0;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			pgrid.update(
+				function(i,j) { return [ 0.5*phiMag*theModule.getPsi(i,j,kc), ] },
+			);
+		}
+		
+		// output to innerHTML
+		if (count % 10 == 0) {
+			const xMax = p_nx*p_dx, yMax = p_ny*p_dx, zMax = p_nz*p_dx;
+			let count, time, energy, nn1;
+			[ count, time, energy, nn1 ] = theModule.getNow();
+			const psiSum = theModule.getPsiSum();
+			document.getElementById("text_caption").innerHTML = 
+				"box(au)="+xMax+"x"+yMax+"x"+zMax
+				+ ", count="+count+"<br>"
+				+ "total energy(1000 average)(au) ="+energy.toFixed(6) + " <br>"
+				+ "psiDensity sum="+psiSum.toFixed(6);
+
+			if (legendFlag) {
+				let msg = "<span style='color:#bbbb00'>alive replica N="+nn1+"</span>"
+				document.getElementById('textOnCanvas').innerHTML = msg;
+			} else {
+				document.getElementById('textOnCanvas').innerHTML = "";
+			}
+
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_grid3D function  ----------------------------------
+	//
+	//    ver 0.0.0  2022.06.07 created, last updated on 2022.12.22
+	//
+	//   grid3D = m3js_grid3D( p_nx, p_ny, p_nz, xBoxSize );
+	//      nx:sphere number of x-direction,
+	//      ny:sphere number of y-direction, 
+	//      nz:sphere number of z-direction,
+	//      xBoxSize: x-box size in the threejs-world
+	//
+	//   scene.add( grid3D );
+	//
+	//   grid3D.update( field_func, [hue_func] );
+	//      field_func: (i,j,k) --> field
+	//         (i,j,k) : index of 3D lattice
+	//         field : field value of lattce point
+	//      hue_func: (i,j,k) --> hue   // if undefined, use inner hue function hue(field))
+	//         hue : hsl color index 0,1,2, ... , 359
+	//         if typeof(hue)!='number', hue treat as color string
+	//
+	//   grid3D.setThreshold( th ) 
+	//      th: 0.0 ... 1.0 // if diameter of the sphere < hh*th, this sphere set to invisible
+	//          default th = 0.2
+	//
+	//   grid3D.visibility
+	//      grid3D.visible = true | false;
+	//
+		
+	const m3js_grid3D = function( p_nx, p_ny, p_nz, xBoxSize ) {
+		const gridArray = [];
+		const nx = p_nx;
+		const ny = p_ny;
+		const nz = p_nz;
+		const hh = xBoxSize/nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*ny/2.0;
+		const z0 = hh*nz/2.0;
+		let threshold = 0.2;
+		const grid3D = new THREE.Group();
+
+		const geometry = new THREE.IcosahedronGeometry( 0.5, 1 );
+		for ( let i=0; i<nx; i++ ) {
+			gridArray[i] = [];
+			for ( let j=0; j<ny; j++ ) {
+				gridArray[i][j] = [];
+				for ( let k=0; k<nz; k++ ) {
+					const material = new THREE.MeshBasicMaterial({ color: 0xaaaa00 });
+					const icosa = new THREE.Mesh( geometry, material );
+					icosa.position.x = i*hh - x0;
+					icosa.position.y = j*hh - y0;
+					icosa.position.z = k*hh - z0;
+					icosa.visible = false;
+					gridArray[i][j][k] = icosa;
+					grid3D.add( gridArray[i][j][k] );
+				}
+			}
+		}
+		
+		grid3D.update = grid3D_update; // grid3D_update( fieldFunc, hueFunc )
+		grid3D.setThreshold = setThreshold; // setThreshold( th )
+		return grid3D;
+		
+		// private function
+	
+		function grid3D_update( field_func, hue_func ) {
+			const th = threshold*hh;
+			const maxMag = 0.9*hh;
+			const adeg = 120.0/maxMag;
+			let hue;
+			for ( let i=0; i<nx; i++ ) {
+				for ( let j=0; j<ny; j++ ) {
+					for ( let k=0; k<nz; k++ ) {
+						const icosa = gridArray[i][j][k];
+						const field = field_func(i,j,k);
+						const afield = Math.abs(field);
+						if ( afield<th ) {
+							icosa.visible = false;
+							continue;
+						}
+						let mag = Math.pow(afield,0.5);
+						if ( mag>maxMag ) mag = maxMag;
+						icosa.scale.set(mag,mag,mag);
+						
+						if ( hue_func==undefined ) {
+							const hue = (field>=0.0) ? Math.floor(120.5-adeg*mag) : Math.floor(120.5+adeg*mag);
+							icosa.material.color = new THREE.Color(`hsl(${hue},100%,50%)`);
+						} else {
+							const hue = hue_func(i,j,k);
+							if ( typeof(hue)==='number' ) {
+								icosa.material.color = new THREE.Color(`hsl(${hue},100%,50%)`);
+							} else {
+								icosa.material.color = new THREE.Color( hue );
+							}
+						}
+						icosa.visible = true;
+					}
+				}
+			}
+			grid3D.visible = true;
+		}
+		
+		function setThreshold( th ) { 
+			threshold = th;
+		}
+		
+	};
+	
+	// -----------------------  m3js_grid3D function end
+	
+	
+	// -----------------------  m3js_grid2D function  -----------------------------------------
+	//
+	//    ver 0.0.0  2022.10.08 created, last updated on 2022.12.20
+	//
+	//  agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+	//      p_nx: number of x-direction lines, p_ny: number of y-direction lines
+	//      xBoxSize: x-box size in the threejs-world
+	//		[zBoxSize]: z-box size in the threejs-world
+	//      [mode]: if mode=='xLineOnly' -->  grid change to x-lines only
+	//            if mode=='yLineOnly' -->  grid change to y-lines only
+	//            else or undefined --> grid x-lines and y-lines
+	//
+	//  scene.add( agrid );
+	//
+	//  agrid.setPallet( pallet, color );
+	//      pallet: pallet number 372 ... 399, (371:inner pallet)
+	//      color: col = new THREE.Color( color )
+	//
+	//  agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+	//      z_hue_func(i,j) { ... return [ z, [hue] ]; }
+	//          z: threejs world z-position at grid point (i,j)
+	//          hue: 0...359 huedeg, 360(black) ...gray...370(white) 371(inner pallet) 372...399 free
+	//              or string shch as 'red', '#ff0000', 'rgb(255,0,0)', 'hsl(0,100%,50%)'
+	//
+	// agrid.visible = false;
+	//
+	
+	const m3js_grid2D = function( p_nx, p_ny, xBoxSize, zBoxSize, mode ) {
+		const hueArray = []; // red:hue[deg][0]  green:hue[deg][1]  blue:hue[deg][2]
+		const gridArray = [];
+		const nx = p_nx;
+		const ny = p_ny
+		const hh = xBoxSize/nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*ny/2.0;
+		const z0 = ( zBoxSize==undefined ) ? y0 : zBoxSize/2.0;
+		const xLineOnly = ( mode==undefined || mode!='xLineOnly' ) ? false : true;
+		const yLineOnly = ( mode==undefined || mode!='yLineOnly' ) ? false : true;
+		const agrid = new THREE.Group();
+		
+		if ( hueArray.length<1 ) init_hueArray();
+		
+		if ( ! yLineOnly ) {
+			for (let j=0; j<ny; j++) {
+ 				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( nx * 3 );
+				const colors = new Float32Array( nx * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, nx );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[j] = line;
+    			agrid.add( gridArray[j] );
+			}
+		}
+		if ( ! xLineOnly ) {
+			for (let i=0; i<nx; i++) {
+				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( ny * 3 );
+				const colors = new Float32Array( ny * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, ny );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[ny+i] = line;
+    			agrid.add( gridArray[ny+i] );
+    		}
+    	}
+    	
+    	agrid.setPallet = setPallet; // setPallet( pallet, color )
+		agrid.update = gridUpdate; // gridUpdate( fieldFunc, [hueFunc|huedeg|hueStr] )
+		agrid.visible = false;
+		
+		return agrid;
+
+
+		// private functions
+		
+		function gridUpdate( z_hue_Func ) {
+			if ( ! yLineOnly ) {
+				for (let j=0; j<ny; j++) {
+					const line = gridArray[j];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let i= 0; i<nx; i++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[i*3]   = hh*i - x0;
+						positions[i*3+1] = hh*j - y0;
+						positions[i*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[i*3]   = r;
+						colors[i*3+1] = g;
+						colors[i*3+2] = b;
+					}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			if ( ! xLineOnly ) {
+				for (let i=0; i<nx; i++) {
+					const line = gridArray[ny+i];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let j= 0; j<ny; j++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[j*3]   = hh*i - x0;
+						positions[j*3+1] = hh*j - y0;
+						positions[j*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[j*3]   = r;
+            			colors[j*3+1] = g;
+            			colors[j*3+2] = b;
+    				}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			agrid.visible = true;
+		}
+		
+		function setPallet( pallet, color ) {
+			const deg = Math.floor(pallet);
+			const col = new THREE.Color( color );
+			hueArray[deg][0] = col.r;
+			hueArray[deg][1] = col.g;
+			hueArray[deg][2] = col.b;
+		}
+		
+		function init_hueArray() {
+			// deg= 0...359 hue color, 360: black ... gray ...  370:white,
+			// 371: inner use, 372...399 as pallete
+			for (let deg=0; deg<360; deg++) {
+				hueArray[deg] = [];
+				const col = new THREE.Color( 'hsl('+deg+',100%,50%)');
+				hueArray[deg][0] = col.r;
+				hueArray[deg][1] = col.g;
+				hueArray[deg][2] = col.b;
+			}
+			for (let deg=360; deg<400; deg++) {
+				hueArray[deg] = [];
+				const x = (deg<371) ? (deg-360)*0.1 : 0.0;
+				hueArray[deg][0] = x;
+				hueArray[deg][1] = x;
+				hueArray[deg][2] = x;
+			}
+		}
+		
+	};
+	
+	// -----------------------  m3js_grid2D function end
+	
+	
+	// ----------  dom control
+	
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function reset() {
+		resetFlag = 1;
+	}
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = (pauseFlag+1)%2; 
+		if (pauseFlag==0) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==1 ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() {
+		stepFlag = 1;
+	}
+	
+	function setTheme() {  // select theme
+		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
+		resetFlag = 1;
+	}
+	
+	function setDpp() {  // range mixing
+		v_dpp = Number(document.getElementById("range_dpp").value);
+		document.getElementById("text_dpp").innerHTML = "P-P distance: " + v_dpp.toFixed(2);
+	}
+	
+	function setDispMode() {  // select dispMode
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+		dispModeChanged = true;
+	}
+	
+	function setLegendFlag() {  // select dispMode
+		const leg = 0 + document.getElementById("slct_legend").selectedIndex;
+		legendFlag = (leg==1);
+	}
+	
+	function viewHome() {
+		viewHomeRequested = true;
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+
+		reset:			reset,			// reset()
+		pause:			pause,			// pause()
+		step:			step,			// step()
+		
+		setTheme:		setTheme,		// setTheme()
+		setDpp:			setDpp,			// setDpp()
+		
+		setDispMode:	setDispMode,	// setDispMode()
+		setLegendFlag:	setLegendFlag,	// setLegendFlag()
+		viewHome:		viewHome,		// viewHome()
+		
+	};
+	
+})(); // ====================  tjs096 module end  ====================
+
+
+// event
+const tjs = tjs096;
+window.addEventListener('load', tjs.main );
+
+
+// --------------------  end of javaScript
+
+  </script>
+  <style type="text/css">
+    body { color:#000000; background-color:#fff8dd;}
+  </style>
+</head>
+
+<body>
+<p>[tjs096] H2 molecule - Diffusion Monte-Carlo Method (DMC3D)</p>
+<div style="position: relative; overflow: hidden; width: 500px; height: 480px">
+  <canvas id="myCanvas" style="position: absolute; top: 0px; left: 0px"></canvas>
+  <div id="textOnCanvas" 
+    style="position:absolute; top:5px; left:5px; color:#888888; background-color:rgba(0, 0, 0, 0);
+           font-size:0.9rem"> ... One moment, please.<br> ... setting up the studio ... </div>
+</div>
+
+<label>theme:</label>
+<select id="slct_theme" onChange="tjs.setTheme()">
+<option>H atom ( p + e )</option><option>He atom (HeNuc + e + e )</option>
+<option>H2+ ion ( p + p + e )</option><option selected>H2 molecule ( p + p + e + e )</option>
+<option>e in parabolic V(r)=0.5*r^2 </option>
+<option>e in sphere well V(r)=0(r<3) 5.0(else)</option>
+</select>
+    <span style="margin-right: 40px;"></span>
+<button onClick="tjs.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="tjs.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="tjs.step()">step</button>
+<br>
+
+<label id="text_dpp">P-P distance: 1.40</label>
+<input type="range" id="range_dpp" min="0.4" max="7.4" value="1.4" step="0.05" 
+style="width:350px" oninput="tjs.setDpp()">
+<br>
+
+<label>disp mode:</label>
+<select id="slct_dispMode" onChange="tjs.setDispMode()">
+<option selected>replicas</option><option>wave function psi(x,y,z)</option><option>charge density(x,y,z)</option>
+<option>psi(x,y,z) / closs section</option><option>2D psi(x,y,0)</option>
+</select>
+<br>
+
+<label>legend:</label>
+<select id="slct_legend" onChange="tjs.setLegendFlag()">
+<option>off</option><option selected>on</option>
+</select>
+    <span style="margin-right: 20px;"></span>
+<button onClick="tjs.viewHome()">return to initial view</button>
+    <span style="margin-right: 20px;"></span>
+drag mouse to rotate view point
+<br>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
