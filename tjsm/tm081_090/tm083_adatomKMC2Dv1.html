@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>tm083_adatomKMC2D</title>
+
+<style type="text/css">
+	body { color:#000000; background-color:#fff8dd; }
+</style>
+
+<style type="text/css">
+	.lil-gui {
+		--width: 300px;
+		--name-width: 30%;
+	}
+</style>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+<!--
+<script type="importmap">
+{
+  "imports": {
+    "three": "../libm/three.module.js",
+    "orb": "../libm/OrbitControls.js",
+    "lil-gui": "../libm/lil-gui.module.min.js"
+  }
+}
+</script>
+-->
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+    "orb": "https://unpkg.com/three@0.147.0/examples/jsm/controls/OrbitControls.js",
+    "lil-gui": "https://unpkg.com/three@0.147.0/examples/jsm/libs/lil-gui.module.min.js"
+  }
+}
+</script>
+
+<script type="module">
+
+import * as THREE from 'three';
+import { OrbitControls } from 'orb';
+import { GUI } from 'lil-gui';
+
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tm083_adatomKMC2D
+//    Copyright(C) 2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2023.02.03 created, last updated on 2023.02.04
+//    ver 0.0.1  2023.12.22 v1, last updated on 2023.12.22
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  kinetic Monte-Carlo  KMC2D
+//
+//  - Bortz-Kalos-Liebowitz (BKL) algorithm
+//
+//    i-th transition rate in the system : ri
+//    total transition rate : RN = sum(ri, {i=1,2,...,N})
+//
+//  procedure
+//
+//    (1) t = 0
+//
+//    (2) select i : randomly (proportional to ri/RN)
+//      calculate R(i) = sum(rj, {j=1,2,...,i})
+//      get a uniform random number u in [0,1]
+//      find i  R(i-1) < u RN <= R(i)
+//
+//    (3) execute i-th transition
+//
+//    (4) update the time
+//      get a uniform random numner u in (0,1]
+//      dt = -log(u)/R
+//      t = t + dt
+//
+//    goto (2)
+//
+//  transion rate k = nue0*exp(-dE/kT)
+//      nue0 = kT/h , h: Plank's constant
+//
+//  periocic condition
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const adatomKMC2D = (function(){ // ====================  adatomKMC2D Module  ====================
+
+	const g_hPlank = 6.62607015e-34; // (Js) Plank's constant
+	const g_EE = 1.602176634e-19;   // (C) electron charge, energy : 1(eV) = EE(J)
+	const g_nMax = 10000;           // array max
+	const g_NxyMax = 200;           // NNx,NNy max
+
+	let g_NNa = 600;        // number of adatom
+	let g_NNx = 40;         // x-division of the field
+	let g_NNy = 40;         // y-division of the field
+	let g_sysTime = 0.0;    // (s) system time
+	let g_qqHopping = 0.2;  // (eV) hopping energy
+	let g_qqNeighbor = 0.3; // (eV) adsorption energy to neighbor adatom 
+	let g_kT = 0.1;         // (eV) thermal energy to random walk
+
+	let g_xCanvasSize = 400;// in pixel
+	let g_yCanvasSize = 400;// in pixel
+
+	const g_lattice = dimInt2(g_NxyMax,g_NxyMax); // lattice[ix][iy]  0...NNa: adatom, -1:free space
+	const g_ixAdatom = dimInt1(g_nMax); // g_ixAdatom[i] x-position of i-th adatom
+	const g_iyAdatom = dimInt1(g_nMax);	// g_iyAdatom[i] y-position of i-th adatom
+	const g_transition = dim1(4*g_nMax);// transition rate of direction E/N/W/S adatom
+	const g_rate = dim1(5);             // g_rate[] = transition rate ( see setRate() )
+
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+
+	function dimInt1( n ) {
+		return new Int32Array( n );
+	}
+
+	function dimInt2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Int32Array( nj );
+		}
+		return a;
+	}
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition( theme ) {
+
+		if (theme==0) {
+			g_NNx = 40; g_NNy = 40;
+		} else if (theme==1) {
+			g_NNx = 60; g_NNy = 60;
+		} else if (theme==2) {
+			g_NNx = 80; g_NNy = 80;
+		}
+		g_NNa = Math.floor(g_NNx*g_NNy*0.37);
+		g_sysTime = 0.0;
+		clearField();
+		setParticles();
+	}
+
+	function clearField() {
+		const nnx=g_NNx, nny=g_NNy;
+
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				g_lattice[i][j] = -1;
+			}
+		}
+	}
+
+	function setParticles() {
+		const nna=g_NNa, nnx=g_NNx, nny=g_NNy;
+
+		for (let ia=0; ia<nna; ia++) {
+			let x, y;
+			do {
+				x = Math.floor(nnx*Math.random());
+				y = Math.floor(nny*Math.random());
+			} while (g_lattice[x][y]!=-1); // lattice[][] >=0: particle, -1:free space
+			g_lattice[x][y] = ia;
+			g_ixAdatom[ia] = x;
+			g_iyAdatom[ia] = y;
+		}
+	}
+
+
+	// --------------------  time evolution  --------------------
+
+	function timeEvolution( nCalc, qqHop, qqNbr, TEnergy ) {
+
+		g_qqHopping = qqHop;
+		g_qqNeighbor = qqNbr;
+		g_kT = TEnergy;
+		const nn = g_NNa/10 + 1;
+		for (let i=0; i<nCalc; i++) {
+			for (let ii=0; ii<nn; ii++) {
+				const deltat = kmcStep();
+				g_sysTime += deltat;
+			}
+		}
+	}
+
+	function kmcStep() {
+
+		const rsum = setAllTransition();
+		const ipp = selectTransion(rsum);
+		move(ipp);
+		const r = 1.0-Math.random(); // r=(0,1], Math.random()= [0,1)
+		return(-Math.log(r)/rsum);
+	}
+
+	function setAllTransition() {
+		const nna=g_NNa;
+
+		setRate();
+		let rsum = 0.0;
+		for (let ia=0; ia<nna; ia++) {
+			rsum += setTransition(ia);
+		}
+		return rsum;
+	}
+
+	function setRate() {
+		g_rate[0] = transitionRate(g_qqHopping);
+		g_rate[1] = transitionRate(g_qqHopping + g_qqNeighbor);
+		g_rate[2] = transitionRate(g_qqHopping + 2.0*g_qqNeighbor);
+		g_rate[3] = transitionRate(g_qqHopping + 3.0*g_qqNeighbor);
+		g_rate[4] = transitionRate(g_qqHopping + 4.0*g_qqNeighbor);
+	}
+
+	function transitionRate( energy ) {
+		const nue0 = g_kT*g_EE/g_hPlank;
+		return nue0*Math.exp(-energy/g_kT);
+	}
+
+	function setTransition( ia ) {
+		const i = g_ixAdatom[ia], j = g_iyAdatom[ia];
+		const nb = numberOfNeighbor(i,j);
+		g_transition[ia*4  ] = dirRate((i+1)%g_NNx, j, nb);
+		g_transition[ia*4+1] = dirRate((i-1+g_NNx)%g_NNx, j, nb);
+		g_transition[ia*4+2] = dirRate(i, (j+1)%g_NNy, nb);
+		g_transition[ia*4+3] = dirRate(i, (j-1+g_NNy)%g_NNy, nb);
+		return (g_transition[ia*4+0]+g_transition[ia*4+1]+g_transition[ia*4+2]+g_transition[ia*4+3]);
+	}
+
+	function dirRate( ii, jj, nb ) {
+		let rt=0.0;
+		if (g_lattice[ii][jj]>=0) {
+			rt = 0.0;
+		} else {
+			const nb1 = numberOfNeighbor(ii,jj)-1;
+			rt = (nb<=nb1) ? g_rate[0] : g_rate[nb-nb1];
+		}
+		return rt;
+	}
+
+	function numberOfNeighbor( i, j ) {
+		let nb=0;
+		if (g_lattice[(i+1)%g_NNx][j]>=0) nb += 1;
+		if (g_lattice[(i-1+g_NNx)%g_NNx][j]>=0) nb += 1;
+		if (g_lattice[i][(j+1)%g_NNy]>=0) nb += 1;
+		if (g_lattice[i][(j-1+g_NNy)%g_NNy]>=0) nb += 1;
+		return nb;
+	}
+
+
+	function selectTransion( rsum ) { /* find i  R(i-1) < u RN <= R(i) */
+		const ipmax=4*g_NNa;
+		let rnd = rsum*Math.random();
+		for (let ipp=0; ipp<ipmax; ipp++) {
+			rnd -= g_transition[ipp];
+			if (rnd<0.0) return ipp;
+		}
+		return (ipmax-1);
+	}
+
+	function move( ipp ) { // update g_ixAdatom[], g_iyAdatom[], lattice[][]
+		const ia = Math.floor(ipp/4);
+		const id = ipp%4;
+		let i = g_ixAdatom[ia], j = g_iyAdatom[ia];
+		g_lattice[i][j] = -1;
+		if (id==0) i = (i+1)%g_NNx;
+		if (id==1) i = (i-1+g_NNx)%g_NNx;
+		if (id==2) j = (j+1)%g_NNy;
+		if (id==3) j = (j-1+g_NNy)%g_NNy;
+		g_ixAdatom[ia] = i; g_iyAdatom[ia] = j;
+		g_lattice[i][j] = ia;
+	}
+
+
+	// --------------------  draw  --------------------
+
+	function draw( ctx, drawMode ) {
+		const xp=20, yp=20, sc=360.0/g_NNx;
+
+		ctx.fillStyle = "rgb(80,80,80)";
+		ctx.fillRect(xp,yp,g_NNx*sc,g_NNy*sc);
+		
+		drawLattice(ctx, xp,yp,sc);
+
+		ctx.fillStyle = "rgb(0, 0, 0)";
+		ctx.fillText("time = "+(g_sysTime*1e12).toFixed(2)+"(ps)", 20, g_yCanvasSize-2);
+		ctx.fillStyle = "rgb(120, 120, 0)";
+		ctx.fillText("periodic condition", 20, 18);
+		ctx.fillText("box ="+g_NNx+" x "+g_NNy, 200, 18);
+	}
+
+	function drawLattice( ctx, xp, yp, sc ) {
+		const nnx=g_NNx, nny=g_NNy;
+
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				if (g_lattice[i][j]>=0) {
+					drawDisc(ctx, xp+(i+0.5)*sc,yp+((nny-j-1)+0.5)*sc,0.4*sc,"#00ff00");
+				}
+			}
+		}
+	}
+
+	function drawDisc( ctx, x, y, r, color ) {
+		const twoPi=2.0*Math.PI;
+		ctx.fillStyle = color;
+		ctx.beginPath();
+		ctx.arc(x, y, r, 0, twoPi, false);
+		ctx.fill();
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:           setInitialCondition, // setInitialCondition( theme )
+		evolve:         timeEvolution, // timeEvolution( nCalc, qqHop, qqNbr, TEnergy )
+		draw:           draw, // draw( ctx, drawMode )
+		
+		getSysParam:    function() { return [ g_NNa, g_NNx, g_NNy ]; },
+		getNow:         function() { return [ g_sysTime, g_qqHopping, g_qqNeighbor, g_kT ]; },
+		getWalker:      function(i) { return [ g_ixAdatom[i], g_iyAdatom[i] ]; },
+		getLattice:     function(ix,iy) { return g_lattice[ix][iy]; },
+	};
+
+})(); // ====================  adatomKMC2D end  ====================
+
+
+const tjsm083 = (function(){ // ====================  tjms Module  ====================
+
+	const theModule = adatomKMC2D;
+	let v_theme = 0; 		// 0:40x40  1:60x60  2:80x80 (g_NNx x gNNy)
+	let v_nCalc = 1;
+	let v_qqHop = 0.20;		// (eV) hopping energy
+	let v_qqNbr = 0.30;		// (eV) adsorption energy to neighbor adatom
+	let v_TEnergy = 0.100;	// (eV) thermal energy
+	
+	let p_nn, p_nx, p_ny; // <-- theModule.getSysParam();
+
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let dispMode = 0; // 0:ball
+	let dispModeChanged = true;
+	let viewHomeRequested = false;
+	let count = 0; // animate count
+	
+	// sizes in the threejs world
+	const xBoxSize = 600;
+	let scale, yBoxSize, zBoxSize, x0, y0;
+
+	// threejs object
+	let balls;
+	let line_box;
+	let cnvsprite;
+
+	// three.js , OrbitControls.js
+	const width = 500;
+	const height = 480;
+	const r_camera = 1200.0;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+	
+	// -------------------- lil-gui setup
+	
+	const uParam = {
+		theme: 0,
+		themeMenu: { 'lattice 40 x 40': 0, 'lattice 60 x 60': 1, 'lattice 80 x 80': 2 },
+		qqHopping: 0.2,
+		qqNeighbor: 0.3,
+		TEnergy: 0.1,
+		nCalc: 1,
+		nCalcMenu: [ 1, 2, 3, 4, 5, 6 ],
+		dispMode: 'threejs',
+		dispMenu: [ 'adatom', 'canvas2d' ],
+		
+		reset: function() { resetFlag = 1; },
+		pause: false,
+		viewHome: function() { viewHomeRequested = true; }
+	};
+	
+	const gui = new GUI();
+	setupGUI();
+	
+	function setupGUI() {
+		gui.add( uParam, 'theme', uParam.themeMenu ).onChange( 
+			v => { v_theme = v; resetFlag = 1; } );
+		
+		gui.add( uParam, 'qqHopping', 0.05, 0.25, 0.01 ).name( 'Q hopping' ).onChange( v => { v_qqHop = v; } );
+		
+		gui.add( uParam, 'qqNeighbor', 0.1, 0.5, 0.01 ).name( 'Q neighbor' ).onChange( v => { v_qqNbr = v; } );
+		
+		gui.add( uParam, 'TEnergy', 0.05, 0.25, 0.01 ).name( 'Q thermal' ).onChange( v => { v_TEnergy = v; } );
+		
+		gui.add( uParam, 'nCalc', uParam.nCalcMenu ).name( 'nCalc / frame' ).onChange( v => { v_nCalc = v; } );
+		
+		gui.add( uParam, 'dispMode', uParam.dispMenu ).name( 'disp. mode' ).onChange( 
+			str => { dispMode = uParam.dispMenu.indexOf(str); dispModeChanged = true; } );
+		
+		gui.add( uParam, 'reset' );
+		gui.add( uParam, 'pause' ).onChange( bool => { pauseFlag = ( bool ) ? 1 : 0; } );
+		gui.add( uParam, 'viewHome' ).name( 'camera: home view' );
+
+	}
+	
+	
+	// -------------------- main
+	
+	function main() {
+		// construct renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+		
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, 0, r_camera);
+		controls = new OrbitControls(camera,renderer.domElement);
+		
+		constructScene();
+		animate();
+	}
+
+
+	function constructScene() {
+
+		// init
+		theModule.init( v_theme );
+		[ p_nn, p_nx, p_ny ] = theModule.getSysParam();
+		scale = xBoxSize/p_nx;
+		yBoxSize = p_ny*scale;
+		x0 = xBoxSize/2.0;
+		y0 = yBoxSize/2.0;
+		
+		// scene
+		scene = new THREE.Scene();
+ 		
+ 		// camera
+		camera.position.set(0, 0, r_camera); 
+ 
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xFFFFFF,0.7);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xFFFFFF, 0.3);
+		scene.add(light);
+		
+		
+		// adatoms
+		// spheres = m3js_spheres( p_nn, x_y_z_r_material_func );
+		balls = m3js_spheres( p_nn, 
+			function(i) { // x_y_z_r_material_func: (i) --> [ x, y, z, r, [material] ]
+				let xi, yi;
+				[ xi, yi ] = theModule.getWalker(i);
+				const r = 0.5*scale;
+				const material = new THREE.MeshStandardMaterial({ color:"#44cc44" });
+				return [ (xi+0.5)*scale-x0, -(yi+0.5)*scale-y0, 0, r, material ];
+			}
+		);
+		scene.add( balls );
+		
+		// line box
+		{
+			const geometry = new THREE.PlaneGeometry( xBoxSize, yBoxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial({ color: 0x888866 }) );
+			line_box.position.set( 0, 0, -0.5*scale );
+			scene.add( line_box );
+		}
+		
+		// canvas sprite
+		// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 600, 600, 400 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+
+	}
+
+	// loop animation
+	function animate() {
+		
+		// select theme
+		if (resetFlag==1) {
+			resetFlag = 0;
+			constructScene();
+			dispModeChanged = true;
+			count = 0;
+		}
+		
+		if ( viewHomeRequested ) {
+			camera.position.set(0, 0, r_camera);
+			viewHomeRequested = false;
+		}
+		
+		if ( dispModeChanged ) {
+			dispModeChanged = false;
+			
+			line_box.visible = (dispMode==0) ? true : false;
+			cnvsprite.visible = false;
+			balls.visible = false;
+		}
+		
+		// evolve
+		if (pauseFlag==0) {
+			theModule.evolve( v_nCalc, v_qqHop, v_qqNbr, v_TEnergy);
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( 1, v_qqHop, v_qqNbr, v_TEnergy);
+		}
+
+		// move balls
+		if ( dispMode==0 ) {
+			// spheres.update( x_y_z_rmag_col_func ); // x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+			balls.update(
+				function(i) {
+					let xi, yi;
+					[ xi, yi ] = theModule.getWalker(i);
+					return [(xi+0.5)*scale-x0, (yi+0.5)*scale-y0, 0 ];
+				}
+			);
+		}
+		
+		// canvas sprite
+		if ( dispMode==1 ) {
+			// cnvsprite.update( drawFunc )
+			cnvsprite.update(
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					theModule.draw( ctx, dispMode-1 );
+				}
+			);
+		}
+		
+		// output to innerHTML
+		if (count % 10 == 0) {
+			const kB = 1.38064852e-23; // Boltzmann constant
+			const ec = 1.60217662e-19; // electron charge
+			let time, qqHopping, qqNeighbor, kT;
+			[ time, qqHopping, qqNeighbor, kT ] = theModule.getNow();
+			let msg = "box="+p_nx+"x"+p_ny+", N="+p_nn
+				+ ", time(ps)="+(time*1e12).toFixed(1)+"<br>"
+				+ "temp(eV)="+kT+" ~ "+(kT*ec/kB).toFixed(0)+"(K)";
+			document.getElementById("text_caption").innerHTML = msg;
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_spheres function  ---------------------------
+	//
+	//    ver 0.0.0  2022.10.26 created, last updated on 2022.12.20
+	//
+	//  spheres = m3js_spheres( p_nn, x_y_z_r_material_func );
+	//     p_nn: number of arrows
+	//     x_y_z_r_material_func: (i) --> [ x, y, z, r, [material] ]
+	//        x,y,z: i-th sphere position in the threejs world
+	//        r: i-th sphere radius in the threejs world
+	//        material: such as = new THREE.MeshStandardMaterial({ color:"#ff0000", opacity:1.0, transparent:true });
+	//  scene.add( spheres );
+	//
+	//  spheres.update( x_y_z_rmag_col_func ); // x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+	//     x_y_z_rmag_col_func: (i) --> [ x, y, z, [rmag], [col] ]
+	//        x,y,z: i-th sphere position in the threejs world
+	//        rmag: i-th sphere radius magnified ratio: 0.0 ... 1.0
+	//        col: such as "#ff0000" or "red" or "rgb(255,0,0)" or 0xff0000 or ...
+	//
+	//  spheres.setOpacity( opacity );
+	//     opacity: 0.0 (transparent) ..... 1.0 (opaque)
+	//
+	//  spheres.visible = true | false;
+	//
+	
+	function m3js_spheres( p_nn, x_y_z_r_material_func ) {
+		const nn = p_nn;
+		const defaultMaterial = new THREE.MeshStandardMaterial({ color:"#ff0000", opacity:1.0, transparent:true });
+		const spheres = new THREE.Group();
+		spheres.array = [];
+		
+		for (let i=0; i<nn; i++) {
+			let x, y, z, r, mater;
+			[ x, y, z, r, mater ] = x_y_z_r_material_func(i);
+			const geometry = new THREE.SphereGeometry(r, 18, 10);
+			const material = ( mater != undefined ) ? mater : defaultMaterial;
+			spheres.array[i] = new THREE.Mesh(geometry, material);
+			spheres.array[i].position.set(x, y, z);
+			spheres.array[i].visible = true;
+			spheres.add( spheres.array[i] );
+		}
+		
+		spheres.update = spheresUpdate;
+		spheres.setOpacity = setSheresOpacity;
+		return spheres;
+		
+		
+		function spheresUpdate( x_y_z_rmag_col_func ) {
+			for (let i=0; i<nn; i++) {
+				const vec = x_y_z_rmag_col_func(i);
+				if ( !Array.isArray(vec) ) {
+					spheres.array[i].visible = false;
+					continue;
+				}
+				let x, y, z, rmag, col;
+				[ x, y, z, rmag, col ] = vec;
+				spheres.array[i].position.set(x, y, z);
+				if ( rmag != undefined ) spheres.array[i].scale.set(rmag,rmag,rmag);
+				if ( col != undefined ) spheres.array[i].material.color = new THREE.Color( col );
+				spheres.array[i].visible = true;
+			}
+			spheres.visible = true;
+		}
+		
+		function setSheresOpacity( opa ) {
+			for (let i=0; i<nn; i++) {
+				spheres.array[i].material.opacity = opa;
+			}
+		}
+	}
+	
+	// -----------------------  m3js_spheres function end
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main: main, // main()
+		
+	}
+
+})(); // ====================  tjsm083 module end  ====================
+
+
+// event
+const tjsm = tjsm083;
+window.addEventListener('load', tjsm.main );
+
+
+</script>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+</head>
+
+<body>
+<p>[tm083] adatom - kinetic Monte-Carlo simulation KMC2D</p>
+<canvas id="myCanvas" width="500" height="480" ></canvas>
+<br>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
