@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>tjs103_solveDiracEquation1D</title>
+  <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+  <!--
+  <script src="../lib/three.min.js"></script>
+  <script src="../lib/OrbitControls.js"></script>
+  -->
+  <script>
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tjs103_solveDiracEquation1D
+//    Copyright(C) 2022-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2022.04.29 created, last updated on 2022.05.09
+//    ver 0.0.1  2022.09.29 v1, last updated on 2023.01.15
+//    ver 0.0.2  2023.12.27 v2, last updated on 2023.12.27
+//
+//
+// ----------------------------------------------------------------------------------------------------------------- 
+//
+//  Jeffrey Yepez; arXiv quant-ph/0210093v1 11 Oct. 2002
+//    "An efficient and accurate algorithm for the Dirac equation"
+//
+//    Dirac equation becomes appoximately eq(24) when dt is small ( error term Oder(dr^2,dt) )
+//      eq(24) --> in 1D case (alpha=psi[0], beta=psi[1], mue=psi[2], nue=psi[3])
+//      m c^2/hBar = c^2 in au (m=1,hBar=1)
+//      dt psi[0] = c^2 (dx*-d{psi[1]} + i psi[2]), where d{psi[1]} = (psi[1][i+1]-psi[1][i-1])/(2*dx)
+//      dt psi[1] = c^2 (dx*-d{psi[0]} + i psi[3])
+//      dt psi[2] = c^2 (dx* d{psi[3]} + i psi[0])
+//      dt psi[3] = c^2 (dx* d{psi[2]} + i psi[1])
+//
+//    initial condition: |psi[0]|=1,others=0, Gaussianwave, momentum=10.0au
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const solveDiracEquation1D = (function(){ // ====================  solveDiracEquation1D Module  ====================
+
+										// au: atomic unit hBar=1,e=1,me=1,a0=1
+	const g_auLength = 5.29177211e-11;  // (m) 1(au) = g_auLength (m)
+	const g_auTime = 2.418884326e-17;   // (s) 1(au) = g_auTime (s)
+	const g_auEnergy = 4.35974465e-18;  // (J) 1(au) = g_auEnergy (J)
+	const g_au2eV = 27.211386;          // (eV) 1(au) = 27.211386 (eV)
+
+	let g_NNx = 540;		// number of space division
+	let g_sysTime = 0.0;	// (au) system time in the module
+	let g_dx = 0.05;		// (au) space division 
+	let g_dt = 1.0e-7;		// (au) time step
+	let g_px0 = 10.0;		// (au) momentum
+
+	let g_xCanvasSize = 600;// in pixel
+	let g_yCanvasSize = 300;
+
+	const g_psi = dim3(4,g_NNx,2);// wave function psi[0:alpha|1:beta|2:mue|3:nue][ix][0:Re|1:Im]
+	const g_vv = [];				// external potential
+
+	function dim3( ni, nj, nk ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = [];
+			for (let j=0; j<nj; j++) {
+				a[i][j] = new Float64Array( nk );
+			}
+		}
+		return a;
+	}
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition( momentum ) {
+
+		g_sysTime = 0.0;
+		g_px0 = momentum;
+		setDiracWave(10.0, 1.0, g_px0); //(wavePos, waveWidth, momentum)
+		setPotential(); // free space
+	}
+
+	function setDiracWave( wavePos, waveWidth, momentum ) {
+		const nnx=g_NNx, psi=g_psi;
+
+		const a = Math.pow(2.0*Math.PI*waveWidth*waveWidth,-0.25);
+		for (let i=1; i<nnx-1; i++) {
+			const x = i*g_dx;
+			const phAb = a*Math.exp(-((x-wavePos)/(2.0*waveWidth))*((x-wavePos)/(2.0*waveWidth)));
+			const phPh = momentum*x;
+			psi[0][i][0] = phAb*Math.cos(phPh);
+			psi[0][i][1] = phAb*Math.sin(phPh);
+		}
+		psi[0][0][0] = 0.0;
+		psi[0][0][1] = 0.0;
+		psi[0][nnx-1][0] = 0.0;
+		psi[0][nnx-1][1] = 0.0;
+
+		for (let i=0; i<nnx; i++) {
+			psi[1][i][0] = 0.0; psi[1][i][1] = 0.0;
+			psi[2][i][0] = 0.0; psi[2][i][1] = 0.0;
+			psi[3][i][0] = 0.0; psi[3][i][1] = 0.0;
+		}
+
+		const amp = Math.sqrt(normDirac());
+		for (let i=1; i<nnx-1; i++) {
+			psi[0][i][0] = psi[0][i][0]/amp;
+			psi[0][i][1] = psi[0][i][1]/amp;
+		}
+	}
+
+	function setPotential() {
+		const nnx=g_NNx;
+
+		for (let i=0; i<nnx; i++) {
+			g_vv[i] = 0.0;
+		}
+	}
+
+
+	// --------------------  time evolution  --------------------
+
+	function timeEvolution( nTimes ) {
+
+		for (let i=0; i<nTimes; i++) {
+			g_sysTime += g_dt;
+			timeStep(g_dt);
+		}
+	}
+
+	function timeStep( deltat ) {
+		const nnx=g_NNx, psi=g_psi;
+
+		const c = 137.0; // light speed in au
+		const a = c*c*deltat;
+
+		for (let i=0; i<nnx; i++) {
+			let ip = i+1; if (ip>=nnx) ip = 0;
+			let im = i-1; if (im<0) im = nnx-1;
+			psi[0][i][0] += a*((-psi[1][ip][0]+psi[1][im][0])/2.0-psi[2][i][1]);
+			psi[0][i][1] += a*((-psi[1][ip][1]+psi[1][im][1])/2.0+psi[2][i][0]);
+
+			psi[1][i][0] += a*((-psi[0][ip][0]+psi[0][im][0])/2.0-psi[3][i][1]);
+			psi[1][i][1] += a*((-psi[0][ip][1]+psi[0][im][1])/2.0+psi[3][i][0]);
+
+			psi[2][i][0] += a*((psi[3][ip][0]-psi[3][im][0])/2.0-psi[0][i][1]);
+			psi[2][i][1] += a*((psi[3][ip][1]-psi[3][im][1])/2.0+psi[0][i][0]);
+
+			psi[3][i][0] += a*((psi[2][ip][0]-psi[2][im][0])/2.0-psi[1][i][1]);
+			psi[3][i][1] += a*((psi[2][ip][1]-psi[2][im][1])/2.0+psi[1][i][0]);
+		}
+	}
+
+	// --- utilities
+
+	function normDirac() {
+		let s=0.0;
+		for (let j=0; j<4; j++) {
+			s += normSpinor(j);
+		}
+		return s;
+	}
+
+	function normSpinor( sp ) {
+		const nnx=g_NNx, psi=g_psi;
+		let s=0.0;
+		for (let i=0; i<nnx; i++) {
+			s += (psi[sp][i][0]*psi[sp][i][0]+psi[sp][i][1]*psi[sp][i][1])*g_dx;
+		}
+		return s;
+	}
+
+
+	// --------------------  draw  --------------------
+
+	const psiColor = ['rgb(250,0,0)', 'rgb(100,100,0)', 'rgb(0,150,0)', 'rgb(0,0,250)'];
+	const psiStr = ['alpha', 'beta', 'mue', 'nue'];
+
+	function draw( ctx ) {
+
+		for (let i=0; i<4; i++) {
+			drawWave(ctx, g_psi[i],0,80,1.0,psiColor[i]); //(ph,xp,yp,sc,col)
+		}
+		ctx.fillStyle = "rgb(240,240,240)"; //background color
+		ctx.fillRect(0, 200, 600, 100); //clear text area
+		ctx.fillStyle = "rgb(0, 0, 0)";
+		ctx.fillText("time="+g_sysTime.toFixed(6)+"(au)", 10, g_yCanvasSize-30);
+		ctx.fillText("norm="+normDirac().toFixed(8), 10, g_yCanvasSize-10);
+
+		for (let i=0; i<4; i++) {
+			ctx.fillStyle = psiColor[i];
+			ctx.fillText(psiStr[i], 200, g_yCanvasSize-70+20*i);
+			ctx.fillText("psi["+i+"] norm = "+normSpinor(i).toFixed(8), 250, g_yCanvasSize-70+20*i);
+		}
+		ctx.fillStyle = "rgb(100,100,100)";
+		ctx.fillText("initial condition:", 10,175);
+		ctx.fillText("|psi[0]|=1,others=0, Gaussianwave, momentum="+g_px0.toFixed(1)+"au",10,195);
+		//document.getElementById("text_caption").innerHTML = "set momentum and press reset";
+	}
+
+	function drawWave( ctx, ph, xp, yp, sc, col ) {
+		const nnx=g_NNx, pmag=80.0, thDeg=15.0;
+		const snth =Math.sin(thDeg*Math.PI/180.0), csth =Math.cos(thDeg*Math.PI/180.0);
+
+		ctx.strokeStyle = col;
+		ctx.beginPath();
+		for (let i=0; i<nnx; i++) {
+			const ph0 = ph[i][0]*pmag, ph1 = ph[i][1]*pmag;
+			//ctx.lineTo(xp+(i+snth*ph1)*sc,yp-(ph0+csth*ph1)*sc);
+			ctx.lineTo(xp+(i+snth*ph1)*sc,yp+(ph0+csth*ph1)*sc);
+		}
+		ctx.stroke();
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:           setInitialCondition, // setInitialCondition( momentum )
+		evolve:         timeEvolution, // timeEvolution( nCalc )
+		draw:           draw, // draw( ctx )
+
+		getAUinSI:      function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:    function() { return [ g_NNx, g_dx, g_dt ]; },
+		getNow:         function() { return [ g_sysTime, normDirac() ]; },
+		getNormSpinor:  normSpinor, // normSpinor( sp )
+		getPsi:         function(sp,i) { return [ g_psi[sp][i][0], g_psi[sp][i][1] ]; },
+	}
+
+})(); // ====================  solveDiracEquation1D end  ====================
+
+
+const tjs103 = (function(){ // ====================  tjs Module  ====================
+
+	const theModule = solveDiracEquation1D;
+	
+	let v_theme = 0;
+	let v_momentum = 10.0;
+	let v_nCalc = 20;
+	
+	let p_auLength, p_auTime, p_auEnergy, p_au2eV // <-- theModule.getAUinSI()
+	let p_nx, p_dx, p_dt; // <-- theModule.getSysParem();
+	
+	const spColor = [ 0, 60, 120, 200 ]; // hue color
+	const spStr = ['alpha', 'beta ', 'mue  ', 'nue  ']; 
+	
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let dispMode =  0; // 0:spinor 1:spinor(canvas2d)
+	let dispModeChanged = true;
+	let legendFlag = true;
+	let viewHomeRequested = false;
+	let count = 0;
+	
+	// sizes in the treejs world
+	const xBoxSize = 600;
+	const yBoxSize = 400;
+	const zBoxSize = 400;
+	const x0 = xBoxSize/2.0;
+	const y0 = yBoxSize/2.0;
+	const zo = zBoxSize/2.0;
+	let scale;
+	let hh;
+	
+	// threejs world object
+	let lines = [];
+	let cnvsprite;
+	let line_box;
+	
+	// three.js , OrbitControls.js
+	const width = 500;
+	const height = 480;
+	const r_camera = 1360;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+
+	// --------------------  main
+	
+	function main() {
+		// constract renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+		
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, -0.4*r_camera, 0.9*r_camera);
+		controls = new THREE.OrbitControls(camera,renderer.domElement);
+		
+		initDom();
+		
+		constructScene();
+		animate();
+	}
+	
+	
+	function constructScene() {
+		
+		// init DE1D
+		theModule.init( v_momentum );
+		// get system param.
+		[ p_nx, p_dx, p_dt ] = theModule.getSysParam();
+		scale = xBoxSize/(p_nx*p_dx);
+		hh = xBoxSize/p_nx;
+
+		// scene
+		scene = new THREE.Scene();
+ 
+		camera.position.set(0, 0, r_camera);
+ 
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xffffff,0.5);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xffffff, 1.0);
+		scene.add(light);
+		
+		
+		// alpha,beta,mue,nue - lines
+		// colorLine = m3js_colorLine( p_nx, xBoxSize )
+		for (let sp=0; sp<4; sp++) {
+			lines[sp] = m3js_colorLine( p_nx, xBoxSize );
+			scene.add( lines[sp] );
+		}
+		
+		// line_box
+		{
+			const geometry = new THREE.BoxGeometry( xBoxSize, yBoxSize, zBoxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial( { 
+				color: 0x888844 } ) );
+			scene.add( line_box );
+		}
+		
+		// canvas sprite
+		// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 720, 400, 300 );
+		cnvsprite.position.set(0,0,0);
+		cnvsprite.visible = false;
+		scene.add( cnvsprite );
+		
+	}
+	
+	
+	// loop animation
+	function animate() {
+		
+		// select theme
+		if (resetFlag==1) {
+			resetFlag = 0;
+			constructScene();
+			dispModeChanged = true;
+			count = 0;
+		}
+		
+		if ( viewHomeRequested ) {
+			camera.position.set(0, 0, r_camera);
+			viewHomeRequested = false;
+		}
+		
+		//  clear objects
+		if (dispModeChanged) {
+			dispModeChanged = false;
+			
+			line_box.visible = (dispMode==0) ? true : false;
+			for (let sp=0; sp<4; sp++) {
+				lines[sp].visible = false;
+			}
+			cnvsprite.visible = false;
+		}
+		
+		// DE1D evolve
+		if (pauseFlag==0) {
+			theModule.evolve( v_nCalc );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( v_nCalc );
+		}
+		
+		if ( dispMode==0 ) {
+			const pmag = 200.0;
+			for (let sp=0; sp<4; sp++) {
+				// colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+				lines[sp].update(
+					function(i) {
+						let pRe, pIm;
+						[ pRe, pIm ] = theModule.getPsi( sp, i );
+						return [ i*hh-x0, pmag*pRe, pmag*pIm, spColor[sp] ];
+					}
+				);
+			}
+		}
+		
+		// update sprite
+		if ( dispMode==1 ) {
+			cnvsprite.update(
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					theModule.draw( ctx );
+				}
+			);
+		}
+		
+		
+		// output to innerHTML
+		if (count % 10 == 0) {
+			const xMax = p_nx*p_dx;
+			let sysTime, norm;
+			[ sysTime, norm ] = theModule.getNow();
+			
+			document.getElementById("text_caption").innerHTML = 
+				"initialCondition: |alpha|=1.0, |beta|=|mue|=|nue|= 0.0<br>"
+				+ "time(au) ="+sysTime.toFixed(6)+", norm="+norm.toFixed(8)+"<br>";
+			
+			if (legendFlag) {
+				let msg = "periodic box(au) = "+xMax.toFixed(1)+", momentum(au)="+v_momentum.toFixed(1)+"<br>";
+				if ( dispMode==0 ) {
+					for (let sp=0; sp<4; sp++) {
+						msg += "<span style='color:hsl("+spColor[sp]+",100%,50%)'>"
+							+ "psi["+sp+"] norm = "+theModule.getNormSpinor(sp).toFixed(8)
+							+ " --- "+spStr[sp]
+							+ "</span><br>"
+					}
+				}
+				document.getElementById('textOnCanvas').innerHTML = msg;
+			} else {
+				document.getElementById('textOnCanvas').innerHTML = "";
+			}
+
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_colorLine function  ------------------------------
+	//
+	//    ver 0.0.0  2022.09.19 created, last updated on 2022.12.19
+	//
+	//  colorLine = m3js_colorLine( p_nx, xBoxSize )
+	//     p_nx: number of x-division
+	//     xBoxSize: x-box size in the threejs-world
+	//  
+	//  scene.add( colorLine );
+	//
+	//  colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+	//    x_y_z_color_function: function(i) { ... return [ x, y, z, color ]; }
+	//      (x,y,z): position, 
+	//      color: number: hue, 0...359
+	//             string: shch as 'red', '#ff0000', 'rgb(255,0,0)', 'hsl(0,100%,50%)'
+	//
+	//  colorLine.visible = false
+	//
+	
+	function m3js_colorLine( p_nx, xBoxSize ) {
+		const nx = p_nx;
+		const hh = xBoxSize/p_nx;
+		let colorLine;
+		
+ 		const geometry = new THREE.BufferGeometry();
+ 		const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+		const positions = new Float32Array( nx * 3 );
+		const colors = new Float32Array( nx * 3 );
+		geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+		geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+		geometry.setDrawRange( 0, nx );
+    	colorLine = new THREE.Line(geometry,material);
+		
+		colorLine.update = colorLine_update;
+		
+		return colorLine;
+		
+		
+		function colorLine_update( x_y_z_color_function ) {
+			const line = colorLine;
+			const positions = line.geometry.attributes.position.array;
+			const colors = line.geometry.attributes.color.array;
+			for (let i=0; i<nx; i++) {
+				let x, y, z, col;
+				[ x, y, z, col ] = x_y_z_color_function(i);
+				positions[i*3]   = x;
+				positions[i*3+1] = y;
+				positions[i*3+2] = z;
+				if ( col==undefined ) col = 'yellow';
+				const colorStr = ( typeof(col) == 'string' ) ? col : `hsl(${col},100%,50%)`;
+				const colr = new THREE.Color( colorStr );
+				colors[i*3]   = colr.r;
+				colors[i*3+1] = colr.g;
+				colors[i*3+2] = colr.b;
+			}
+			line.geometry.attributes.position.needsUpdate = true;
+			line.geometry.attributes.color.needsUpdate = true;
+			colorLine.visible = true;
+		}
+	
+	}
+	
+	// -----------------------  m3js_colorLine function end
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+	
+	// ----------  dom control
+	
+	function initDom() {
+		document.getElementById("step_button").style.visibility = "hidden";
+	}
+	
+	function reset() {
+		resetFlag = 1;
+	}
+	
+	function pause() {
+		let btn = document.getElementById("pause_button");
+
+		pauseFlag = (pauseFlag+1)%2; 
+		if (pauseFlag==0) btn.innerHTML = "pause"; else btn.innerHTML = "go";
+		
+		if ( pauseFlag==1 ) {
+			document.getElementById("step_button").style.visibility = "visible";
+		} else {
+			document.getElementById("step_button").style.visibility = "hidden";
+		}
+	}
+	
+	function step() {
+		stepFlag = 1;
+	}
+	
+	function setMomentum() {  // -20.0 - 20.0
+		v_momentum = Number(document.getElementById("range_momentum").value);
+		document.getElementById("text_momentum").innerHTML = " " + v_momentum.toFixed(1);
+		resetFlag = 1;
+	}
+	
+	function setDispMode() {  // select dispMode
+		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
+		dispModeChanged = true;
+	}
+	
+	function viewHome() {
+		viewHomeRequested = true;
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:			main,			// main()
+		
+		// dom control
+		reset:			reset,			// reset()
+		pause:			pause,			// pause()
+		step:			step,			// step()
+		
+		setMomentum:	setMomentum,	// setMomentum()
+		setDispMode:	setDispMode,	// setDispMode()
+		viewHome:		viewHome,		// viewHome()
+	};
+	
+})(); // ====================  tjs103 module end  ====================
+
+
+// event
+const tjs = tjs103;
+window.addEventListener('load', tjs.main );
+
+
+// --------------------  end of javaScript
+
+  </script>
+  <style type="text/css">
+    body { color:#000000; background-color:#fff8dd;}
+  </style>
+</head>
+
+<body>
+<p>[tjs103] solve Dirac Equation in free space 1D</p>
+<div style="position: relative; overflow: hidden; width: 500px; height: 480px">
+  <canvas id="myCanvas" style="position: absolute; top: 0px; left: 0px"></canvas>
+  <div id="textOnCanvas" 
+    style="position:absolute; top:5px; left:20px; color:#99aa44; background-color:rgba(0, 0, 0, 0);
+           font-size:0.9rem"> ... One moment, please.<br> ... setting up the studio ... </div>
+</div>
+
+theme: spinor
+    <span style="margin-right: 220px;"></span>
+<button onClick="tjs.reset()">reset</button>
+    <span style="margin-right: 20px;"></span>
+<button id="pause_button" onClick="tjs.pause()">pause</button>
+    <span style="margin-right: 10px;"></span>
+<button id="step_button" onClick="tjs.step()">step</button>
+<br>
+
+<label>momentum </label>
+<input type="range" id="range_momentum" min="-10.0" max="10.0" value="10.0" step="0.1" 
+style="width:200px" list="tickmarks_mpx" oninput="tjs.setMomentum()">
+ = <label id="text_momentum"> 10.0</label> (au)
+<datalist id="tickmarks_mpx"><option value="-10.0"><option value="-5.0"><option value="0.0">
+<option value="5.0"><option value="10.0"></datalist>
+<br>
+
+<label>disp mode:</label>
+<select id="slct_dispMode" onChange="tjs.setDispMode()">
+<option selected>spinor</option><option>spinor(canvas2d)</option>
+</select>
+    <span style="margin-right: 140px;"></span>
+<button onClick="tjs.viewHome()">return to initial view</button>
+<br>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
