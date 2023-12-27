@@ -1,0 +1,1395 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>tm088_jetDSMC2D</title>
+
+<style type="text/css">
+	body { color:#000000; background-color:#fff8dd; }
+</style>
+
+<style type="text/css">
+	.lil-gui {
+		--width: 300px;
+		--name-width: 30%;
+	}
+</style>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+<!--
+<script type="importmap">
+{
+  "imports": {
+    "three": "../libm/three.module.js",
+    "orb": "../libm/OrbitControls.js",
+    "lil-gui": "../libm/lil-gui.module.min.js"
+  }
+}
+</script>
+-->
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+    "orb": "https://unpkg.com/three@0.147.0/examples/jsm/controls/OrbitControls.js",
+    "lil-gui": "https://unpkg.com/three@0.147.0/examples/jsm/libs/lil-gui.module.min.js"
+  }
+}
+</script>
+
+<script type="module">
+
+import * as THREE from 'three';
+import { OrbitControls } from 'orb';
+import { GUI } from 'lil-gui';
+
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tm088_jetDSMC2D
+//    Copyright(C) 2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2023.02.04 created, last updated on 2023.02.04
+//    ver 0.0.1  2023.12.27 v1, last updated on 2023.12.27
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  direct simulation Monte Carlo DSMC2D
+//
+//  cell size; Lc = 0.001 (m)
+//  mean free path; lambda ~ 0.002 (m)
+//  No. of representative particle in the cell; Nc ~ 30 (particles)
+//  maximum relative speed; Vmax ~ 1000*2 (m/s)
+//  time interval; dt = 0.2*Lc/Vmax = 1.0e-7 (s)
+//  cross section of the collision; sgm = 4R = 4*3.0e-10 (m)
+//  number density; n = Nc*FN/Lc^2, lambda = 1/(n*sgm)
+//    n = 1/(lambda*sgm) = 1/(0.002*1.2e-9) = 4.0e11 (particles/m^2)
+//  represent numbers of the real molecule; FN
+//    FN = n*Lc^2/Nc = 4e11*1e-6/30 = 1.3e4 --> 2.0e4 (particles)
+//  the number of collisions in the cell; Mc
+//    Mc = 0.5*Nc*Nc*FN*sgm*Vmax*dt/Lc^2 ~ 4(times)
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const jetDSMC2D = (function(){ // ====================  jetDSMC2D Module  ====================
+
+	const g_PI = 3.141592653598793; // Math.PI
+	const g_AMU = 1.66053904e-27;   // (kg) atomic mass unit
+	const g_kB = 1.380649e-23;      // (J/K) Boltzmann's constant
+	const g_NsxMax = 200;           // cell array x-max
+	const g_NsyMax = 100;           // cell array y-max
+	const g_NNpMax = g_NsxMax*g_NsyMax*30; // Nc=30 : Number of representative particle in the cell
+
+	let g_sysTime = 0.0;    // (s) system time
+	let g_dt = 1.0e-7;      // (s) time step
+	let g_dx = 1.0e-3;      // (m) x-division
+	let g_dy = 1.0e-3;      // (m) y-division
+	let g_Nsx = 120;        // array x-size of field
+	let g_Nsy = 80;         // array y-size of field
+	let g_xMax = g_Nsx*g_dx;// (m) array x-size of field
+	let g_yMax = g_Nsy*g_dy;// (m) array y-size of field
+	let g_ffn = 20000;      // represent numbers of the real molecule
+	let g_sgm = 4.0*3.0e-10;// (m for 2D) collision cross section
+	let g_NNp = g_Nsx*g_Nsy*30;// number of particles
+	let g_periodicSW = 0;   // g_periodicSW 0:non-periodic 1:periodic
+	let g_adsorptionEnergy = 0.1;// (eV) adsporption energy
+
+	let g_xCanvasSize = 400; // in pixel
+	let g_yCanvasSize = 400;
+
+	let g_imageData = null;	// = g_ctx.getImageData(20, 20, 360, 240);
+
+	const g_xx = dim1(g_NNpMax);        // (m) x-position of 1-th particle
+	const g_yy = dim1(g_NNpMax);        // (m) y-position of 1-th particle
+	const g_vx = dim1(g_NNpMax);        // (m/s) x-velocity of 1-th particle
+	const g_vy = dim1(g_NNpMax);        // (m/s) xy-velocity of 1-th particle
+	const g_mass = dim1(g_NNpMax);      // (kg) xmass of 1-th particle
+	const g_kind = dimInt1(g_NNpMax);   // kind of 1-th particle
+	const g_mark = dimInt1(g_NNpMax);   // mark of 1-th particle
+	const g_section = dimInt3(g_NsxMax,g_NsyMax,200); // particle number in the cell[i][j]
+	const g_cellAttribute = dimInt2(g_NsxMax,g_NsyMax); // 0:free space 1:wall 2:absorption 3:adsorption
+
+	const g_meanN = dim2(g_NsxMax,g_NsyMax);
+	const g_density = dim2(g_NsxMax,g_NsyMax);  // density of the cell[i][j]
+	const g_meanDensity = dim2(g_NsxMax,g_NsyMax);
+	const g_xFlow = dim2(g_NsxMax,g_NsyMax);    // x-flow velocity of the cell[i][j]
+	const g_yFlow = dim2(g_NsxMax,g_NsyMax);    // y-flow velocity of the cell[i][j]
+	const g_meanxFlow = dim2(g_NsxMax,g_NsyMax); // mean x-flow velocity of the cell[i][j]
+	const g_meanyFlow = dim2(g_NsxMax,g_NsyMax); // mean y-flow velocity of the cell[i][j]
+	const g_temperature = dim2(g_NsxMax,g_NsyMax); // temperature of the cell[i][j]
+	const g_pressure = dim2(g_NsxMax,g_NsyMax); // pressure of the cell[i][j]
+
+	const g_vDistribution = dimInt1(200); // velocity distribution function
+	const g_vSpace = dimInt2(250,250);  // velocity-space
+
+	const g_hue = dimInt2(3,368);
+	const g_hueColor = [];
+
+	(function() {
+		var deg,x,r,g,b;
+
+		for (let deg=0; deg<368; deg++) {
+			if (deg<60) {
+				x = deg;
+				g_hue[0][deg] = 255;
+				g_hue[1][deg] = Math.floor(255.0*x/60.0);
+				g_hue[2][deg] = 0;
+			} else if (deg<120) {
+				x = deg-60;
+				g_hue[0][deg] = Math.floor(255.0*(60.0-x)/60.0);
+				g_hue[1][deg] = 255;
+				g_hue[2][deg] = 0;
+			} else if (deg<180) {
+				x = deg-120;
+				g_hue[0][deg] = 0;
+				g_hue[1][deg] = 255;
+				g_hue[2][deg] = Math.floor(255.0*x/60.0);
+			} else if (deg<240) {
+				x = deg-180;
+				g_hue[0][deg] = 0;
+				g_hue[1][deg] = Math.floor(255.0*(60.0-x)/60.0);
+				g_hue[2][deg] = 255;
+			} else if (deg<360) {
+				x = deg-240;
+				g_hue[0][deg] = Math.floor(255.0*x/120.0);
+				g_hue[1][deg] = 0;
+				g_hue[2][deg] = Math.floor(255.0*(120.0-x)/120.0);
+			} else if (deg<368) {
+				x = deg-361;
+				g_hue[0][deg] = x*40; g_hue[1][deg] = x*40; g_hue[2][deg] = x*40;
+			}
+			g_hueColor[deg] = 'rgb('+g_hue[0][deg]+','+g_hue[1][deg]+','+g_hue[2][deg]+')';
+		}
+	}());
+
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+
+	function dimInt1( n ) {
+		return new Int32Array( n );
+	}
+
+	function dim2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Float64Array( nj );
+		}
+		return a;
+	}
+
+	function dimInt2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Int32Array( nj );
+		}
+		return a;
+	}
+
+	function dimInt3( ni, nj, nk ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = [];
+			for (let j=0; j<nj; j++) {
+				a[i][j] = new Int32Array( nk );
+			}
+		}
+		return a;
+	}
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition( theme, boundary ) {
+		g_imageData = null;	
+		resetField();
+		g_periodicSW = boundary;
+		setCellandParticle();
+	}
+
+	function setCellandParticle() {
+		const nsx=g_Nsx, nsy=g_Nsy, nnp=g_NNp;
+
+		for (let i=0; i<nsx; i++) {
+			for (let j=0; j<nsy; j++) {
+				g_cellAttribute[i][j] = 0; // free space
+				if (i==nsx/2 && (j<nsy/2-2 || j>nsy/2+2)) {
+					g_cellAttribute[i][j] = 1; // wall
+				}
+			}
+		}
+
+		for (let i=0; i<nnp; i++) {
+			g_kind[i] = 1;
+			g_mass[i] = 28.0*g_AMU;
+			g_xx[i] = g_xMax*Math.random()*0.5;
+			g_yy[i] = g_yMax*Math.random();
+			g_vx[i] = normal_random(1200.0);
+			g_vy[i] = normal_random(1200.0);
+		}
+	}
+
+	function normal_random( v ) {
+		return v*(Math.random()+Math.random()+Math.random()+Math.random()+Math.random()+Math.random()-3.0)/3.0;
+  }
+
+
+	// --------------------  time evolution  --------------------
+
+	function timeEvolution( nCalc, setFieldSW ) {
+
+		for (let i=0; i<nCalc; i++) {
+			timeStep();
+		}
+		if ( setFieldSW==1 ) setField();
+	}
+
+	function timeStep() {
+
+		g_sysTime += g_dt;
+		moveParticles();
+		setSection();
+		interaction();
+	}
+
+	// --- movement
+
+	function moveParticles() {
+		const nnp=g_NNp;
+
+		for (let i=0; i<nnp; i++) {
+			if (g_kind[i]==1) { // 1: alive 0:dead(absorbed) -1:adsorbed
+				g_xx[i] += g_vx[i]*g_dt;
+				g_yy[i] += g_vy[i]*g_dt;
+				const ca = cellAttributeAt(g_xx[i],g_yy[i]); // 0:free space 1:wall 2:absorption 3:adsorption
+				if (ca>0) {
+					if (ca==1) { // wall
+						wallCell(i);
+					} else if (ca==2) { // absorption
+						absorbCell(i);
+					} else if (ca==3) { // adsorption
+						adsorbCell(i);
+					}
+				}
+			} else if (g_kind[i]<0) { // adsorbed
+				if (Math.random()<1.0*Math.exp(-g_adsorptionEnergy/0.025)) {
+					g_kind[i] = -g_kind[i];
+					g_vx[i] = -g_vx[i]; g_vy[i] = -g_vy[i];
+				}
+			}
+		}
+
+		for (let i=0; i<nnp; i++) {
+			if (g_kind[i]==1) {
+				if (g_xx[i] < 0.0) { 
+					g_xx[i] = 0.0; g_vx[i] = -g_vx[i]; g_vy[i] = g_vy[i]; 
+				}
+				if (g_xx[i] > g_xMax) {
+					g_xx[i] = g_xx[i] - g_xMax; g_vx[i] = g_vx[i]; g_vy[i] = g_vy[i]; 
+				}
+				if (g_yy[i] < 0.0) { 
+					g_yy[i] = 0.0; g_vx[i] = g_vx[i]; g_vy[i] = -g_vy[i]; 
+				}
+				if (g_yy[i] > g_yMax) {
+					g_yy[i] = g_yMax; g_vx[i] = g_vx[i]; g_vy[i] = -g_vy[i];
+				}
+			}
+		}
+	}
+
+	function cellAttributeAt( x, y ) {
+		let ix = Math.floor(g_Nsx*x/g_xMax); if (ix>=g_Nsx) ix = g_Nsx-1;
+		if (ix<0) ix = 0;
+		let iy = Math.floor(g_Nsy*y/g_yMax); if (iy>=g_Nsy) iy = g_Nsy-1;
+		if (iy<0) iy = 0;
+		return g_cellAttribute[ix][iy];
+	}
+
+	function wallCell( i ) {
+
+		g_xx[i] -= g_vx[i]*g_dt;
+		g_yy[i] -= g_vy[i]*g_dt;
+		const at10 = cellAttributeAt(g_xx[i]+g_vx[i]*g_dt, g_yy[i]);
+		const at01 = cellAttributeAt(g_xx[i], g_yy[i]+g_vy[i]*g_dt);
+		if (at10==1) g_vx[i] = -g_vx[i];
+		if (at01==1) g_vy[i] = -g_vy[i];
+		if (at10==0 && at01==0) {
+			g_vx[i] = -g_vx[i]; g_vy[i] = -g_vy[i];
+		}
+	}
+
+	function absorbCell( i ) {
+		g_kind[i] = 0;
+	}
+
+	function adsorbCell( i ) {
+		g_kind[i] = -g_kind[i];
+		g_xx[i] -= g_vx[i]*g_dt;
+		g_yy[i] -= g_vy[i]*g_dt;
+	}
+
+	// --- set section
+
+	function setSection() {
+		const nsx=g_Nsx, nsy=g_Nsy, nnp=g_NNp;
+
+		for (let i=0; i<nsx; i++) {
+			for (let j=0; j<nsy; j++) {
+				g_section[i][j][0] = 0;
+			}
+		}
+		for (let ip=0; ip<nnp; ip++) {
+			if (g_kind[ip]==1) {
+				let i = Math.floor(nsx*g_xx[ip]/g_xMax); if (i>=nsx) i = nsx-1;
+				let j = Math.floor(nsy*g_yy[ip]/g_yMax); if (j>=nsy) j = nsy-1;
+				const iq = g_section[i][j][0]+1;
+				g_section[i][j][0] = iq;
+				g_section[i][j][iq] = ip;
+			}
+		}
+	}
+
+	function maxSection() {
+		const nsx=g_Nsx, nsy=g_Nsy;
+		let m=0;
+		for (let i=0; i<nsx; i++) {
+			for (let j=0; j<nsy; j++) {
+				if (g_section[i][j][0]>m) m = g_section[i][j][0];
+			}
+		}
+		return m;
+	}
+
+	// --- interaction
+
+	function interaction() {
+		const nsx=g_Nsx, nsy=g_Nsy, nnp=g_NNp;
+
+		for (let i=0; i<nnp; i++) {
+			g_mark[i] = 0;
+		}
+		const vmax = 2.0*maxSpeed();
+		const kmmc = 0.5*g_ffn*g_sgm*vmax*g_dt/(g_dx*g_dy); // Mc = 0.5*Nc*Nc*FN*sgm*Vmax*dt/Lc^2
+		for (let ic=0; ic<nsx; ic++) {
+			for (let jc=0; jc<nsy; jc++) {
+				const nn = g_section[ic][jc][0];
+				if (nn>1) {
+					const mmc = nn*nn*kmmc; // mmc: the number of collisions in the cell
+					const immc = Math.floor(mmc);
+					for (let ii=0; ii<immc; ii++) {
+						collisionInTheCell(ic, jc, vmax);
+					}
+					if ( Math.random()<(mmc-immc) ) {
+						collisionInTheCell(ic, jc, vmax);
+					}
+				}
+			}
+		}
+	}
+
+	function collisionInTheCell( ic, jc, vmax ) {
+		const nnc = g_section[ic][jc][0];
+		let i, j;
+		do {
+			i = Math.floor(nnc*Math.random()); if (i>=nnc) i = nnc-1;
+			j = Math.floor(nnc*Math.random()); if (j>=nnc) j = nnc-1;
+		} while (i==j);
+		const pi = g_section[ic][jc][i+1], pj = g_section[ic][jc][j+1];
+		collision(pi,pj,vmax);
+		g_mark[pi] = 1; g_mark[pj] = 1;
+	}
+
+
+	function collision( i, j, vmax ) {
+		const vrel = Math.sqrt((g_vx[i]-g_vx[j])*(g_vx[i]-g_vx[j])+(g_vy[i]-g_vy[j])*(g_vy[i]-g_vy[j]));
+		if ( vrel/vmax > Math.random() ) {
+			const a = g_mass[i]/(g_mass[i]+g_mass[j]), b = 1.0 - a;
+			const vcmx = a*g_vx[i] + b*g_vx[j], vcmy = a*g_vy[i] + b*g_vy[j];
+			const th = 2.0*g_PI*Math.random();
+			const costh = Math.cos(th), sinth = Math.sin(th);
+			g_vx[i] = vcmx + vrel*costh*b;
+			g_vy[i] = vcmy + vrel*sinth*b;
+			g_vx[j] = vcmx - vrel*costh*a;
+			g_vy[j] = vcmy - vrel*sinth*a;
+		}
+	}
+
+	// --- statictics
+
+	function maxSpeed() {
+		const nnp=g_NNp;
+		let vm2 = 0.0;
+		for (let i=0; i<nnp; i++) {
+			if (g_kind[i]==1) {
+				const v2 = g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i];
+				if (v2>vm2) vm2 = v2;
+			}
+		}
+		return Math.sqrt(vm2);
+	}
+
+	function totalKineticEnergy() {
+		const nnp=g_NNp;
+		let tke=0.0;
+		for (let i=0; i<nnp; i++) {
+			if (g_kind[i]==1) {
+				tke += 0.5*g_mass[i]*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
+			}
+		}
+		return g_ffn*tke;
+	}
+
+	function numberOfPartickes(knd) {
+		const nnp=g_NNp;
+		let n=0;
+		for (let i=0; i<nnp; i++) {
+			if (g_kind[i]==knd) n += 1;
+		}
+		return n;
+	}
+
+	function numberOfCollided() {
+		const nnp=g_NNp;
+		let n=0;
+		for (let i=0; i<nnp; i++) {
+			if (g_mark[i]==1) n += 1;
+		}
+		return n;
+	}
+
+	function setVelocityDistribution() {
+		const nnp=g_NNp;
+
+		for (let i=0; i<200; i++) {
+			g_vDistribution[i] = 0;
+		}
+		for (let i=0; i<nnp; i++) {
+			if (g_kind[i]==1) {
+				let v = Math.sqrt(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
+				if (v>1999.0) v = 1999.0;
+				g_vDistribution[(int)(v/10.0)] += 1;
+			}
+		}
+	}
+
+	function setVSpace() {
+		const nnp=g_NNp;
+
+		for (let i=0; i<250; i++) {
+			for (let j=0; j<250; j++) {
+				g_vSpace[i][j] = 0;
+			}
+		}
+		for (let ip=0; ip<nnp; ip++) {
+			let i, j;
+			if (g_kind[ip]==1) {
+				i = (int)((g_vx[ip]+1250.0)/10.0+0.5);
+				if (i<0) { 
+					i = 0;
+				} else if (i>249) {
+					i = 249;
+				}
+				j = (int)((g_vy[ip]+1250.0)/10.0+0.5);
+				if (j<0) { 
+					j = 0;
+				} else if (j>249) {
+					j = 249;
+				}
+				g_vSpace[i][j] += 1;
+			}
+		}
+	}
+
+	function setField() {
+		const nsx=g_Nsx, nsy=g_Nsy, kdens = g_ffn/(g_dx*g_dy);
+
+		for (let i=0; i<nsx; i++) {
+			for (let j=0; j<nsy; j++) {
+				const n = g_section[i][j][0];
+				g_meanN[i][j] = 0.9*g_meanN[i][j] + 0.1*n;
+				g_density[i][j] = n*kdens;
+				g_meanDensity[i][j] = 0.9*g_meanDensity[i][j] + 0.1*g_density[i][j];
+				g_temperature[i][j] = 0.0;
+				if (n>=1) {
+					let vmx = 0.0, vmy = 0.0;
+					for (let ip=1; ip<=g_section[i][j][0]; ip++) {
+						const k = g_section[i][j][ip];
+						vmx += g_vx[k]; vmy += g_vy[k];
+					}
+					vmx = vmx/n;
+					vmy = vmy/n;
+					g_xFlow[i][j] = vmx;
+					g_yFlow[i][j] = vmy;
+					g_meanxFlow[i][j] = 0.9*g_meanxFlow[i][j] + 0.1*vmx;
+					g_meanyFlow[i][j] = 0.9*g_meanyFlow[i][j] + 0.1*vmy;
+					let ke = 0.0; 
+					for (let ip=1; ip<=g_section[i][j][0]; ip++) {
+						const k = g_section[i][j][ip];
+						ke += 0.5*g_mass[k]*((g_vx[k]-vmx)*(g_vx[k]-vmx)+(g_vy[k]-vmy)*(g_vy[k]-vmy));
+					}
+					g_temperature[i][j] = ke/n/(1.0*g_kB);
+				} else {
+					g_xFlow[i][j] = 0.0;
+					g_yFlow[i][j] = 0.0;
+				}
+				g_pressure[i][j] =  g_density[i][j]*g_kB*g_temperature[i][j];
+			}
+		}
+	}
+
+	function resetField() {
+		const nsx=g_Nsx, nsy=g_Nsy;
+		
+		for (let i=0; i<nsx; i++) {
+			for (let j=0; j<nsy; j++) {
+				g_meanN[i][j] = 0.0;
+				g_density[i][j] = 0.0;
+				g_meanDensity[i][j] = 0.0;
+				g_temperature[i][j] = 0.0;
+
+				g_xFlow[i][j] = 0.0;
+				g_yFlow[i][j] = 0.0;
+				g_meanxFlow[i][j] = 0.0;
+				g_meanyFlow[i][j] = 0.0;
+				g_pressure[i][j] =  g_density[i][j]*g_kB*g_temperature[i][j];
+			}
+		}
+	}
+
+	// --------------------  draw  --------------------
+
+	function draw( ctx, drawMode ) {
+		// drawMode  0:density  1:flow  2:temperature  3:sample500
+		const xp=20,yp=20, sc=3;
+
+		if ( g_imageData==null ) {
+			g_imageData = ctx.getImageData(20, 20, 360, 240);
+			setImageData();
+		}
+
+		drawField(ctx, drawMode,xp,yp,sc);
+		if (drawMode==1) drawFlow(ctx, xp,yp,sc);
+		if (drawMode==3) drawSample(ctx, 1000,xp,yp,360/g_xMax);
+
+		ctx.fillStyle = "rgb(0, 0, 0)";
+		ctx.fillText("time = "+(g_sysTime*1.0e6).toFixed(1)+" (us)", 10, g_yCanvasSize-24);
+		ctx.fillText("N ="+g_NNp, 200, g_yCanvasSize-24);
+		ctx.fillText("Box ="+(g_xMax*1e3).toFixed(0)+"X"+(g_yMax*1e3).toFixed(0)+"(mm)", 
+						10, g_yCanvasSize-4);
+		ctx.fillText("N_collided ="+numberOfCollided(), 200, g_yCanvasSize-4);
+	}
+
+	function setImageData() {
+		const xSize=360,ySize=240, data = g_imageData.data;
+
+		for (let j=0; j<ySize; j++) {
+			for (let i = 0; i<xSize; i++) {
+				let idx = (j*xSize+i)*4;
+				data[idx] = 160;
+				data[++idx] = 160;
+				data[++idx] = 160;
+				data[++idx] = 255;
+			}
+		}
+	}
+
+	function drawField(ctx, drawMode,px,py,sc) {
+		const nsx=g_Nsx, nsy=g_Nsy, aSize=sc;
+
+		for (let i=0; i<nsx; i++) {
+			for (let j=0; j<nsy; j++) {
+				const ca = g_cellAttribute[i][j];
+				let colIndex;
+				if (ca>0) {
+					colIndex = 365;
+				} else {
+					const n = g_section[i][j][0];
+					if (drawMode==0) { // density
+						let th = Math.floor(240.0-4*n); if (th<0) th = 0;
+						colIndex = th;
+					} else if (drawMode==1) { // flow
+						colIndex = 364;
+					} else if (drawMode==2) { // temperature
+						let th = Math.floor(240.0-120.0*(g_temperature[i][j]/300.0)); if (th<0) th = 0;
+						colIndex = th;
+					} else if (drawMode==3) { // sample
+						colIndex = 364;
+					}
+				}
+				setSquare(i*aSize,(nsy-j-1)*aSize,aSize,colIndex);
+			}
+		}
+		ctx.putImageData(g_imageData, px, py);
+	}
+
+	function setSquare( ix, iy, aSize, colIndex ) {
+		const xSize=360;
+
+		for (let pj=iy; pj<iy+aSize; pj++) {
+			for (let pi=ix; pi<ix+aSize; pi++) {
+				let idx = (pj*xSize+pi)*4;
+				g_imageData.data[idx] = g_hue[0][colIndex];
+				g_imageData.data[idx+1] = g_hue[1][colIndex];
+				g_imageData.data[idx+2] = g_hue[2][colIndex];
+			}
+		}
+	}
+
+	function drawFlow( ctx, xp, yp, sc ) {
+		const nsx=g_Nsx, nsy=g_Nsy, mag=200000;
+
+		for (let i=0; i<nsx; i++) {
+			for (let j=0; j<nsy; j++) {
+				if (g_cellAttribute[i][j]==0 && i%2==0 && j%2==0) {
+					let n = 0, ux = 0.0, uy = 0.0;
+					for (let ii=i; ii<i+2; ii++) {
+						for (let jj=j; jj<j+2; jj++) {
+							n += g_section[ii][jj][0]; ux += g_xFlow[ii][jj]; uy += g_yFlow[ii][jj];
+						}
+					}
+					if (n>0) {
+						const col = (ux>0) ? "#0000ff" : "#ff0000";
+						const x1 = i*sc+xp+sc/2, y1 = j*sc+yp+sc/2;
+						const x2 = x1+ux/n*g_dt*mag, y2 = y1+uy/n*g_dt*mag;
+						drawLine(ctx, x1, y1, x2, y2, col);
+					}
+				}
+			}
+		}
+	}
+
+	function drawSample( ctx, nn, xp, yp, sc ) {
+		const tau=100*g_dt;
+
+		for (let i=0; i<nn; i++) {
+			const x0 = g_xx[i]*sc+xp, y0 = (g_yMax-g_yy[i])*sc+yp;
+			drawDisc(ctx, x0,y0,2,"#00ff00");
+		}
+		for (let i=0; i<nn; i++) {
+			const x0 = g_xx[i]*sc+xp, y0 = (g_yMax-g_yy[i])*sc+yp;
+			const colr = (g_vx[i]>0) ? "#0000ff" : "#ff0000";
+			drawLine(ctx, x0, y0, x0+g_vx[i]*tau*sc, y0-g_vy[i]*tau*sc, colr);
+		}
+	}
+
+	function drawLine( ctx, x1, y1, x2, y2, color ) {
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	}
+
+	function drawDisc( ctx, x, y, r, color ) {
+		ctx.fillStyle = color;
+		ctx.beginPath();
+		ctx.arc(x,y,r,0,2*g_PI,false);
+		ctx.fill();
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:           setInitialCondition, // setInitialCondition( theme, boundary )
+		evolve:         timeEvolution, // timeEvolution( nCalc, setFieldSW )
+		draw:           draw, // draw( ctx, drawMode )
+
+		getSysParam:    function() { return [ g_NNp, g_Nsx, g_Nsy, g_dx, g_dt ]; },
+		getNow:         function() { return [ g_sysTime ]; },
+		getPPosition:   function(i) { return [ g_xx[i], g_yy[i] ]; },
+		getPVelocity:   function(i) { return [ g_vx[i], g_vy[i] ]; },
+		getPKind:       function(i) { return g_kind[i]; },
+		getCellKind:    function(i,j) { return g_cellAttribute[i][j]; }, // 0:free space 1:wall 2:absorption 3:adsorption
+		getCellFlow:    function(i,j) { return [ g_xFlow[i][j], g_yFlow[i][j] ]; },
+		getCellMeanFlow:function(i,j) { return [ g_meanxFlow[i][j], g_meanyFlow[i][j] ]; },
+		getDensity:     function(i,j) { return g_density[i][j]; },
+		getMeanDensity: function(i,j) { return g_meanDensity[i][j]; },
+		getTemperature: function(i,j) { return g_temperature[i][j]; },
+		getPressure:    function(i,j) { return g_pressure[i][j]; },
+	};
+
+})(); // ====================  jetDSMC2D end  ====================
+
+
+const tjsm088 = (function(){ // ====================  tjsm Module  ====================
+
+	const theModule = jetDSMC2D;
+	let v_theme = 0;	// no use
+	let v_boundary = 1;	// fixed  ( 0: non periodic 1:periodic )
+	let v_nCalc = 1;
+	let v_setFieldSW = 1;
+	
+	let p_NNp, p_nx, p_ny, p_dx, p_dt; // <-- theModule.getSysParam();
+	
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let dispMode =  3; // 0:density, 1:pressure, 2:temperature, 41:flow(x,y) + z:density
+	let dispModeChanged = false;
+	let viewHomeRequested = false;
+	let legendFlag = true;
+	let count = 0;
+
+	// sizes in threejs world
+	let xBoxSize, yBoxSize, zBoxSize, x0, y0, z0, hh;
+	
+	// threejs object
+	let agrid;
+	let vfield;
+	let wall;
+	let line_box;
+	let cnvsprite;
+
+	// three.js , OrbitControls.js
+	const width = 500;
+	const height = 480;
+	const r_camera = 1100;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+	
+	// -------------------- lil-gui setup
+	
+	const uParam = {
+		theme: 0,
+		themeMenu: { 'rarefied gas jet, box = 120 x 80': 0 },
+		nCalc: 1,
+		nCalcMenu: [ 1, 2, 3, 4 ],
+		dispMode: 'flow(x,y) + z:density(x,y)',
+		dispMenu: [ 'density(x,y)', 'pressure(x,y)', 'temperature(x,y)', 'flow(x,y) + z:density(x,y)',
+					'canvas2d: density(x,y)', 'canvas2d: flow(,xy)', 'canvas2d: temperature(x,y)',
+					'canvas2d: sample 1000' ],
+		reset: function() { resetFlag = 1; },
+		pause: false,
+		viewHome: function() { viewHomeRequested = true; }
+	};
+	
+	const gui = new GUI();
+	setupGUI();
+	
+	function setupGUI() {
+		gui.add( uParam, 'theme', uParam.themeMenu ).onChange( 
+			v => { v_theme = v; resetFlag = 1; } );
+		
+		gui.add( uParam, 'nCalc', uParam.nCalcMenu ).name( 'nCalc / frame' ).onChange( v => { v_nCalc = v; } );
+		
+		gui.add( uParam, 'dispMode', uParam.dispMenu ).name( 'disp. mode' ).onChange( 
+			str => { dispMode = uParam.dispMenu.indexOf(str); dispModeChanged = true; } );
+		
+		gui.add( uParam, 'reset' );
+		gui.add( uParam, 'pause' ).onChange( bool => { pauseFlag = ( bool ) ? 1 : 0; } );
+		gui.add( uParam, 'viewHome' ).name( 'camera: home view' );
+		
+	}
+	
+	
+	// --------------------  main
+	
+	function main() {
+		// constract renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+		
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, -0.4*r_camera, 0.9*r_camera);
+		controls = new OrbitControls(camera,renderer.domElement);
+		
+		constructScene();
+		animate();
+	}
+
+	function constructScene() {
+		
+		// init DSMC2D
+		theModule.init( v_theme, v_boundary );
+		[ p_NNp, p_nx, p_ny, p_dx, p_dt ] = theModule.getSysParam();
+		xBoxSize = 500;
+		zBoxSize = 200;
+		hh = xBoxSize/p_nx;
+		yBoxSize = p_ny*hh;
+		x0 = xBoxSize/2;
+		y0 = yBoxSize/2;
+		z0 = zBoxSize/2;
+		
+		// scene
+		scene = new THREE.Scene();
+ 
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xffffff,0.5);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xffffff, 1.0);
+		scene.add(light);
+		
+		
+		// color grid
+		// agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+		agrid = m3js_grid2D( p_nx, p_ny, xBoxSize );
+		scene.add( agrid );
+		
+		// flow vector field
+		// vfield = m3js_vField2D( p_nx, p_ny, xBoxSize [, colorMode] ); // colorMode  0:direction color, 1:blue|red
+		vfield = m3js_vField2D( p_nx, p_ny, xBoxSize, 0 );
+		scene.add( vfield );
+		
+		// wall
+		{
+			wall = new THREE.Group();
+			wall.array = [];
+			let ii = 0;
+			for (let i=0; i<p_nx; i++) {
+				for (let j=0; j<p_ny; j++) {
+					const cellKind = theModule.getCellKind(i,j); // 0:free space 1:wall 2:absorption 3:adsorption
+					if ( cellKind==1 ) {
+						const geometry = new THREE.BoxGeometry(hh, hh, zBoxSize);
+						const material = new THREE.MeshStandardMaterial({ 
+							color: 0xaaaaaa, opacity: 0.5, transparent: true});
+						const cube = new THREE.Mesh( geometry, material );
+						cube.position.set(hh*i-x0, hh*j-y0, 0);
+						cube.visible = true;
+						wall.array[ii] = cube;
+						wall.add( wall.array[ii] );
+						ii++;
+					}
+				}
+			}
+			scene.add( wall );
+		}
+		
+		// line box
+		{
+			const geometry = new THREE.BoxGeometry( xBoxSize, yBoxSize, zBoxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial({ color: 0x666644 }) );
+			scene.add( line_box );
+		}
+		
+		// canvas sprite
+		// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 540, 540, 400 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+	}
+
+	// loop animation
+	function animate() {
+		
+		// select theme
+		if (resetFlag==1) {
+			resetFlag = 0;
+			constructScene();
+			count = 0;
+		}
+		
+		// view home
+		if ( viewHomeRequested ) {
+			camera.position.set(0, -0.4*r_camera, 0.9*r_camera);
+			viewHomeRequested = false;
+		}
+
+		//  clear objects
+		if (dispModeChanged) {
+			dispModeChanged = false;
+			
+			line_box.visible = ( dispMode<=3 ) ? true : false;
+			wall.visible =  ( dispMode<=3 ) ? true : false;
+			agrid.visible = false;
+			vfield.visible = false;
+			cnvsprite.visible = false;
+		}
+		
+		// evolve
+		if (pauseFlag==0) {
+			theModule.evolve( v_nCalc, v_setFieldSW );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( 1, v_setFieldSW );
+		}
+		
+		
+		// color grid array update
+		if ( dispMode==0 ) { // density(x,y)
+			const dmag = 1.0e-10;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			agrid.update(
+				function(i,j) {
+					const z = dmag*theModule.getDensity(i,j)-0.5*z0;
+					const hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+					return [ z, `hsl(${hue},100%,50%)` ];
+				}
+			);
+		
+		} else if ( dispMode==1 ) { // pressure(x,y)
+			const pmag = 2.0e10;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			agrid.update( 
+				function(i,j) {
+					const z = pmag*theModule.getPressure(i,j)-0.5*z0;
+					const hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+					return [ z, `hsl(${hue},100%,50%)` ];
+				}
+			);
+		
+		} else if ( dispMode==2 ) { // temperature(x,y)
+			const tmag = 0.2;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			agrid.update( 
+				function(i,j) {
+					const z = tmag*theModule.getTemperature(i,j)-0.5*z0;
+					const hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+					return [ z, `hsl(${hue},100%,50%)` ];
+				}
+			);
+		
+		}
+		
+		if ( dispMode==3 ) { // flow
+			const fmag = 0.05;
+			const dmag = 1.0e-10;
+			
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			agrid.update( function(i,j) { return [ dmag*theModule.getDensity(i,j)-0.5*z0, `#444444` ]; } );
+			
+			// vfield.update( vx_vy_z_col_func [,step] ); // vx_vy_z_col_func: (i,j) --> [vx, vy, z, [col] ]
+			vfield.update(
+				function(i,j) {
+					let vx, vy, z, col;
+					[ vx, vy ] = theModule.getCellFlow(i,j);
+					z = dmag*theModule.getDensity(i,j)-0.5*z0
+					return [fmag*vx, fmag*vy, z, ]; 
+				},
+				2 // [,step]
+			);
+		}
+		
+		// update sprite
+		if ( dispMode>=4 ) {
+			// cnvsprite.update( drawFunc )
+			cnvsprite.update( 
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					theModule.draw( ctx, dispMode-4 );
+				}
+			);
+		}
+		
+		// output to innerHTML
+		if (count % 10 == 0) {
+			const xMax = p_nx*p_dx;
+			const yMax = p_ny*p_dx;
+			const time = theModule.getNow()[0];
+			document.getElementById("text_caption").innerHTML = 
+				"box(mm) ="+(xMax*1000)+"x"+(yMax*1000)+", dsmc particle N="+p_NNp+"<br>"
+				+ "time(ms) = "+(time*1e3).toFixed(3)+"<br>";
+				//+ "density(60,40) ="+theModule.getDensity(60,40)+"<br>"
+				//+ "temp(60,40) ="+theModule.getTemperature(60,40)+"<br>"
+				//+ "pressure(60,40) ="+theModule.getPressure(60,40)+"<br>"
+				//+ "The dsmc particle disappears at the right end and moves to the left end."
+			
+			if ( legendFlag && dispMode<=3 ) {
+				let msg = "box(mm) ="+(xMax*1000)+"x"+(yMax*1000)+", N="+p_NNp+"<br>"
+							+ "The dsmc particle disappears at the right end and moves to the left end."
+				document.getElementById('textOnCanvas').innerHTML = msg;
+			} else {
+				document.getElementById('textOnCanvas').innerHTML = "";
+			}
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	function zFunc(i,j) {
+		return z0*(g_meanN[i][j] - 30.0 )/60.0;
+	}
+	
+	function icosaArrayVisible(sw) {
+		const nn = powder.n;
+		for ( let i=0; i<nn; i++ ) {
+			const icosa = icosaArray[i];
+			icosa.visible = sw;
+		}
+	}
+
+
+	
+	// -----------------------  m3js_grid2D function  -----------------------------------------
+	//
+	//    ver 0.0.0  2022.10.08 created, last updated on 2022.12.20
+	//
+	//  agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+	//      p_nx: number of x-direction lines, p_ny: number of y-direction lines
+	//      xBoxSize: x-box size in the threejs-world
+	//		[zBoxSize]: z-box size in the threejs-world
+	//      [mode]: if mode=='xLineOnly' -->  grid change to x-lines only
+	//            if mode=='yLineOnly' -->  grid change to y-lines only
+	//            else or undefined --> grid x-lines and y-lines
+	//
+	//  scene.add( agrid );
+	//
+	//  agrid.setPallet( pallet, color );
+	//      pallet: pallet number 372 ... 399, (371:inner pallet)
+	//      color: col = new THREE.Color( color )
+	//
+	//  agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+	//      z_hue_func(i,j) { ... return [ z, [hue] ]; }
+	//          z: threejs world z-position at grid point (i,j)
+	//          hue: 0...359 huedeg, 360(black) ...gray...370(white) 371(inner pallet) 372...399 free
+	//              or string shch as 'red', '#ff0000', 'rgb(255,0,0)', 'hsl(0,100%,50%)'
+	//
+	// agrid.visible = false;
+	//
+	
+	const m3js_grid2D = function( p_nx, p_ny, xBoxSize, zBoxSize, mode ) {
+		const hueArray = []; // red:hue[deg][0]  green:hue[deg][1]  blue:hue[deg][2]
+		const gridArray = [];
+		const nx = p_nx;
+		const ny = p_ny
+		const hh = xBoxSize/nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*ny/2.0;
+		const z0 = ( zBoxSize==undefined ) ? y0 : zBoxSize/2.0;
+		const xLineOnly = ( mode==undefined || mode!='xLineOnly' ) ? false : true;
+		const yLineOnly = ( mode==undefined || mode!='yLineOnly' ) ? false : true;
+		const agrid = new THREE.Group();
+		
+		if ( hueArray.length<1 ) init_hueArray();
+		
+		if ( ! yLineOnly ) {
+			for (let j=0; j<ny; j++) {
+ 				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( nx * 3 );
+				const colors = new Float32Array( nx * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, nx );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[j] = line;
+    			agrid.add( gridArray[j] );
+			}
+		}
+		if ( ! xLineOnly ) {
+			for (let i=0; i<nx; i++) {
+				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( ny * 3 );
+				const colors = new Float32Array( ny * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, ny );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[ny+i] = line;
+    			agrid.add( gridArray[ny+i] );
+    		}
+    	}
+    	
+    	agrid.setPallet = setPallet; // setPallet( pallet, color )
+		agrid.update = gridUpdate; // gridUpdate( fieldFunc, [hueFunc|huedeg|hueStr] )
+		agrid.visible = false;
+		
+		return agrid;
+
+
+		// private functions
+		
+		function gridUpdate( z_hue_Func ) {
+			if ( ! yLineOnly ) {
+				for (let j=0; j<ny; j++) {
+					const line = gridArray[j];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let i= 0; i<nx; i++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[i*3]   = hh*i - x0;
+						positions[i*3+1] = hh*j - y0;
+						positions[i*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[i*3]   = r;
+						colors[i*3+1] = g;
+						colors[i*3+2] = b;
+					}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			if ( ! xLineOnly ) {
+				for (let i=0; i<nx; i++) {
+					const line = gridArray[ny+i];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let j= 0; j<ny; j++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[j*3]   = hh*i - x0;
+						positions[j*3+1] = hh*j - y0;
+						positions[j*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[j*3]   = r;
+            			colors[j*3+1] = g;
+            			colors[j*3+2] = b;
+    				}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			agrid.visible = true;
+		}
+		
+		function setPallet( pallet, color ) {
+			const deg = Math.floor(pallet);
+			const col = new THREE.Color( color );
+			hueArray[deg][0] = col.r;
+			hueArray[deg][1] = col.g;
+			hueArray[deg][2] = col.b;
+		}
+		
+		function init_hueArray() {
+			// deg= 0...359 hue color, 360: black ... gray ...  370:white,
+			// 371: inner use, 372...399 as pallete
+			for (let deg=0; deg<360; deg++) {
+				hueArray[deg] = [];
+				const col = new THREE.Color( 'hsl('+deg+',100%,50%)');
+				hueArray[deg][0] = col.r;
+				hueArray[deg][1] = col.g;
+				hueArray[deg][2] = col.b;
+			}
+			for (let deg=360; deg<400; deg++) {
+				hueArray[deg] = [];
+				const x = (deg<371) ? (deg-360)*0.1 : 0.0;
+				hueArray[deg][0] = x;
+				hueArray[deg][1] = x;
+				hueArray[deg][2] = x;
+			}
+		}
+		
+	};
+	
+	// -----------------------  m3js_grid2D function end
+	
+	
+	// -----------------------  m3js_vField2D function  ---------------------------
+	//
+	//    ver 0.0.0  2022.02.04 created, last updated on 2022.12.20
+	//
+	//  vfield = m3js_vField2D( p_nx, p_ny, xBoxSize [, colorMode] ); // colorMode  0:direction color, 1:blue|red
+	//     nx: number of x-direction division, ny:number of y-direction division
+	//     xBoxSize: x-box size in threejs world
+	//  scene.add( vfield );
+	//
+	//  vfield.update( vx_vy_z_col_func [,step] ); // vx_vy_z_col_func: (i,j) --> [vx, vy, z, [col] ]
+	//     vx_vy_z_col_func: function(i,j) { return [vx, vy, z, [col] ]; }
+	//     [step]: step of for-loop, 1:default, else 2 or 3 or 4 ... 
+	//
+	//  vfield.visible = false;
+	//
+	
+	function m3js_vField2D( p_nx, p_ny, xBoxSize, colorMode ) {
+		const nx = p_nx;
+		const ny = p_ny;
+		const hh = xBoxSize/p_nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*p_ny/2.0;
+		const vectorArray = [];
+		const lines = new THREE.Group();
+		const cMode = ( colorMode==undefined ) ? 1 : colorMode;
+		
+		for (let i=0; i<nx; i++) {
+			vectorArray[i] = [];
+			for (let j=0; j<ny; j++) {
+				const geometry = new THREE.BufferGeometry();
+				const positions = new Float32Array( 2 * 3 ); // MAX_POINTS = 2,  3 vertices per point
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setDrawRange( 0, 2 );
+				const material = new THREE.LineBasicMaterial( { color: 0x888888 } );
+				const line = new THREE.Line( geometry, material );
+				line.visible = false;
+				vectorArray[i][j] = line;
+    			lines.add( vectorArray[i][j] );
+			}
+		}
+		
+		lines.update = linesUpdate;
+		
+		return lines;
+		
+		
+		function linesUpdate( vx_vy_z_col_func, step ) {
+			const inc = ( step == undefined ) ? 1 : step;
+			for (let i=0; i<nx; i+=inc) {
+				for (let j=1; j<ny; j+=inc) {
+					const line = vectorArray[i][j];
+					const positions = line.geometry.attributes.position.array;
+					const vec = vx_vy_z_col_func(i,j);
+					if ( !Array.isArray(vec) ) {
+						line.visible = false;
+						continue;
+					}
+					let vx, vy, z, col, h=0;
+					[ vx, vy, z, col ] = vec;
+					if ( col==undefined ) {
+						if ( cMode==0 ) {
+							h = Math.floor((Math.atan2(vy,vx))*180.0/Math.PI+180.0);
+
+						} else if ( cMode==1 ) {
+							h = (vx>=0.0) ? 240 : 0;
+						}
+						col = `hsl(${h},100%,50%)`;
+					}
+					let x = hh*i-x0, y = hh*j-y0;
+					positions[0] = x; // point 0
+					positions[1] = y;
+					positions[2] = z;
+					positions[3] = x + vx; // point 1
+					positions[4] = y + vy;
+					positions[5] = z;
+					line.visible = true;
+					line.material.color = new THREE.Color( col );
+					line.geometry.attributes.position.needsUpdate = true;
+				}
+			}
+			lines.visible = true;
+		}
+	}
+	
+	// -----------------------  m3js_vField2D function end
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main: main, // main()
+		
+	}
+
+})(); // ====================  tjsm088 module end  ====================
+
+
+// event
+const tjsm = tjsm088;
+window.addEventListener('load', tjsm.main );
+
+
+</script>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+</head>
+
+<body>
+<p>[tm088] rarefied gas jet - direct simulation Monte Carlo DSMC2D</p>
+<div style="position: relative; overflow: hidden; width: 500px; height: 480px">
+  <canvas id="myCanvas" style="position: absolute; top: 0px; left: 0px"></canvas>
+  <div id="textOnCanvas" 
+    style="position:absolute; top:5px; left:5px; color:#99aa44; background-color:rgba(0, 0, 0, 0);
+           font-size:0.9rem"> ... One moment, please.<br> ... setting up the studio ... </div>
+</div>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
