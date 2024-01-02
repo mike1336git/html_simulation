@@ -1,0 +1,1295 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>tm094_alkaliAtomECPLDA3D</title>
+
+<style type="text/css">
+	body { color:#000000; background-color:#fff8dd; }
+</style>
+
+<style type="text/css">
+	.lil-gui {
+		--width: 300px;
+		--name-width: 30%;
+	}
+</style>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+<!--
+<script type="importmap">
+{
+  "imports": {
+    "three": "../libm/three.module.js",
+    "orb": "../libm/OrbitControls.js",
+    "lil-gui": "../libm/lil-gui.module.min.js"
+  }
+}
+</script>
+-->
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+    "orb": "https://unpkg.com/three@0.147.0/examples/jsm/controls/OrbitControls.js",
+    "lil-gui": "https://unpkg.com/three@0.147.0/examples/jsm/libs/lil-gui.module.min.js"
+  }
+}
+</script>
+
+<script type="module">
+
+import * as THREE from 'three';
+import { OrbitControls } from 'orb';
+import { GUI } from 'lil-gui';
+
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tm094_alkaliAtomECPLDA3D
+//    Copyright(C) 2023-2024 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2023.02.05 created, last updated on 2023.02.07
+//    ver 0.0.1  2024.01.02 v1, last updated on 2024.01.02
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  RS-DFT - local density approximation LDA3D  - empty-core pseudo potential
+//
+// - real space density functional theory - local density approximation
+// - solve Kohn-Sham equation - successive approximation
+// - Vxc : LDA(local density approximation)
+//         J. P. Perdew and A. Zunger; Phys. Rev., B23, 5048 (1981)
+//
+//  many electron system --> one electron approximation
+//    one electron ,  others -> consider as effective potential Veff
+//    Kohn-Sham equation {(-d^2/dr^2)+Veff(r)} |i> = e_i |i>,  Veff(r)=Vext+VH+Vx+Vc
+//      Veff: one electron feels effective potential
+//      Vext: external Potential
+//      VH  : Hartree potential (electron charge -> electro-static potential)
+//      Vx,Vc :electron exchange and correlation potential (LDA:Perdew-Zunger)
+//    successive approximation
+//      solve Kohn-Sham -> electron state,occupation -> electron charge density -> Veff
+//
+//  procedure
+//   (1) given: trial |i>, occupation(i)
+//
+//   (2) set electron density rho
+//       rho <-- |i>, occupation(i), mixing rho(iter-1)
+//
+//   (3) set effective potential
+//        Veff = Vext + VH + Vx + Vc
+//        VH <-- rho (Poisson eq. ,SOR iteration)
+//        Vx,Vc <-- rho (LDA:Perdew-Zunger)
+//
+//   (4) solve Kohn-Sham equation (successive approximation)
+//        |i> steepest descent method: |i(next)> = |i> - dump{H-E}|i>
+//        E(i) <-- <i|H|i>
+//        {|0>,..,|i>,..,|N>} orthogonallization : Gram-Schmidt
+//
+//   (5) sort state
+//        sort orbit by E(i)
+//
+//   (6) set occupation
+//        occupation(i) <-- E(i)
+//
+//   goto (2)
+//
+//  empty core (Ashcroft) pseudopotential
+//    V(r) = 0,  (r<=Rc)  // closed electron shells
+//           -Z/r (r>Rc), Z:valence charge
+//
+//  result : ionization energy (orbit-0 energy at valenceZ = 1.0-0.5) dx = 0.5 (au)
+//      Li(Rc=1.4au)    Na(Rc=1.7au)    K(Rc=2.2au)     Rb(Rc=2.45au)   Cs(Rc=2.7au)
+//      0.219au(0.194)  0.188au(0.189)  0.156au(0.160)  0.145au(0.154)  0.129au(0.143)  at NNx = 32
+//      0.221au(0.194)  0.191au(0.189)  0.163au(0.160)  0.153au(0.154)  0.141au(0.143)  at NNx = 40
+//             ():experimental value
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const alkaliAtomECPLDA3D = (function(){ // ====================  alkaliAtomECPLDA3D Module  ====================
+
+	// au: atomic unit hBar=1,e=1,me=1,a0=1
+	const g_auLength = 5.29177211e-11;		// (m) 1(au) = auLength (m)
+	const g_auTime = 2.418884326e-17;		// (s) 1(au) = auTime (s)
+	const g_auEnergy = 4.35974465e-18;		// (J) 1(au) = auEnergy (J)
+	const g_au2eV = 27.211386;				// (eV) 1(au) = 27.211386 (eV)
+	const g_nMax = 64;						// maximum of g_NNx or g_NNy or g_NNz
+	const g_stMax = 10;					// maximum number of state
+	const g_nucMax = 20;					// maximum number of nucleus
+
+	let g_iterCount = 0;					// LDA iteration count
+	let g_dzNuc = 0.0;						// g_dzNuc = +ion:-1.0  ionize:-0.5  atom:0.0  -ion:1.0
+	let g_numberOfElectron = 1.0;			// g_numberOfElectron = valenceZ + g_dzNuc
+	let g_numberOfOrbit = 5;				// number of orbit
+	let g_NNx = 40;							// number of space x-division, x-BoxSize = g_NNx*g_dx
+	let g_NNy = g_NNx;						// number of space y-division
+	let g_NNz = g_NNx;						// number of space y-division
+	let g_dx = 1.0/2.0;						// (au) x-division
+	let g_dy = g_dx;						// (au) y-division
+	let g_dz = g_dx;						// (au) z-division
+	let g_energyMem = 0.0;					// temporal memory of energy
+	let g_iterationError = 1.0;				// energy difference for iteration n and n+1
+	let g_dampingFactor = 0.2*g_dx*g_dx;	// damping factor of steepest descent method : damp = a*g_dx*g_dx
+	let g_mixing = 0.5;						// charge mixing in setRho()
+	let g_broadening = 0.01;				// (au) level broadening IN setOccupation
+
+	const g_sdEnergy = dim1(g_stMax);		// g_sdEnergy[g_stMax] electron orbit energy
+	const g_occupation = dim1(g_stMax);		// g_occupation[g_stMax] of orbit
+	const g_sdState =dim4(g_stMax,g_nMax);	// g_sdState[2g_stMax][g_nMax][g_nMax][g_nMax] electron state 0...19
+	const g_wrk = dim3(g_nMax);				// g_wrk[g_nMax][g_nMax][g_nMax] state work space in steepestDescent
+	const g_vv = dim3(g_nMax);				// g_vv[g_nMax][g_nMax][g_nMax] effective potential
+	const g_vvext = dim3(g_nMax);			// external potential
+	const g_vvh = dim3(g_nMax);				// Hartree potential
+	const g_vvx = dim3(g_nMax);				// exchange potential
+	const g_vvc = dim3(g_nMax);				// correlation potential
+	const g_rho = dim3(g_nMax);				// electron charge density
+
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+
+	function dim3( n ) {
+		let a = [];
+		for (let i=0; i<n; i++) {
+			a[i] = [];
+			for (let j=0; j<n; j++) {
+				a[i][j] = new Float64Array( n );
+			}
+		}
+		return a;
+	}
+
+	function dim4( nst, n ) {
+		let a=[];
+		for (let i=0; i<nst; i++) {
+			a[i] = dim3(n);
+		}
+		return a;
+	}
+
+
+	// --------------------  Ashcroft(empty-core) pseudo potential data  --------------------
+
+	let g_valenceZ = 1.0;           // (au) valence charge Z=1 for alkali atom
+	let g_Rc = 1.7;                 // (au) empty-core pseudopotential Rc
+
+	// empty core data: Chekmarev, et.al., J. Chem. Phys. 109 [2] p.768-778 (1998)
+	const g_Ashcroft = [
+		// 0:Znuc 1:Zv 2:Rc  3:str
+		[  3.0, 1.0, 1.4,  "Li" ],
+		[ 11.0, 1.0, 1.70, "Na" ],
+		[ 19.0, 1.0, 2.20, "K"  ],
+		[ 37.0, 1.0, 2.45, "Rb" ],
+		[ 55.0, 1.0, 2.70, "Cs" ] ];
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition( nnx, stateMax, theme, dzNu ) {
+		g_NNx = nnx;
+		g_NNy = nnx;
+		g_NNz = nnx;
+		g_numberOfOrbit = stateMax;
+		setInitialState(stateMax);
+		setAtom(theme,dzNu);
+	}
+
+	function setInitialState( stateMax ) {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+
+		for (let ist=0; ist<stateMax; ist++) {
+			for (let i=0; i<nnx; i++) {
+				for (let j=0; j<nny; j++) {
+					for (let k=0; k<nnz; k++) {
+						g_sdState[ist][i][j][k] = 0.0;
+					}
+				}
+			}
+			for (let i=1; i<nnx-1; i++) {
+				for (let j=1; j<nny-1; j++) {
+					for (let k=1; k<nnz-1; k++) {
+						g_sdState[ist][i][j][k] = Math.random()-0.5;
+					}
+				}
+			}
+			normalizeState(ist);
+		}
+	}
+
+	function setAtom( theme, dzNu ) { 
+		//dzNu= +ion: -1, ionizationEnergy: -0.5, atom; 0.0, -ion: +1.0
+		g_iterCount = 0;
+		g_valenceZ = g_Ashcroft[theme][1];
+		g_Rc = g_Ashcroft[theme][2];
+		g_dzNuc = dzNu;
+		g_numberOfElectron = g_valenceZ + g_dzNuc;
+		setPotential(g_valenceZ,g_Rc);
+	}
+
+	function setPotential( valenceZ, rrc ) {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+
+		const x0 = 0.5*nnx*g_dx, y0 = 0.5*nny*g_dy, z0 = 0.5*nnz*g_dz;
+		for (let i=0; i<nnx; i++) {
+			const x = i*g_dx;
+			for (let j=0; j<nny; j++) {
+				const y = j*g_dy;
+				for (let k=0; k<nnz; k++) {
+					const z = k*g_dz;
+					let r = Math.sqrt((x-x0)*(x-x0)+(y-y0)*(y-y0)+(z-z0)*(z-z0));
+					g_vvext[i][j][k] = emptyCorePotential(r, valenceZ, rrc);
+					if (r<0.5*g_dx) r=0.5*g_dx;
+					g_vvh[i][j][k] = g_numberOfElectron/r;
+				}
+			}
+		}
+	}
+
+	function emptyCorePotential( r, valenceZ, rrc ) {
+		return ((r<=rrc) ? 0.0 : -valenceZ/r);
+	}
+
+	function jelliumCorePotential( r, Z, rJellium ) {
+		return ((r<rJellium) ? -Z/rJellium*(1.5-0.5*r*r/(rJellium*rJellium)) : -Z/r);
+	}
+
+
+	// --------------------  iterate LDA  --------------------
+
+	function iterateLDA( iterMax, mix, broad ) {
+		const errorDecisionOrbit = Math.max(Math.floor((g_numberOfElectron-1)/2),0);
+
+		g_mixing = mix;
+		g_broadening = broad;
+		setElectronDensity(g_numberOfOrbit);
+		setEffectivePotential();
+		solveKohnSham(g_numberOfOrbit,iterMax);
+		sortState(g_numberOfOrbit);
+		setOccupation(g_numberOfOrbit,g_numberOfElectron);
+		g_iterationError = g_sdEnergy[errorDecisionOrbit] - g_energyMem;
+		g_energyMem = g_sdEnergy[errorDecisionOrbit];
+	}
+
+	// --- (2) set electron density g_rho -from g_sdState[], g_occupation[]
+
+	function setElectronDensity( stateMax ) {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					g_rho[i][j][k] *= (1.0-g_mixing);
+					for (let ie=0; ie<stateMax; ie++) {
+						if (g_occupation[ie]<=0.0) continue;
+						g_rho[i][j][k] += g_mixing*g_occupation[ie]*(g_sdState[ie][i][j][k]*g_sdState[ie][i][j][k]);
+					}
+				}
+			}
+		}
+	}
+
+	// --- (3) set effective potential -from electron density
+
+	function setEffectivePotential() {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+
+		poisson(20); // setVh
+		setVxc();
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					g_vv[i][j][k] = g_vvext[i][j][k]+g_vvh[i][j][k]+g_vvx[i][j][k]+g_vvc[i][j][k];
+				}
+			}
+		}
+	}
+
+	function poisson( iterMax ) { // solve (d^2/dr^2) V = 4 pai g_rho
+		const nnx=g_NNx,nny=g_NNy,nnz=g_NNz, h2 = 4.0*Math.PI*g_dx*g_dx;
+		
+		const w = (1.0/6.0)*1.8; // 1/6 * SOR omega(1.0<omega<2.0)
+		for (let iter=0; iter<iterMax; iter++) {
+			for (let i=1; i<nnx-1; i++) {
+				for (let j=1; j<nny-1; j++) {
+					for (let k=1; k<nnz-1; k++) {
+						g_vvh[i][j][k] += w*(g_vvh[i+1][j][k]+g_vvh[i-1][j][k]+g_vvh[i][j+1][k]+g_vvh[i][j-1][k]
+										+g_vvh[i][j][k+1]+g_vvh[i][j][k-1]-6.0*g_vvh[i][j][k] +h2*g_rho[i][j][k]);
+					}
+				}
+			}
+		}
+	}
+
+	// LDA :  J. P. Perdew and A. Zunger; Phys. Rev., B23, 5048 (1981)
+	function setVxc() {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+
+		const c1 = -0.984745022;
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					const rh = g_rho[i][j][k];
+					const rh3 = Math.pow(rh,0.33333333);
+					g_vvx[i][j][k] = c1*rh3;
+					const rs = 0.6204/(rh3+1.0e-20);
+					if (rs>=1.0) {
+						const sqrtrs = Math.sqrt(rs);
+						const ec = -0.1423/(1.0+1.0529*sqrtrs+0.3334*rs);
+						g_vvc[i][j][k] = ec*(1.0+1.22838*sqrtrs+0.4445*rs)/(1.0+1.0529*sqrtrs+0.3334*rs);
+					} else {
+						g_vvc[i][j][k] = -0.05837-0.0084*rs +(0.0311+0.00133*rs)*Math.log(rs);
+					}
+				}
+			}
+		}
+	}
+
+	function eeCorrelation( rh ) {
+
+		const r = 0.6204/(Math.pow(rh,0.33333333)+1.0e-20);
+		let ec;
+		if (r>=1.0) {
+			ec = -0.1423/(1.0+1.0529*Math.sqrt(r)+0.3334*r);
+		} else {
+			ec = -0.0480-0.0116*r+(0.0311+0.0020*r)*Math.log(r);
+		}
+		return ec;
+	}
+
+	// --- (4) solve Kohn-Sham equation
+
+	function solveKohnSham( stateMax, iterMax ) {
+		for (let i=0; i<iterMax; i++) {
+			for (let ist=0; ist<stateMax; ist++) {
+				g_sdEnergy[ist] = steepestDescent(ist, g_dampingFactor);
+			}
+			GramSchmidt(stateMax);
+			g_iterCount += 1;
+		}
+	}
+
+	function steepestDescent( ist, damp ) {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, h2 = 2*g_dx*g_dx;
+		
+		const ei = energyOfState(ist);
+		const p = g_sdState[ist];
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					const pijk = p[i][j][k];
+					g_wrk[i][j][k] = (6*pijk-p[i+1][j][k]-p[i-1][j][k]-p[i][j+1][k]-p[i][j-1][k]
+									-p[i][j][k+1]-p[i][j][k-1])/h2 + (g_vv[i][j][k]-ei)*pijk;
+				}
+			}
+		}
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					g_sdState[ist][i][j][k] -= damp*g_wrk[i][j][k];
+				}
+			}
+		}
+		normalizeState(ist);
+		return ei;
+	}
+
+	function energyOfState( ist ) {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, h2 = 2*g_dx*g_dx, p = g_sdState[ist];
+
+		let s = 0.0, sn = 0.0;
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					const pijk = p[i][j][k];
+					s += pijk*( (6*pijk-p[i+1][j][k]-p[i-1][j][k]-p[i][j+1][k]-p[i][j-1][k]
+						-p[i][j][k+1]-p[i][j][k-1])/h2 +　g_vv[i][j][k]*pijk);
+					sn += pijk*pijk;
+				}
+			}
+		}
+		return s/sn;
+	}
+
+	function GramSchmidt( stateMax ) {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+
+		normalizeState(0);
+		for (let istate=1; istate<stateMax; istate++) {
+			for (let ist=0; ist<istate; ist++) {
+				const s = innerProduct(ist,istate);
+				for (let i=0; i<nnx; i++) {
+					for (let j=0; j<nny; j++) {
+						for (let k=0; k<nnz; k++) {
+							g_sdState[istate][i][j][k] -= s*g_sdState[ist][i][j][k];
+						}
+					}
+				}
+			}
+			normalizeState(istate);
+		}
+	}
+
+	// --- (5) sort state
+
+	function sortState(stateMax) {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+
+		for (let ist=stateMax-2; ist>=0; ist--) {
+			if (g_sdEnergy[ist]>g_sdEnergy[ist+1]+0.00001) {
+				for (let i=0; i<nnx; i++) {
+					for (let j=0; j<nny; j++) {
+						for (let k=0; k<nnz; k++) {
+							const w = g_sdState[ist][i][j][k];
+							g_sdState[ist][i][j][k] = g_sdState[ist+1][i][j][k];
+							g_sdState[ist+1][i][j][k] = w;
+						}
+					}
+				}
+				const w = g_sdEnergy[ist];
+				g_sdEnergy[ist] = g_sdEnergy[ist+1];
+				g_sdEnergy[ist+1] = w;
+			}
+		}
+	}
+
+	// --- (6) set occupation
+
+	function setOccupation( maxState, nElectron ) {
+		let eFermi, ntrial;
+		let eUpper = g_sdEnergy[maxState-1]+1.0;
+		let eLower = g_sdEnergy[0]-1.0;
+		for (let i=0; i<maxState; i++) {
+			if(g_sdEnergy[i]>eUpper) eUpper = g_sdEnergy[i];
+			if(g_sdEnergy[i]<eLower) eLower = g_sdEnergy[i];
+		}
+		while (eUpper-eLower>1.0e-12) {
+			eFermi = (eUpper+eLower)/2.0;
+			ntrial = trialOcc(maxState, eFermi);
+			if (ntrial<nElectron) {
+				eLower = eFermi;
+			} else {
+				eUpper = eFermi;
+			}
+		}
+		eFermi = (eUpper+eLower)/2.0;
+		for (let i=0; i<maxState; i++) {
+			g_occupation[i] = 2.0*FermiDirac(g_sdEnergy[i], eFermi);
+			if (g_occupation[i]<0.0001) g_occupation[i] = 0.0;
+			if (2.0-g_occupation[i]<0.0001) g_occupation[i] = 2.0;
+		}
+	}
+
+	function trialOcc( maxState, eFermi ) {
+		let s = 0.0;
+		for (let i=0; i<maxState; i++) {
+			s += 2.0*FermiDirac(g_sdEnergy[i], eFermi);
+		}
+		return s;
+	}
+
+	function FermiDirac( ee, ef ) {
+		const et = g_broadening; //levelWidth
+		return ( 1.0/(Math.exp((ee-ef)/et)+1.0) );
+	}
+
+	// --- utility
+
+	function innerProduct( ist, jst ) {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+		let s = 0.0;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				for (let k=0; k<nnz; k++) {
+					s += g_sdState[ist][i][j][k]*g_sdState[jst][i][j][k];
+				}
+			}
+		}
+		return s*g_dx*g_dy*g_dz;
+	}
+
+	function normalizeState( ist ) {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+
+		let s=0.0;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				for (let k=0; k<nnz; k++) {
+					s += g_sdState[ist][i][j][k]*g_sdState[ist][i][j][k];
+				}
+			}
+		}
+		const a = Math.sqrt(1/(s*g_dx*g_dy*g_dz));
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				for (let k=0; k<nnz; k++) {
+					g_sdState[ist][i][j][k] = a*g_sdState[ist][i][j][k];
+				}
+			}
+		}
+	}
+
+	function totalEnergy() {
+		const norb=g_numberOfOrbit, nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
+
+		let sei = 0.0;
+		for (let i=0; i<norb; i++) {
+			sei += g_occupation[i]*g_sdEnergy[i];
+		}
+		let s = 0.0;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				for (let k=0; k<nnz; k++) {
+					s += (-0.5*g_vvh[i][j][k]-0.25*g_vvx[i][j][k]
+						+eeCorrelation(g_rho[i][j][k])-g_vvc[i][j][k])*g_rho[i][j][k];
+				}
+			}
+		}
+		s = s*g_dx*g_dy*g_dz;
+		return sei+s;
+	}
+
+
+	// --------------------  cloud  --------------------
+
+	const g_cloud = dim3(g_nMax);
+	const g_srnd = [];
+
+	function setCloud(iState) {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, dv=g_dx*g_dy*g_dz;
+
+		set_srnd();
+		
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					g_cloud[i][j][k] = 0;
+				}
+			}
+		}
+		let s = 0, ip = 0
+		for (let i=1; i<nnx-1; i++) {
+			for (let j=1; j<nny-1; j++) {
+				for (let k=1; k<nnz-1; k++) {
+					const stijk = g_sdState[iState][i][j][k];
+					const dens = stijk*stijk;
+					s += dens*dv;
+					while (s>g_srnd[ip] && ip<1000) {
+						g_cloud[i][j][k] += 1;
+						ip += 1;
+					}
+				}
+			}
+		}
+	}
+
+	function set_srnd() {
+		g_srnd[0] = Math.random();
+		for (let i=1; i<1001; i++) {
+			g_srnd[i] = g_srnd[i-1] + Math.random();
+		}
+		for (let i=0; i<1000; i++) {
+			g_srnd[i] = g_srnd[i]/g_srnd[1000];
+		}
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:           setInitialCondition, // setInitialCondition( nnx, stateMax, theme, dzNu )
+		evolve:         iterateLDA, // iterateLDA( iterMax, mix, broad )
+
+		setAtom:        setAtom, // setAtom( theme, dzNu )
+		setCloud:       setCloud, // setCloud( ist )
+
+		getAUinSI:      function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:    function() { return [ g_NNx, g_NNy, g_NNz, g_dx, g_valenceZ ]; },
+		getNow:         function() { return [ g_iterCount, totalEnergy() ]; },
+		getOccupation:  function(ist) { return g_occupation[ist]; },
+		getStEnergy:    function(ist) { return g_sdEnergy[ist]; },
+		getState:       function(ist,i,j,k) { return g_sdState[ist][i][j][k]; },
+		getDensity:     function(i,j,k) { return g_rho[i][j][k]; },
+		getVext:        function(i,j,k) { return g_vvext[i][j][k]; },
+		getVeff:        function(i,j,k) { return g_vv[i][j][k]; },
+		getVh:          function(i,j,k) { return g_vvh[i][j][k]; },
+		getVx:          function(i,j,k) { return g_vvx[i][j][k]; },
+		getVc:          function(i,j,k) { return g_vvc[i][j][k]; },
+		getCloud:       function(i,j,k) { return g_cloud[i][j][k]; },
+	};
+
+})(); // ====================  alkaliAtomECPLDA3D end  ====================
+
+
+const tjsm094 = (function(){ // ====================  tjsm Module  ====================
+
+	const theModule = alkaliAtomECPLDA3D;
+	
+	let v_nnx = 40;  // 32 or 40 ( g_NNx,g_NNy, g_NNz <-- v_nnx )
+	const v_stateMax = 6; 
+	let v_theme = 1;	//  theme 0:Li, 1:Na, 2:K, 3:Rb, 4:Cs
+	let v_dzNu = 0.0;	// -1.0:+ion,  -0.5:ionization,  0.0:atom, +1.0:-ion
+	let v_iterMax = 2;	// iterateLDA(iterMax) 
+	let v_mix = 0.5;	// mixing electron density: rhoNext = (1-mix)*rho + mix*sum( occupation[i]*|orbit[i]|^2 )
+	let v_broad = 0.01;	// (au) level broadening (0.01au ~ 300K room temperature)
+	const themeStr = [ 'Li', 'Na', 'K ', 'Rb','Cs' ];
+	
+	let p_auLength, p_auTime, p_auEnergy, p_au2eV // <-- theModule.getAUinSI()
+	let p_nx, p_ny, p_nz, p_dx, p_valenceZ; // <-- theModule.getSysParam()
+
+	// program flow control
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let setPotentialFlag = 0;
+	let dispMode = 1; // 0:density3D, 1:orbit3D, 2:cloud |orbit|^2, 3:sdState2D, 4:none
+	let dispModeChanged = false;
+	let dispOrbit = 0; // 0...9
+	let dispVmode = 0; // 0:Vext, 1:Veff, 2:VH*10, 3:Vxc*10, 4:none
+	let legendFlag = true;
+	let viewHomeRequested = false;
+	let count = 0; // animate() loop count
+	
+	// in three.js world
+	const xBoxSize = 400; // in three.js world
+	const x0 = xBoxSize/2;
+	let hh, yBoxSize, zBoxSize, y0, z0;
+
+	// 3d object added to scene
+	let pgrid;
+	let vgrid;
+	let grid3D;
+	let line_box;
+	let cnvsprite;
+
+	// three.js global
+	const r_camera = 1360.0;
+	const width = 500;
+	const height = 480;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+	
+	// -------------------- lil-gui setup
+	
+	const uParam = {
+		box: 40,
+		boxMenu: { '16x16x16': 32, '20x20x20': 40 },
+		atom: 'Na',
+		atomMenu: [ 'Li', 'Na', 'K ', 'Rb', 'Cs' ],
+		dne: 0,
+		dneMenu: { '+ ion': -1.0, 'ionization': -0.5, 'atom': 0, '- ion': 1.0 },
+		mixing: 0.5,
+		broad: 0.01,
+		dispMode: 'orbit(x,y,z)',
+		dispMenu: [ 'density(x,y,z)', 'orbit(x,y,z)', '|orbit(x,y,z)|^2 cloud',
+					'2D e-density(x,y,0)', '2D orbit(x,y,ei)', 'none --&gt; select V:' ],
+		dispState: 0,
+		dispStateMenu: [ 0, 1, 2, 3, 4, 5 ],
+		dispVMode: 'Vext(x,y,0)',
+		dispVMenu: [ 'Vext(x,y,0)', 'Veff(x,y,0)', 'Vh(x,y,0)x10', 'Vxc(x,y,0)x10', 'none' ],
+		reset: function() { resetFlag = 1; },
+		pause: false,
+		viewHome: function() { viewHomeRequested = true; }
+	};
+	
+	const gui = new GUI();
+	setupGUI();
+	
+	function setupGUI() {
+		gui.add( uParam, 'box', uParam.boxMenu ).onChange(  v => { v_nnx = v; resetFlag = 1; } );
+		
+		gui.add( uParam, 'atom', uParam.atomMenu ).name( 'atom:' ).onChange( 
+			str => { v_theme = uParam.atomMenu.indexOf(str); resetFlag = 1; } );
+		
+		gui.add( uParam, 'dne', uParam.dneMenu ).name( 'status' ).onChange(
+			v => { v_dzNu = v; setPotentialFlag = 1; } );
+		
+		gui.add( uParam, 'mixing', 0, 0.9, 0.01 ).onChange( v => { v_mix = v; } );
+		
+		gui.add( uParam, 'broad', 0.001, 0.1, 0.0001 ).onChange( v => { v_broad = v; } );
+		
+		gui.add( uParam, 'dispMode', uParam.dispMenu ).name( 'disp. mode' ).onChange( 
+			str => { dispMode = uParam.dispMenu.indexOf(str); dispModeChanged = true; } );
+		
+		gui.add( uParam, 'dispState', uParam.dispStateMenu ).name( 'disp. orbit' ).onChange( v => { dispOrbit = v; } );
+		
+		gui.add( uParam, 'dispVMode', uParam.dispVMenu ).name( 'disp. V mode' ).onChange( 
+			str => { dispVmode = uParam.dispVMenu.indexOf(str); dispModeChanged = true; } );
+		
+		gui.add( uParam, 'reset' );
+		gui.add( uParam, 'pause' ).onChange( bool => { pauseFlag = ( bool ) ? 1 : 0; } );
+		gui.add( uParam, 'viewHome' ).name( 'camera: home view' );
+	}
+	
+	
+	// --------------------  main
+	
+	function main() {
+
+		// construct renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, -0.6*r_camera,0.8*r_camera);
+		// lib/OrbitControls.js
+		controls = new OrbitControls(camera,renderer.domElement);
+		
+		constructScene();
+		animate();
+	}
+	
+	
+	function constructScene() {
+		
+		// init LDA3D
+		theModule.init( v_nnx, v_stateMax, v_theme, v_dzNu );
+		[ p_auLength, p_auTime, p_auEnergy, p_au2eV ] = theModule.getAUinSI();
+		[ p_nx, p_ny, p_nz, p_dx, p_valenceZ ] = theModule.getSysParam();
+		hh = xBoxSize/p_nx;
+		yBoxSize = hh*p_ny;
+		zBoxSize = hh*p_nz;
+		y0 = yBoxSize/2;
+		z0 = zBoxSize/2;
+
+		// scene
+		scene = new THREE.Scene();
+
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xffffff);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xffffff, 0.5);
+		scene.add(light);
+		
+		
+		// 3D density, orbit
+		// grid3D = m3js_grid3D( p_nx, p_ny, p_nz, xBoxSize );
+		grid3D = m3js_grid3D( p_nx, p_ny, p_nz, xBoxSize );
+		scene.add( grid3D );
+		
+		// 2D density, orbit
+		// agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+		pgrid = m3js_grid2D( p_nx, p_ny, xBoxSize );
+		scene.add( pgrid );
+		pgrid.setPallet( 372, 0x446644 );
+		
+		// 2D potential
+		// agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+		vgrid = m3js_grid2D( p_nx, p_ny, xBoxSize );
+		scene.add( vgrid );
+		
+		// line_box
+		{
+			const geometry = new THREE.BoxGeometry( xBoxSize, yBoxSize, zBoxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial( { color: 0x666644 } ) );
+			scene.add( line_box );
+		}
+		
+	}
+	
+	
+	// loop animation
+	function animate() {
+		
+		// system reset
+		if (resetFlag==1) {
+			resetFlag = 0;
+			
+			constructScene();
+			dispModeChanged = true;
+			count = 0;
+		}
+		
+		// v_zNu, v_dzNu changed
+		if ( setPotentialFlag==1 ) {
+			setPotentialFlag = 0;
+			
+			theModule.setAtom( v_theme, v_dzNu );
+			count = 0;
+		}
+		
+		if ( viewHomeRequested ) {
+			camera.position.set(0, -0.6*r_camera,0.8*r_camera);
+			viewHomeRequested = false;
+		}
+		
+		// clear world (object.visible -> false)
+		if ( dispModeChanged ) {
+			dispModeChanged = false;
+			
+			line_box.visible = (dispMode<=5) ? true : false;
+			pgrid.visible = false;
+			vgrid.visible = false;
+			grid3D.visible = false;
+		}
+		
+		// LDA3D update
+		if (pauseFlag==0) {
+			theModule.evolve( v_iterMax, v_mix, v_broad );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( v_iterMax, v_mix, v_broad );
+			if ( dispMode==2 ) theModule.setCloud(dispOrbit);
+		}
+		
+		
+		// disp update
+		{
+			const dmag = 5000.0;	// density mag
+			const pmag = 300.0;		// state mag
+			const vmag = 200.0;		// vext mag
+			const kc = p_nz/2;
+			
+			if (count % 10 == 0) {
+			
+				if ( dispMode==0 ) { // 0:density(x,y,z)
+					// grid3D.update( fieldFunc, [hueFunc] )
+					grid3D.update( function(i,j,k) { return dmag*theModule.getDensity(i,j,k); } );
+			
+				}
+		
+				if ( dispMode==1 ) { // 1:orbit(x,y,z)
+					// grid3D.update( fieldFunc, [hueFunc] )
+					grid3D.update( function(i,j,k) { return pmag*theModule.getState(dispOrbit,i,j,k); } );
+				}
+		
+				if ( dispMode==2 ) { // 2:cloud(x,y,z)
+					const mag = 8.0;
+					theModule.setCloud( dispOrbit );
+					// grid3D.update( fieldFunc, [hueFunc] )
+					grid3D.update( function(i,j,k) { return mag*theModule.getCloud(i,j,k); } );
+				}
+			
+			}
+			
+			if ( dispMode==3 ) { // 3:2D density(x,y,0)
+				// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+				pgrid.update(
+					function(i,j) {
+						const dens = 5.0*dmag*theModule.getDensity(i,j,kc);
+						const hue = ( Math.abs(dens)<0.1*hh ) ? 363 : Math.floor(36180.0 - 180.0*(dens/z0)) % 360;
+						return  [ dens, hue ];
+					}
+				);
+			}
+			
+			if ( dispMode==4 ) { // 4:2D orbit(x,y,0)
+				const ei = Math.min(z0, vmag*theModule.getStEnergy(dispOrbit)); 
+				// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+				pgrid.update(
+					function(i,j) {
+						const st = 5.0*pmag*theModule.getState(dispOrbit,i,j,kc);
+						const hue = ( Math.abs(st)<0.1*hh ) ? 363 : Math.floor(36180.0 - 180.0*(st/z0)) % 360;
+						return  [ st + ei, hue ];
+					}
+				);
+			}
+			
+			if ( dispMode==5 ) { // 3:none for view Vxx
+				;
+			}
+
+			// with 2D potential
+			if ( dispMode<=5 ) {
+				
+				if ( dispVmode==0 ) { // 0:disp Vext
+					// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+					vgrid.update( function(i,j) { return [ vmag*theModule.getVext(i,j,kc), "#448844" ]; } );
+				} else if ( dispVmode==1 ) { // 1:Vexff
+					vgrid.update( function(i,j) { return [ vmag*theModule.getVeff(i,j,kc), "#448888" ]; } );
+				} else if ( dispVmode==2 ) { // 2:vH
+					vgrid.update( function(i,j) { return [ vmag*theModule.getVh(i,j,kc), "#444488" ]; } );
+				} else if ( dispVmode==3 ) { // 3:Vxc
+					vgrid.update(
+						function(i,j) { return [ vmag*( theModule.getVx(i,j,kc)+theModule.getVc(i,j,kc) ), "#884488" ]; }
+					);
+				}
+			}
+
+		}
+		
+		
+		// output to innerHTML
+		if (count % 10 == 0) {
+			const xMax = p_nx*p_dx, yMax = p_ny*p_dx, zMax = p_nz*p_dx;
+			const nElectron = p_valenceZ + v_dzNu;
+			let iterCount, totalEnergy;
+			[ iterCount, totalEnergy ] = theModule.getNow();
+			const msg = "box="+xMax+"x"+yMax+"x"+zMax
+				+ "(au) ~ "+(xMax*p_auLength*1.0e9).toFixed(2) + "x"+(yMax*p_auLength*1.0e9).toFixed(2)
+				+ "x"+(zMax*p_auLength*1.0e9).toFixed(2) + "(nm), atom:"+themeStr[v_theme]
+				+ ", iter count="+iterCount+"<br>"
+				+ "total energy(au) ="+totalEnergy.toFixed(6)
+				+ "(au) ~ "+(totalEnergy*p_au2eV).toFixed(4)+"(eV) <br>";
+			document.getElementById("text_caption").innerHTML = msg;
+			
+			if ( legendFlag && dispMode<=5 ) {
+				let stateStr = "orbit) energy<br>";
+				let occStr = "<br>occupation<br>";
+				for (let i=v_stateMax-1; i>=0; i--) {
+					const ene = theModule.getStEnergy(i);
+					const occ = theModule.getOccupation(i);
+					stateStr += ( ""+i+") "
+						+ "<span style='color:hsl("+(180-90*occ)+",100%,50%)'>"+ene.toFixed(6)+"</span><br>" );
+					
+					occStr += ( ""+i+") "
+						+ "<span style='color:hsl("+(180-90*occ)+",100%,50%)'>"+occ.toFixed(4)+"</span><br>" );
+				}
+				document.getElementById('textOnCanvas').innerHTML = 
+					"iter="+iterCount+"<br>Z="+p_valenceZ+", Ne="+nElectron+"<br>"+stateStr+occStr;
+			} else {
+				document.getElementById('textOnCanvas').innerHTML = "";
+			}
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_grid3D function  ----------------------------------
+	//
+	//    ver 0.0.0  2022.06.07 created, last updated on 2022.12.22
+	//
+	//   grid3D = m3js_grid3D( p_nx, p_ny, p_nz, xBoxSize );
+	//      nx:sphere number of x-direction,
+	//      ny:sphere number of y-direction, 
+	//      nz:sphere number of z-direction,
+	//      xBoxSize: x-box size in the threejs-world
+	//
+	//   scene.add( grid3D );
+	//
+	//   grid3D.update( field_func, [hue_func] );
+	//      field_func: (i,j,k) --> field
+	//         (i,j,k) : index of 3D lattice
+	//         field : field value of lattce point
+	//      hue_func: (i,j,k) --> hue   // if undefined, use inner hue function hue(field))
+	//         hue : hsl color index 0,1,2, ... , 359
+	//         if typeof(hue)!='number', hue treat as color string
+	//
+	//   grid3D.setThreshold( th ) 
+	//      th: 0.0 ... 1.0 // if diameter of the sphere < hh*th, this sphere set to invisible
+	//          default th = 0.2
+	//
+	//   grid3D.visibility
+	//      grid3D.visible = true | false;
+	//
+		
+	const m3js_grid3D = function( p_nx, p_ny, p_nz, xBoxSize ) {
+		const gridArray = [];
+		const nx = p_nx;
+		const ny = p_ny;
+		const nz = p_nz;
+		const hh = xBoxSize/nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*ny/2.0;
+		const z0 = hh*nz/2.0;
+		let threshold = 0.2;
+		const grid3D = new THREE.Group();
+
+		const geometry = new THREE.IcosahedronGeometry( 0.5, 1 );
+		for ( let i=0; i<nx; i++ ) {
+			gridArray[i] = [];
+			for ( let j=0; j<ny; j++ ) {
+				gridArray[i][j] = [];
+				for ( let k=0; k<nz; k++ ) {
+					const material = new THREE.MeshBasicMaterial({ color: 0xaaaa00 });
+					const icosa = new THREE.Mesh( geometry, material );
+					icosa.position.x = i*hh - x0;
+					icosa.position.y = j*hh - y0;
+					icosa.position.z = k*hh - z0;
+					icosa.visible = false;
+					gridArray[i][j][k] = icosa;
+					grid3D.add( gridArray[i][j][k] );
+				}
+			}
+		}
+		
+		grid3D.update = grid3D_update; // grid3D_update( fieldFunc, hueFunc )
+		grid3D.setThreshold = setThreshold; // setThreshold( th )
+		return grid3D;
+		
+		// private function
+	
+		function grid3D_update( field_func, hue_func ) {
+			const th = threshold*hh;
+			const maxMag = 0.9*hh;
+			const adeg = 120.0/maxMag;
+			let hue;
+			for ( let i=0; i<nx; i++ ) {
+				for ( let j=0; j<ny; j++ ) {
+					for ( let k=0; k<nz; k++ ) {
+						const icosa = gridArray[i][j][k];
+						const field = field_func(i,j,k);
+						const afield = Math.abs(field);
+						if ( afield<th ) {
+							icosa.visible = false;
+							continue;
+						}
+						let mag = Math.pow(afield,0.5);
+						if ( mag>maxMag ) mag = maxMag;
+						icosa.scale.set(mag,mag,mag);
+						
+						if ( hue_func==undefined ) {
+							const hue = (field>=0.0) ? Math.floor(120.5-adeg*mag) : Math.floor(120.5+adeg*mag);
+							icosa.material.color = new THREE.Color(`hsl(${hue},100%,50%)`);
+						} else {
+							const hue = hue_func(i,j,k);
+							if ( typeof(hue)==='number' ) {
+								icosa.material.color = new THREE.Color(`hsl(${hue},100%,50%)`);
+							} else {
+								icosa.material.color = new THREE.Color( hue );
+							}
+						}
+						icosa.visible = true;
+					}
+				}
+			}
+			grid3D.visible = true;
+		}
+		
+		function setThreshold( th ) { 
+			threshold = th;
+		}
+		
+	};
+	
+	// -----------------------  m3js_grid3D function end
+	
+	
+	// -----------------------  m3js_grid2D function  -----------------------------------------
+	//
+	//    ver 0.0.0  2022.10.08 created, last updated on 2022.12.20
+	//
+	//  agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+	//      p_nx: number of x-direction lines, p_ny: number of y-direction lines
+	//      xBoxSize: x-box size in the threejs-world
+	//		[zBoxSize]: z-box size in the threejs-world
+	//      [mode]: if mode=='xLineOnly' -->  grid change to x-lines only
+	//            if mode=='yLineOnly' -->  grid change to y-lines only
+	//            else or undefined --> grid x-lines and y-lines
+	//
+	//  scene.add( agrid );
+	//
+	//  agrid.setPallet( pallet, color );
+	//      pallet: pallet number 372 ... 399, (371:inner pallet)
+	//      color: col = new THREE.Color( color )
+	//
+	//  agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+	//      z_hue_func(i,j) { ... return [ z, [hue] ]; }
+	//          z: threejs world z-position at grid point (i,j)
+	//          hue: 0...359 huedeg, 360(black) ...gray...370(white) 371(inner pallet) 372...399 free
+	//              or string shch as 'red', '#ff0000', 'rgb(255,0,0)', 'hsl(0,100%,50%)'
+	//
+	// agrid.visible = false;
+	//
+	
+	const m3js_grid2D = function( p_nx, p_ny, xBoxSize, zBoxSize, mode ) {
+		const hueArray = []; // red:hue[deg][0]  green:hue[deg][1]  blue:hue[deg][2]
+		const gridArray = [];
+		const nx = p_nx;
+		const ny = p_ny
+		const hh = xBoxSize/nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*ny/2.0;
+		const z0 = ( zBoxSize==undefined ) ? y0 : zBoxSize/2.0;
+		const xLineOnly = ( mode==undefined || mode!='xLineOnly' ) ? false : true;
+		const yLineOnly = ( mode==undefined || mode!='yLineOnly' ) ? false : true;
+		const agrid = new THREE.Group();
+		
+		if ( hueArray.length<1 ) init_hueArray();
+		
+		if ( ! yLineOnly ) {
+			for (let j=0; j<ny; j++) {
+ 				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( nx * 3 );
+				const colors = new Float32Array( nx * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, nx );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[j] = line;
+    			agrid.add( gridArray[j] );
+			}
+		}
+		if ( ! xLineOnly ) {
+			for (let i=0; i<nx; i++) {
+				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( ny * 3 );
+				const colors = new Float32Array( ny * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, ny );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[ny+i] = line;
+    			agrid.add( gridArray[ny+i] );
+    		}
+    	}
+    	
+    	agrid.setPallet = setPallet; // setPallet( pallet, color )
+		agrid.update = gridUpdate; // gridUpdate( fieldFunc, [hueFunc|huedeg|hueStr] )
+		agrid.visible = false;
+		
+		return agrid;
+
+
+		// private functions
+		
+		function gridUpdate( z_hue_Func ) {
+			if ( ! yLineOnly ) {
+				for (let j=0; j<ny; j++) {
+					const line = gridArray[j];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let i= 0; i<nx; i++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[i*3]   = hh*i - x0;
+						positions[i*3+1] = hh*j - y0;
+						positions[i*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[i*3]   = r;
+						colors[i*3+1] = g;
+						colors[i*3+2] = b;
+					}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			if ( ! xLineOnly ) {
+				for (let i=0; i<nx; i++) {
+					const line = gridArray[ny+i];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let j= 0; j<ny; j++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[j*3]   = hh*i - x0;
+						positions[j*3+1] = hh*j - y0;
+						positions[j*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[j*3]   = r;
+            			colors[j*3+1] = g;
+            			colors[j*3+2] = b;
+    				}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			agrid.visible = true;
+		}
+		
+		function setPallet( pallet, color ) {
+			const deg = Math.floor(pallet);
+			const col = new THREE.Color( color );
+			hueArray[deg][0] = col.r;
+			hueArray[deg][1] = col.g;
+			hueArray[deg][2] = col.b;
+		}
+		
+		function init_hueArray() {
+			// deg= 0...359 hue color, 360: black ... gray ...  370:white,
+			// 371: inner use, 372...399 as pallete
+			for (let deg=0; deg<360; deg++) {
+				hueArray[deg] = [];
+				const col = new THREE.Color( 'hsl('+deg+',100%,50%)');
+				hueArray[deg][0] = col.r;
+				hueArray[deg][1] = col.g;
+				hueArray[deg][2] = col.b;
+			}
+			for (let deg=360; deg<400; deg++) {
+				hueArray[deg] = [];
+				const x = (deg<371) ? (deg-360)*0.1 : 0.0;
+				hueArray[deg][0] = x;
+				hueArray[deg][1] = x;
+				hueArray[deg][2] = x;
+			}
+		}
+		
+	};
+	
+	// -----------------------  m3js_grid2D function end
+	
+	
+	//--------------------  public  --------------------
+	
+	return {
+		main: main, // main()
+		
+	}
+
+})(); // ====================  tjsm094 module end  ====================
+
+
+// event
+const tjsm = tjsm094;
+window.addEventListener('load', tjsm.main );
+
+
+</script>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+</head>
+
+<body>
+<p>[tm094] alkali atom - empty core pseudopotential LDA3D</p>
+<div style="position: relative; overflow: hidden; width: 500px; height: 480px">
+  <canvas id="myCanvas" style="position: absolute; top: 0px; left: 0px"></canvas>
+  <div id="textOnCanvas" 
+    style="position:absolute; top:5px; left:5px; color:#888888; background-color:rgba(0, 0, 0, 0);
+           font-size:0.9rem"> ... One moment, please.<br> ... setting up the studio ... </div>
+</div>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
