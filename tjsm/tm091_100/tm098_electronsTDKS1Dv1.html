@@ -1,0 +1,1484 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>tm098_electronsTDKS1D</title>
+
+<style type="text/css">
+	body { color:#000000; background-color:#fff8dd; }
+</style>
+
+<style type="text/css">
+	.lil-gui {
+		--width: 300px;
+		--name-width: 30%;
+	}
+</style>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+<!--
+<script type="importmap">
+{
+  "imports": {
+    "three": "../libm/three.module.js",
+    "orb": "../libm/OrbitControls.js",
+    "lil-gui": "../libm/lil-gui.module.min.js"
+  }
+}
+</script>
+-->
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+    "orb": "https://unpkg.com/three@0.147.0/examples/jsm/controls/OrbitControls.js",
+    "lil-gui": "https://unpkg.com/three@0.147.0/examples/jsm/libs/lil-gui.module.min.js"
+  }
+}
+</script>
+
+<script type="module">
+
+import * as THREE from 'three';
+import { OrbitControls } from 'orb';
+import { GUI } from 'lil-gui';
+
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tm098_electronsTDKS1D
+//    Copyright(C) 2023-2024 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2023.02.06 created, last updated on 2023.02.07
+//    ver 0.0.1  2024.01.06 v1, last updated on 2024.01.06
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  time dependent Kohn-Sham 1D : LDA + spin
+//
+// - solve time dependent Kohn-Sham equation : approximation
+//      N. Watanabe and M. Tsukada: Phys. Rev., E65, 036705 (2002)
+// - Vxc: LDA
+//      J. P. Perdew and A. Zunger; Phys. Rev., B23, 5048 (1981)
+//
+//  many electron system --> one electron approximation
+//    one electron ,  others -> consider as effective potential Veff
+//    Kohn-Sham equation {(-d^2/dr^2)+Veff(r)} |i> = e_i |i>,  Veff(r)=Vext+VH+Vx+Vc
+//      Veff: one electron feels effective potential
+//      Vext: external Potential
+//      Vh  : Hartree potential (electron charge -> electro-static potential)
+//      Vx,Vc :electron exchange and correlation potential (LDA:Perdew-Zunger)
+//    successive approximation
+//      solve Kohn-Sham -> electron state,occupation -> electron charge density -> Veff
+//
+//   quantum electron dynamics
+//   - real-space : sttate psi(i) = ph(i)*si (si = spinUp or spinDown)
+//   - time dependent Kohn-Sham equation :
+//      N. Watanabe and M. Tsukada: Physical Review E, Vol 65, No 3, 036705 (2002)
+//      (arXiv physics/0112015)
+//      H ph(ri,t) = i d ph(ri,t)/dt, H = -D2/2 + Veff
+//      ph(ri,t+dt) = exp(-idt*H) ph(ri,t)
+//      approximation : 
+//      ph(ri,t+dt) = exp(idt/2*D/2)exp(-idt*Veff)exp(idt/2*D/2)ph(ri,t)
+//      Veff: one electron feels effective potential
+//        Veff = Vext + Vh + Vx + Vc
+//          Vx + Vc : LDA( J. P. Perdew and A. Zunger; Phys. Rev., B23, 5048 (1981) )
+//          Vext: external Potential
+//          Vh  : Hartree potential (electron charge -> electro-static potential)
+//          Vx,Vc :electron exchange and correlation potential (LDA:Perdew-Zunger)
+//  loss process
+//      ph(i) steepest descent method: |ph(next)> = |ph(i)> - dump{H-Ei}|ph(i)>
+//      spin : as another degree of freedom of state : psi(i) = ph(i)*si
+//      <psi(i)|psi(j)> = 0 (si,sj parallel), or = 0 (<ph(i)|ph(j)> = 0)
+//      {psi(0),..,psi(N)} Gram-Schmidt orthogonallization
+//
+//  procedure : evolve time dependent Kohn-Sham equation
+//      ( state orthogonallity conserved in this process )
+//
+//   (1) set initial orbit
+//      set external potential Vext
+//      set initial orbit ph(i)
+//
+//   (2) evolve time dt/2
+//      t <-- t + dt/2
+//
+//   (3) evolve kinetic part dt/2 - exp(idt/2*D/2)*
+//      krStep(ph(i),0.5*dt);
+//
+//   (4) set electron density
+//      rho <-- sum(|ph(i)|^2,i)
+//
+//   (5) set effective potential
+//      Veff = Vext + Vh + Vx + Vc
+//      Vh <-- rho (Poisson eq. ,SOR iteration)
+//      Vx,Vc <-- rho (LDA:Perdew-Zunger)
+//
+//   (6) evolve potential part dt - exp(-idt*Veff)*
+//      phaseStep(ph(i), Veff, dt);
+//
+//   (7) evolve time dt/2
+//      t <-- t + dt/2
+//
+//   (8) evolve kinetic part dt/2 - exp(idt/2*D/2)*
+//      krStep(ph(i,t+dt/2),0.5*dt);
+//
+//   goto (2)
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Module  ====================
+
+	// au: atomic unit hBar=1,e=1,me=1,a0=1
+	const g_auLength = 5.29177211e-11; // (m) 1(au) = g_auLength (m)
+	const g_auTime = 2.418884326e-17;  // (s) 1(au) = g_auTime (s)
+	const g_auEnergy = 4.35974465e-18; // (J) 1(au) = g_auEnergy (J)
+	const g_au2eV = 27.211386;         // (eV) 1(au) = 27.211386 (eV)
+	const g_nOrbitMax = 10;            // maximum number of orbit
+	const g_nStateMax = g_nOrbitMax*2; // maximum number of state |orbit>,spin
+	const g_nxMax = 640;               // maximum number of g_NNx
+
+	let g_iterCount = 0;        // iteration count
+	let g_sysTime = 0.0;        // (au) system time
+	let g_dx = 1.0/4.0;         // (au) x-division
+	let g_timeStep = 0.5*g_dx*g_dx; // (au) time step dt
+	let g_lylz = 16.0*16.0;     // imaginary spreading in the y,z direction
+	let g_NNx = 320;            // number of space x-division
+	let g_numberOfOrbit = 6;    // number of orbit
+	let g_numberOfState = g_numberOfOrbit*2; // number of state |orbit>,spin
+	let g_numberOfElectron = 2.0; // number of electron
+
+	let g_qmdSW = 0;            // 0-OFF 1-qmd ON (move nuclear)
+	let g_lossSW = 0;           // 0-lossOFF 1-lossON 2-loss+trans 3-loss+trans,t-stop
+	let g_dampingFactor = 0.01; // damping factor in setLoss()
+
+	let g_xCanvasSize = 400;    // in pixel
+	let g_yCanvasSize = 400;
+
+	const g_psis = dimInt2(g_nOrbitMax,2); // 0-orbit index(0..g_numberOfOrbit-1), 1-spin(1,-1)
+	const g_occ = dim1(g_nStateMax); // occupation of state 0.0 ... 1.0
+	const g_energy = dim1(g_nStateMax); // state energy g_energy[istate]
+	const g_psi = dim3(g_nOrbitMax,g_nxMax,2); // wave function g_psi[orbit][ix][0 or 1] 0:Re, 1:Im
+	const g_wrk = dim2(g_nxMax,2);  // work orbit in teepestDescent() g_wrk[ix][0 or 1]
+	const g_vv = dim1(g_nxMax);     // effective potential g_vv[ix]
+	const g_vvext = dim1(g_nxMax);  // external potential g_vvext[ix]
+	const g_vvh = dim1(g_nxMax);    // Hartree (electro-static) potential caused by g_rho g_vvh[ix]
+	const g_vvx = dim1(g_nxMax);    // exchange potenial g_vvx[ix]
+	const g_vvc = dim1(g_nxMax);    // correlation potential g_vvc[ix]
+	const g_rho = dim1(g_nxMax);    // electron charge density g_rho[ix]
+
+	const g_bRe = dim1(g_nxMax);    // work b vector in kxStep()
+	const g_bIm = dim1(g_nxMax);    // work b vector in kxStep()
+	const g_uRe = dim1(g_nxMax);    // work u vector in kxStep()
+	const g_uIm = dim1(g_nxMax);    // work u vector in kxStep()
+
+	// for QMD
+	const g_NNN = 8;                // nuc array max
+	let g_jelliumRadius = 1.0;      // nuc potential jellium radius
+	let g_nucMax = 2;               // maximum number of nucleus
+	const g_nucMass = dim1(g_NNN);  // mass of nucleus
+	const g_nucCharge = dim1(g_NNN); // charge of nucleus
+	const g_nucxx = dim1(g_NNN);    // (au) nuclear x-position
+	const g_nucvx = dim1(g_NNN);    // (m/s) nuclear x-velocity
+	const g_nucfx = dim1(g_NNN);    // (N) nuclear x-force
+
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+
+	function dim2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Float64Array( nj );
+		}
+		return a;
+	}
+
+	function dimInt2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Int32Array( nj );
+		}
+		return a;
+	}
+
+	function dim3( ni, nj, nk ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = [];
+			for (let j=0; j<nj; j++) {
+				a[i][j] = new Float64Array( nk );
+			}
+		}
+		return a;
+	}
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition( theme ) {
+		let vIndex = 0;
+		g_iterCount = 0;
+		g_sysTime = 0.0;
+		setInitialState(theme);
+		setExternalPotential(vIndex);
+	}
+
+	function setInitialState(phIndex) {
+		const xMax=g_NNx*g_dx;
+
+		if (phIndex==0) { // 2-electron up,up
+			g_numberOfOrbit = 2;
+			g_numberOfState = g_numberOfOrbit*2;
+			g_numberOfElectron =  2.0;
+			//setGaussianWaveAndSpin(iOrbit, xPos, width, momentum, spin) spin 1:up -1:down
+			setGaussianWaveAndSpin(0, xMax*0.25, 1.6, 0.0,  1); // 1:up
+			setGaussianWaveAndSpin(1, xMax*0.5,  1.6, 0.0,  1); // 1:up
+		} else if (phIndex==1) { // 2-electron up,down
+			g_numberOfOrbit = 2;
+			g_numberOfState = g_numberOfOrbit*2;
+			g_numberOfElectron =  2.0;
+			setGaussianWaveAndSpin(0, xMax*0.25, 1.6, 0.0,  1); // 1:up
+			setGaussianWaveAndSpin(1, xMax*0.5,  1.6, 0.0, -1); //-1:down
+		} else if (phIndex==2) { // 3-electron up,up,down
+			g_numberOfOrbit = 3;
+			g_numberOfState = g_numberOfOrbit*2;
+			g_numberOfElectron =  3.0;
+			setGaussianWaveAndSpin(0, xMax*0.25, 1.6, 0.0,  1); // 1:up
+			setGaussianWaveAndSpin(1, xMax*0.5,  1.6, 0.0,  1); // 1:up
+			setGaussianWaveAndSpin(2, xMax*0.65, 1.6, 0.0, -1); // 1:down
+		} else if (phIndex==3) { // 4-electron up,up,up,up
+			g_numberOfOrbit = 4;
+			g_numberOfState = g_numberOfOrbit*2;
+			g_numberOfElectron =  4.0;
+			setGaussianWaveAndSpin(0, xMax*0.25, 1.6, 0.0,  1); // 1:up
+			setGaussianWaveAndSpin(1, xMax*0.5,  1.6, 0.0,  1); // 1:up
+			setGaussianWaveAndSpin(2, xMax*0.65, 1.6, 0.0,  1); // 1:up
+			setGaussianWaveAndSpin(3, xMax*0.5,  1.6, 2.0,  1); // 1:up
+		}
+	}
+
+	function setExternalPotential( vIndex ) {
+		const xMax=g_NNx*g_dx;
+
+		if (vIndex==0) {
+			const xPos = 0.5*xMax;
+			const vvextAtXMax = 8.0;
+			setHarmonicPotential(xPos, vvextAtXMax)
+		}
+	}
+
+	function setGaussianWaveAndSpin( iOrbit, xPos, width, momentum, spin ) {
+		setGaussianWave(g_psi[iOrbit], xPos, width, momentum);
+		setElectronStatesAndOccupation(iOrbit, spin);
+	}
+
+	function setElectronStatesAndOccupation( iOrbit, spin ) {
+		// set electron state: orbit -> g_psis[state][0], spin -> g_psis[state][1], and g_occ[]
+		const iState = iOrbit*2;
+		g_psis[iState][0] = iOrbit; g_psis[iState][1] = 1;
+		g_psis[iState+1][0] = iOrbit; g_psis[iState+1][1] = -1;
+		if (spin==1) { // 1-up spin
+			g_occ[iState] = 1.0;
+			g_occ[iState+1] = 0.0;
+		} else if (spin==-1) { // -1-down spin
+			g_occ[iState] = 0.0;
+			g_occ[iState+1] = 1.0;
+		} else if (spin==2) { // 2-up and down spin
+			g_occ[iState] = 1.0;
+			g_occ[iState+1] = 1.0;
+		}
+	}
+
+	function setGaussianWave( ph, xPos, width, momentum ) { // ph[][]
+		const nnx=g_NNx;
+
+		const a = Math.pow(2.0*Math.PI*width*width,-0.25);
+		for (let i=1; i<nnx-1; i++) {
+			const x = i*g_dx;
+			const phAb = a*Math.exp(-((x-xPos)/(2.0*width))*((x-xPos)/(2.0*width)));
+			const phPh = momentum*x;
+			ph[i][0] = phAb*Math.cos(phPh);
+			ph[i][1] = phAb*Math.sin(phPh);
+		}
+		ph[0][0] = 0.0; ph[0][1] = 0.0;
+		ph[nnx-1][0] = 0.0; ph[nnx-1][1] = 0.0;
+		normalize(ph);
+	}
+
+	function setHarmonicPotential( xPos, vvextAtXMax ) {
+		const nnx=g_NNx;
+		const k0 = vvextAtXMax/(nnx*g_dx*nnx*g_dx/4.0);
+		for (let i=0; i<nnx; i++) {
+			const x = i*g_dx;
+			g_vvext[i] = k0*(x-xPos)*(x-xPos);
+		}
+	}
+
+	function setJelliumPotential( xPos, r0, charge ) { // r0:jellium radius
+		const nnx=g_NNx;
+  
+		for (let i=0; i<nnx; i++) {
+			const x = i*g_dx;
+			const r = Math.sqrt((x-xPos)*(x-xPos));
+			g_vvext[i]= (r>a) ? -charge/r : -(charge/r0)*(1.5-0.5*(r*r/(r0*r0)));
+		}
+	}
+
+
+	// --------------------  time evolution  --------------------
+
+	function timeEvolution( nCalc, lossSW, qmdSW ) {
+		// lossSW 0-lossOFF 1-lossON 2-loss+trans 3-loss+trans,t-stop
+		g_iterCount += 1;
+		if (lossSW<3) {
+			for (let i=0; i<nCalc; i++) {
+				evolveTimeStep(qmdSW,g_timeStep);
+			}
+		}
+
+		for (let ie=0; ie<g_numberOfState; ie++) { // calc energy
+			const ib = g_psis[ie][0];
+			g_energy[ie] = kineticEnergy(g_psi[ib])+potentialEnergy(g_psi[ib],g_vv);
+		}
+		sortState(g_numberOfState);
+
+		if (lossSW==1 || lossSW==2 || lossSW==3) {
+			setLoss(g_dampingFactor);
+			GramSchmidt(g_numberOfState);
+			sortState(g_numberOfState);
+			if (lossSW==2 || lossSW==3) {
+				setOcc(g_numberOfState,g_numberOfElectron);
+			}
+		}
+	}
+
+	// --- evolve timeStep
+
+	function evolveTimeStep( qmdSW, dt ) {
+		g_sysTime += 0.5*dt;
+
+		for (let ib=0; ib<g_numberOfOrbit; ib++) {
+			kxStep(g_psi[ib],0.5*dt);
+		}
+
+		setElectronDensity(g_numberOfState);
+		setEffectivePotential();
+		for (let ib=0; ib<g_numberOfOrbit; ib++) {
+			phaseStep(g_psi[ib],g_vv,dt);
+		}
+
+		g_sysTime += 0.5*dt;
+
+		for (let ib=0; ib<g_numberOfOrbit; ib++) {
+			kxStep(g_psi[ib],0.5*dt);
+		}
+
+		if (qmdSW==1) moveNuc(dt);
+	}
+
+	// --- kx step
+
+	function kxStep( ph, deltat ) { // ph[][]
+		const nnx=g_NNx;
+
+		const a = 4.0*g_dx*g_dx/deltat;
+		const bbRe = 2.0;
+		const bbIm = a;
+		const aaRe = -2.0;
+		const aaIm = a;
+		const aaAb = aaRe*aaRe+aaIm*aaIm;
+
+		for (let i=1; i<nnx-1; i++) {
+			g_bRe[i] = bbRe*ph[i][0]-bbIm*ph[i][1] - ph[i+1][0] - ph[i-1][0];
+			g_bIm[i] = bbRe*ph[i][1]+bbIm*ph[i][0] - ph[i+1][1] - ph[i-1][1];
+		}
+
+		g_uRe[1] = aaRe/aaAb;
+		g_uIm[1] = -aaIm/aaAb;
+		ph[1][0] = g_bRe[1]*g_uRe[1] - g_bIm[1]*g_uIm[1];
+		ph[1][1] = g_bIm[1]*g_uRe[1] + g_bRe[1]*g_uIm[1];
+
+		for (let i=2; i<nnx-1; i++) {
+			const auAb = (aaRe-g_uRe[i-1])*(aaRe-g_uRe[i-1])+(aaIm-g_uIm[i-1])*(aaIm-g_uIm[i-1]);
+			g_uRe[i] = (aaRe-g_uRe[i-1])/auAb;
+			g_uIm[i] = -(aaIm-g_uIm[i-1])/auAb;
+			ph[i][0] = (g_bRe[i]-ph[i-1][0])*g_uRe[i] - (g_bIm[i]-ph[i-1][1])*g_uIm[i];
+			ph[i][1] = (g_bRe[i]-ph[i-1][0])*g_uIm[i] + (g_bIm[i]-ph[i-1][1])*g_uRe[i];
+		}
+
+		for (let i=nnx-3; i>=1; i--) {
+			ph[i][0] -= ph[i+1][0]*g_uRe[i] - ph[i+1][1]*g_uIm[i];
+			ph[i][1] -= ph[i+1][0]*g_uIm[i] + ph[i+1][1]*g_uRe[i];
+		}
+	}
+
+	// --- phase step
+
+	function phaseStep( ph, vv, deltat ) { // ph[][], vv[]
+		const nnx=g_NNx;
+
+		for (let i=1; i<nnx-1; i++) {
+			const th = deltat*vv[i];
+			const cs = Math.cos(th), sn = Math.sin(th);
+			const phr = ph[i][0];
+			const phi = ph[i][1];
+			ph[i][0] = cs*phr+sn*phi;
+			ph[i][1] = cs*phi-sn*phr;
+		}
+	}
+
+	// --- set electron density
+
+	function setElectronDensity( istateMax ) {
+		const nnx=g_NNx;
+
+		g_rho[0] = 0.0; g_rho[nnx-1] = 0.0;
+		for (let i=1; i<nnx-1; i++) {
+			g_rho[i] = 0.0;
+			for (let ie=0; ie<istateMax; ie++) {
+				const ib = g_psis[ie][0];
+				const psibi = g_psi[ib][i];
+				g_rho[i] += g_occ[ie]*(psibi[0]*psibi[0]+psibi[1]*psibi[1])/g_lylz;
+			}
+		}
+	}
+
+	// --- set effective potential
+
+	function setEffectivePotential() {
+		const nnx=g_NNx;
+
+		poisson(100);
+		setVxc();
+		for (let i=0; i<nnx; i++) {
+			g_vv[i] = g_vvext[i]+g_vvh[i]+g_vvx[i]+g_vvc[i];
+		}
+	}
+
+	function  poisson( iterMax ) {
+		const nnx=g_NNx, h2=g_dx*g_dx, w=(1/2)*1.8; // 1.8 = SOR_omega
+
+		for (let iter=1; iter<iterMax; iter++) {
+			for (let i=1; i<nnx-1; i++) {
+				g_vvh[i] = g_vvh[i]+w*(g_vvh[i+1]+g_vvh[i-1]-2.0*g_vvh[i]+h2*g_rho[i] );
+			}
+		}
+	}
+
+	// LDA :  J. P. Perdew and A. Zunger; Phys. Rev., B23, 5048 (1981)
+	function setVxc() {
+		const nnx=g_NNx;
+		const c1 = -0.984745022;
+		for (let i=1; i<nnx-1; i++) {
+			const rh = g_rho[i];
+			const rh3 = Math.pow(rh,0.33333333);
+			g_vvx[i] = c1*rh3;
+
+			const rs = 0.6204/(rh3+1.0e-20);
+			if (rs>=1.0) {
+				const sqrtrs = Math.sqrt(rs);
+				const ec = -0.1423/(1.0+1.0529*sqrtrs+0.3334*rs);
+				g_vvc[i] = ec*(1.0+1.22838*sqrtrs+0.4445*rs)/(1.0+1.0529*sqrtrs+0.3334*rs);
+			} else {
+				g_vvc[i] = -0.05837-0.0084*rs +(0.0311+0.00133*rs)*Math.log(rs);
+			}
+		}
+	}
+
+	function eeCorrelation( rh ) {
+		const r = 0.6204/(Math.pow(rh,0.33333333)+1.0e-20);
+		let ec;
+		if (r>=1.0) {
+			ec = -0.1423/(1.0+1.0529*Math.sqrt(r)+0.3334*r);
+		} else {
+			ec = -0.0480-0.0116*r+(0.0311+0.0020*r)*Math.log(r);
+		}
+		return ec;
+	}
+
+	// --- sort state
+
+	function sortState( maxState ){
+		for (let ist=0; ist<maxState-1; ist++) {
+			let iw, w;
+			if (g_energy[ist]>g_energy[ist+1]+0.0001) {
+				iw = g_psis[ist][0]; g_psis[ist][0]=g_psis[ist+1][0]; g_psis[ist+1][0]=iw;
+				iw = g_psis[ist][1]; g_psis[ist][1]=g_psis[ist+1][1]; g_psis[ist+1][1]=iw;
+				w = g_occ[ist]; g_occ[ist]=g_occ[ist+1]; g_occ[ist+1]=w;
+				w = g_energy[ist]; g_energy[ist]=g_energy[ist+1]; g_energy[ist+1]=w;
+			}
+		}
+	}
+
+	// --- set loss
+
+	function setLoss( damp ) {
+		for (let ib=0; ib<g_numberOfOrbit; ib++) {
+			steepestDescent(g_psi[ib], g_vv, damp);
+		}
+	}
+
+	function steepestDescent( ph, v, damp ) { // ph[][], v[]
+		const nnx=g_NNx, h2 = 2.0*g_dx*g_dx;
+		const ee = kineticEnergy(ph) + potentialEnergy(ph,v);
+
+		for (let i=1; i<nnx-1; i++) {
+			g_wrk[i][0] = (2.0*ph[i][0]-ph[i+1][0]-ph[i-1][0])/h2+(v[i]-ee)*ph[i][0];
+			g_wrk[i][1] = (2.0*ph[i][1]-ph[i+1][1]-ph[i-1][1])/h2+(v[i]-ee)*ph[i][0];
+		}
+
+		for (let i=1; i<nnx-1; i++) {
+			ph[i][0] -= damp*g_wrk[i][0];
+			ph[i][1] -= damp*g_wrk[i][1];
+		}
+	}
+
+	// --- Gram-Schmidt
+
+	function GramSchmidt( stateMax ) {
+		const nnx=g_NNx, dx=g_dx, psis=g_psis, psi=g_psi;
+
+		normalize(psi[0]);
+
+		for (let istate=1; istate<stateMax; istate++) {
+			const ibstate = psis[istate][0]; // spacial orbit of istate state
+			for (let ist=0; ist<istate; ist++) {
+				const ibst = psis[ist][0]; // spacial orbit of ist state
+				if (psis[ist][1]==psis[istate][1]) { // pararell spin
+					let pRe = 0.0, pIm = 0.0;
+					for (let i=1; i<nnx-1; i++) {
+						pRe += (psi[ibst][i][0]*psi[ibstate][i][0] + psi[ibst][i][1]*psi[ibstate][i][1])*dx;
+						pIm += (psi[ibst][i][0]*psi[ibstate][i][1] - psi[ibst][i][1]*psi[ibstate][i][0])*dx;
+					}
+					for (let i=1; i<nnx-1; i++) {
+						psi[ibstate][i][0] -= (pRe*psi[ibst][i][0] - pIm*psi[ibst][i][1]);
+						psi[ibstate][i][1] -= (pRe*psi[ibst][i][1] + pIm*psi[ibst][i][0]);
+					}
+				}
+			}
+			normalize(psi[ibstate]);
+		}
+	}
+
+	// --- set occupation
+
+	function setOcc( maxState, nElectron ) {
+		let eFermi,ntrial;
+
+		let eUpper = g_energy[maxState-1];
+		let eLower = g_energy[0];
+		for (let i=0; i<maxState; i++) {
+			if (g_energy[i]>eUpper) eUpper = g_energy[i];
+			if (g_energy[i]<eLower) eLower = g_energy[i];
+		}
+
+		while (eUpper-eLower>1.0e-12) {
+			eFermi = (eUpper+eLower)/2.0;
+			ntrial = trialOcc(maxState, eFermi);
+			if (ntrial<nElectron) {
+				eLower = eFermi;
+			} else {
+				eUpper = eFermi;
+			}
+		}
+		eFermi = (eUpper+eLower)/2.0;
+
+		for (let i=0; i<maxState; i++) {
+			g_occ[i] = 1.0*FermiDirac(g_energy[i], eFermi);
+			if (g_occ[i]<0.0001) g_occ[i] = 0.0;
+			if (1.0-g_occ[i]<0.0001) g_occ[i] = 1.0;
+		}
+	}
+
+	function trialOcc( maxState, eFermi ) {
+		let s = 0.0;
+		for (let i=0; i<maxState; i++) {
+			s += 1.0*FermiDirac(g_energy[i], eFermi);
+		}
+		return s;
+	}
+
+	function FermiDirac( ee, ef ) {
+		const et = 0.005;
+		return ( 1.0/(Math.exp((ee-ef)/et)+1.0) );
+	}
+
+	function levelWidth() { // no use
+		let kT = broadening;
+		if (g_iterCount<30) {
+			kT=0.1;
+		} else {
+			kT = 0.1-0.002*(g_iterCount-29);
+			if (kT<broadening) kT = broadening;
+		}
+		return kT;
+	}
+
+
+	// --- utility
+
+	function norm( ph ) { // ph[][]
+		const nnx=g_NNx;
+		let s = 0.0;
+		for (let i=0; i<nnx; i++) {
+			s += (ph[i][0]*ph[i][0]+ph[i][1]*ph[i][1]);
+		}
+		return s*g_dx;
+	}
+
+	function normalize( ph ) { // ph[][]
+		const nnx=g_NNx;
+		const a = Math.sqrt(norm(ph));
+		for (let i=1; i<nnx-1; i++) {
+			ph[i][0] = ph[i][0]/a;
+			ph[i][1] = ph[i][1]/a;
+		}
+	}
+
+	function kineticEnergy( ph ) { // ph[][]
+		const nnx=g_NNx, dx=g_dx;
+		let s=0.0;
+		for (let i=1; i<nnx-1; i++) {
+			const hphRe = (2.0*ph[i][0]-ph[i+1][0]-ph[i-1][0])/(2.0*dx*dx);
+			const hphIm = (2.0*ph[i][1]-ph[i+1][1]-ph[i-1][1])/(2.0*dx*dx);
+			s += (ph[i][0]*hphRe + ph[i][1]*hphIm)*dx;
+		}
+		return s;
+	}
+
+	function momentum( ph ) { // ph[][]
+		const nnx=g_NNx, dx=g_dx;
+		let s=0.0;
+		for (let i=1; i<nnx-1; i++) {
+			const pphRe = (ph[i+1][1]-ph[i-1][1])/(2.0*dx);
+			const pphIm = (-ph[i+1][0]+ph[i-1][0])/(2.0*dx);
+			s += (ph[i][0]*pphRe + ph[i][1]*pphIm)*dx;
+		}
+		return s;
+	}
+
+	function potentialEnergy(ph, v) { // ph[][], v[]
+		const nnx=g_NNx, dx=g_dx;
+		let s=0.0;
+		for (let i=1; i<nnx-1; i++) {
+			s += v[i]*(ph[i][0]*ph[i][0] + ph[i][1]*ph[i][1])*dx;
+		}
+		return s;
+	}
+
+	function innerProduct(f, g) { // f[][], g[][]
+		const nnx=g_NNx, dx=g_dx;
+		let pRe=0.0, pIm=0.0;
+		for (let i=1; i<nnx-1; i++) {
+			pRe += (f[i][0]*g[i][0] + f[i][1]*g[i][1])*dx;
+			pIm += (f[i][0]*g[i][1] - f[i][1]*g[i][0])*dx;
+		}
+		return Math.sqrt(pRe*pRe+pIm*pIm);
+	}
+
+	function meanPosX(ph) { // ph[][]
+		const nnx=g_NNx, dx=g_dx;
+		let s=0.0;
+		for (let i=1; i<nnx-1; i++) {
+			s += i*dx*(ph[i][0]*ph[i][0] + ph[i][1]*ph[i][1])*dx;
+		}
+		return (s - 8.0);
+	}
+
+
+	// ------------------------------------ move nuclei -----------
+	//
+	//  length : 1 au = 5.29177e-11 m
+	//  time   : 1 au = 2.41888e-17 s
+	//  energy : 1 au = 4.38975e-18 J (= 27.2114 eV)
+	//
+	//  int g_nucMax  max number of nucleus (i = 0...g_nucMax-1), g_nucMax must less then 8
+	//  double g_nucMass[i] i-th nuclear mass in SI(kg)
+	//  double g_nucCharge[i] i-th nuclear charge in au (electron charge = -1)
+	//  double g_nucxx[i] i-th nuclear position in au
+	//  double g_nucvx[i] i-th nuclear velocity in SI(m/s)
+	//  double g_nucfx[i] i-th nuclear force in SI(N)
+	//
+
+	function setInitNuc( iNuc, nuclearMass, nuclearCharge, nuclearxx, nuclearvx ) {
+		g_nucMass[iNuc] = nuclearMass*1.67e-27; // kg
+		g_nucCharge[iNuc] = nuclearCharge;
+		g_nucxx[iNuc] = nuclearxx;
+		g_nucvx[iNuc] = nuclearvx;
+		g_nucfx[iNuc] = 0.0;
+	}
+
+	function moveNuc( deltat ) {
+		const nNuc=g_nNuc;
+		const dtNuc = deltat*g_auTime; // au to SI unit
+
+		for (let i=0; i<nNuc; i++) {
+			g_nucvx[i] += 0.5*dtNuc*g_nucfx[i]/g_nucMass[i]; // in SI
+			g_nucxx[i] += (g_nucvx[i]*dtNuc)/g_auLength; // in au
+		}
+		setNucForce();
+		for (let i=0; i<nNuc; i++) {
+			g_nucvx[i] += 0.5*dtNuc*g_nucfx[i]/g_nucMass[i]; // in SI
+		}
+		setNucleiPotential();
+	}
+
+	function setNucForce() {
+		const nNuc=g_nucMax;
+
+		for (let i=0; i<nNuc; i++) {
+			g_nucfx[i] = (4.38975e-18/5.29177e-11)*electronForceAtNuc(g_nucxx[i]);
+		}
+		for (let i=0; i<nNuc; i++) {
+			for (let j=i+1; j<nNuc; j++) {
+				const f = (4.38975e-18/5.29177e-11)*forceNN(i,j);
+				g_nucfx[i] += f;
+				g_nucfx[j] -= f;
+			}
+		}
+	}
+
+	function electronForceAtNuc( xPos ) {
+		const nnx=g_NNx, dx=g_dx;
+		let s=0.0;
+		for (let i=1; i<nnx-1; i++) {
+			const x = i*dx;
+			const r2 = (x-xPos)*(x-xPos);
+			const r = Math.sqrt(r2);
+			if (r2>0.1) {
+				s += (x-xPos)/(r2*r)*g_rho[i]*g_lylz*dx;
+			}
+		}
+		return s;
+	}
+
+	function forceNN( i, j ) {
+		const x1 = g_nucxx[i], x2 = g_nucxx[j];
+		const r = Math.sqrt((x1-x2)*(x1-x2));
+		return ( (x1-x2)*g_nucCharge[i]*g_nucCharge[j]/(r*r*r) );
+	}
+
+	function setNucleiPotential() {
+		const nnx=g_NNx, nNuc=g_nucMax;
+
+		for (let i=0; i<nnx; i++) {
+			g_vvext[i] = 0.0;
+		}
+
+		for (let iNuc=0; iNuc<nNuc; iNuc++) {
+			addNucPotential(iNuc);
+		}
+		addHillPotential();
+	}
+
+	function addNucPotential(iNuc) {
+		const nnx=g_NNx, dx=g_dx;
+
+		const a = g_jelliumRadius;
+		const qq = g_nucCharge[iNuc]; // charge
+		const xPos = g_nucxx[iNuc]; 
+
+		for (let i=0; i<nnx; i++) {
+			const x = i*dx;
+			const r = Math.sqrt((x-xPos)*(x-xPos));
+			if (r>a) {
+				g_vvext[i] += -qq/r;
+			} else {
+				g_vvext[i] += -(qq/a)*(1.5-0.5*(r*r/(a*a)));
+			}
+		}
+	}
+
+	function addHillPotential() {
+		const nnx=g_NNx, dx=g_dx;
+
+		const hillLen = nnx*dx*0.2;
+
+		for (let i=0; i<nnx; i++) {
+			const x = i*dx;
+			if (x<hillLen || x>NNx*dx-hillLen) {
+				g_vvext[i] += 1.0;
+			}
+		}
+	}
+
+
+	// --------------------  draw  --------------------
+
+	function draw( ctx, drawMode ) {
+		const xp=40,yp=300, sc=1;
+
+		drawStateTable(ctx);
+		if (drawMode==0) {
+			drawState(ctx, xp,yp,sc);
+		} else if (drawMode==1) {
+			drawRho(ctx, xp,yp,sc);
+		} else if (drawMode==2) {
+			drawPotential(ctx, xp,yp,sc);
+		}
+
+		ctx.fillStyle = "rgb(0,0,0)";
+		ctx.fillText("iteration="+g_iterCount, 20, g_yCanvasSize-25);
+		ctx.fillText("time="+g_sysTime.toFixed(1)+"(au) ="+(g_sysTime*g_auTime*1.0e15).toFixed(2)+"(fs)",
+						20, g_yCanvasSize-5);
+	}
+
+	function drawStateTable( ctx ) {
+		const px=20, py=30;
+
+		ctx.fillStyle = "rgb(0,0,0)";
+		ctx.fillText("State Table", px+50, py);
+		ctx.fillText("No.", px, py+20);
+		ctx.fillText(" state E", px+30, py+20);
+		ctx.fillText("occ", px+130, py+20);
+		ctx.fillText("orbit", px+210, py+20);
+		ctx.fillText("spin", px+310, py+20);
+		for (let ist=0; ist<g_numberOfState; ist++) {
+			const iob = g_psis[ist][0];
+			const spin = g_psis[ist][1];
+			const ke = kineticEnergy(g_psi[iob]);
+			const pe = potentialEnergy(g_psi[iob],g_vvext);
+			const te = ke+pe;
+			const ppy = py+40+ist*20;
+			ctx.fillStyle = "hsl("+(240-g_occ[ist]*240)+",100%,50%)";
+			ctx.fillText(ist, px, ppy);
+			ctx.fillText(te.toFixed(4), px+30, ppy);
+			ctx.fillText(g_occ[ist].toFixed(4), px+130, ppy);
+			ctx.fillText("|"+iob+">", px+210, ppy);
+			ctx.fillText(((spin==1) ? "up" : "down"), px+310, ppy);
+		}
+		/*ctx.fillText("<0|1>="+innerProduct(g_psi[0], g_psi[1]), 20, ppy+20);*/
+	}
+
+	function drawState( ctx, xp, yp, sc ) {
+		const pmag=50, emag=10, nnx=g_NNx;
+		const snth = Math.sin(15.0*Math.PI/180.0), csth = Math.cos(15.0*Math.PI/180.0);
+
+		drawRho(ctx, xp,yp,sc);
+		for (let iob=0; iob<g_numberOfOrbit; iob++) {
+			const ke = kineticEnergy(g_psi[iob]);
+			const pe = potentialEnergy(g_psi[iob],g_vvext);
+			const te = ke+pe;
+			const ph = g_psi[iob];
+			ctx.strokeStyle = "hsl("+iob*60+",100%,50%)";
+			ctx.beginPath();
+			for (let i=0; i<nnx; i++) {
+				const ph0 = ph[i][0]*pmag, ph1 = ph[i][1]*pmag;
+				ctx.lineTo(xp+(i+snth*ph1)*sc,yp-(ph0+csth*ph1)*sc-te*emag);
+			}
+			ctx.stroke();
+		}
+	}
+
+	function drawVeff( ctx, xp, yp, sc, vmag ) {
+		const nnx=g_NNx;
+
+		// base line
+		ctx.strokeStyle = "rgb(120,120,120)";
+		ctx.beginPath();
+		ctx.moveTo(xp, yp);
+		ctx.lineTo(xp+(nnx-1)*sc, yp);
+		ctx.stroke();
+		ctx.fillStyle = "rgb(120,120,120)";
+		ctx.fillText("0", xp-10, yp+20);
+		ctx.fillText(" "+(nnx*g_dx)+"(au)", xp+(nnx-1)*sc-30, yp+20);
+		// draw Veff
+		drawFn(ctx, g_vv,xp,yp,sc,vmag,"rgb(0,200,0)");
+	}
+
+	function drawFn( ctx, ff, xp, yp, sc, vmag, color ) {
+		const nnx=g_NNx;
+
+		ctx.strokeStyle = color;
+		ctx.beginPath();
+		for (let i=0; i<nnx; i++) {
+			ctx.lineTo(i*sc+xp,yp-ff[i]*vmag);
+		}
+		ctx.stroke();
+	}
+
+	function drawRho( ctx, xp, yp, sc ) {
+		const nnx=g_NNx, rmag=50000, vmag=10;
+
+		drawVeff(ctx, xp,yp,sc,vmag);
+		// draw rho
+		ctx.fillStyle = "rgb(120,120,120)";
+		for (let i=0; i<nnx-1; i++) {
+			ctx.beginPath();
+			ctx.lineTo(i*sc+xp,yp-g_vv[i]*vmag);
+			ctx.lineTo(i*sc+xp,yp-g_vv[i]*vmag-g_rho[i]*rmag);
+			ctx.lineTo((i+1)*sc+xp,yp-g_vv[i+1]*vmag-g_rho[i+1]*rmag);
+			ctx.lineTo((i+1)*sc+xp,yp-g_vv[i+1]*vmag);
+			ctx.closePath();
+			ctx.fill();
+		}
+	}
+
+	function drawPotential( ctx, xp, yp, sc ) {
+		const rmag=20000, vmag=10;
+		let ypp = yp + 35;
+		drawRho(ctx, xp,yp,sc); // draw rho + Veff
+		drawFn(ctx, g_vvext,xp,yp,sc,vmag,"rgb(0,0,0)"); //Vext
+		drawFn(ctx, g_vvh,xp,yp,sc,vmag*10,"rgb(0,0,250)"); //VH
+		drawFn(ctx, g_vvx,xp,yp,sc,vmag*10,"rgb(250,250,0)");  //Vx
+		drawFn(ctx, g_vvc,xp,yp,sc,vmag*10,"rgb(250,20,250)");  //Vc
+		ctx.fillStyle = "rgb(0,0,0)"; ctx.fillText("Vext", 20, ypp);
+		ctx.fillStyle = "rgb(0,180,0)"; ctx.fillText("Veff", 100, ypp);
+		ctx.fillStyle = "rgb(0,0,250)"; ctx.fillText("VH x10", 20, ypp+20);
+		ctx.fillStyle = "rgb(250,250,0)"; ctx.fillText("Vx x10", 100, ypp+20);
+		ctx.fillStyle = "rgb(250,20,250)"; ctx.fillText("Vc x10", 180, ypp+20);
+	}
+
+	function drawText(ctx, txt, x, y, color) {
+		ctx.fillStyle = color;
+		ctx.fillText(txt, x, y);
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:           setInitialCondition, // setInitialCondition( theme )
+		evolve:         timeEvolution, // timeEvolution( nCalc, lossSW, qmdSW )
+		draw:           draw, // draw( ctx, drawMode )
+
+		getAUinSI:      function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:    function() { return [ g_NNx, g_dx, g_timeStep, g_numberOfState ]; },
+		getNow:         function() { return [ g_iterCount, g_sysTime ]; },
+		getOccupation:  function(ist) { return g_occ[ist]; },
+		getStEnergy:    function(ist) { return g_energy[ist]; },
+		getState:       function(ist) { return [ g_psis[ist][0], g_psis[ist][1] ]; }, // [ orbit, spin ]
+		getPsi:         function(orbit,i) { return g_psi[orbit][i]; }, // [ RePsi, ImPsi ]
+		getDensity:     function(i) { return g_rho[i]; },
+		getVext:        function(i) { return g_vvext[i]; },
+		getVeff:        function(i) { return g_vv[i]; },
+		getVh:          function(i) { return g_vvh[i]; },
+		getVx:          function(i) { return g_vvx[i]; },
+		getVc:          function(i) { return g_vvc[i]; },
+	};
+
+})(); // ====================  electronsTDKS1D end  ====================
+
+
+const tjsm098 = (function(){ // ====================  tjsm Module  ====================
+
+	const theModule = electronsTDKS1D;
+	
+	let v_theme = 0;	// 0:(up,up) 1:(up,down) 2:(up,up,down) 3:(up,up,up,up)
+	let v_nCalc = 2;	// n-times evolve time step 
+	let v_lossSW = 0;	// 0-lossOFF 1-lossON 2-loss+trans 3-loss+trans,t-stop
+	let v_qmdSW = 0;	// QMD(nuclear motion) 0:off 1:on
+	
+	let p_auLength, p_auTime, p_auEnergy, p_au2eV // <-- theModule.getAUinSI()
+	let p_nx, p_dx, p_dt, p_nState; // <-- theModule.getSysParam()
+	
+	const colour = { vext:"#44aa44", veff:"#44dddd", vH:"#6666dd", vxc:"#aa44aa", rho:"#ffddff" };
+	const stateColor = [ "#ff0000", "#ff8800", "#ffff00", "#00ff00", "#00ffff", "#4444ff", "#8844ff", "#ff4488" ];
+	
+	// program flow control
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let dispMode = 1; // 0:orbit(x), 1:rho(x), 2:V(x), 3:canvas2d orbit(x), 4:canvas2d rho(x), 5:canvas2d V(x)
+	let dispModeChanged = false;
+	let dispState = 2;
+	let dispOrbit, dispSpin;
+	let legendFlag = true;
+	let viewHomeRequested = false;
+	let count = 0; // animate() loop count
+
+	// in three.js world
+	const xBoxSize = 400;
+	const x0 = xBoxSize/2;
+	let hh, yBoxSize, zBoxSize, y0, z0;
+	
+	// 3d object added to scene
+	let line_box;
+	let pLines = [];
+	let vLines = [];
+	let rhoLine;
+	let cnvsprite;
+
+	// three.js , OrbitControls.js
+	const r_camera = 1200;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+	
+	// -------------------- lil-gui setup
+	
+	const uParam = {
+		theme: '2-electrons spin-up,up',
+		themeMenu: [ '2-electrons spin-up,up', '2-electrons spin-up,down', '3-electrons spin-up,up,down',
+		'4-electrons spin-up,up,up,up' ],
+		loss: 0,
+		lossMenu: { 'OFF': 0, 'ON': 1, 'ON + transition': 2, 'ON + transition + time stop': 3 }, 
+		dispMode: 'charge density(x)',
+		dispMenu: [ 'orbit(x)', 'charge density(x)', 'potential(x)',
+					'canvas2d: orbit(x)', 'canvas2d: charge density(x)', 'canvas2d: potential(x)' ],
+		reset: function() { resetFlag = 1; },
+		pause: false,
+		viewHome: function() { viewHomeRequested = true; }
+	};
+	
+	const gui = new GUI();
+	setupGUI();
+	
+	function setupGUI() {
+		gui.add( uParam, 'theme', uParam.themeMenu ).onChange( 
+			str => { v_theme = uParam.themeMenu.indexOf(str); resetFlag = 1; } );
+		
+		gui.add( uParam, 'loss', uParam.lossMenu ).onChange( v => { v_lossSW = v; } ).listen();
+		
+		gui.add( uParam, 'dispMode', uParam.dispMenu ).onChange( 
+			str => { dispMode = uParam.dispMenu.indexOf(str); dispModeChanged = true; } );
+		
+		gui.add( uParam, 'reset' );
+		gui.add( uParam, 'pause' ).onChange( bool => { pauseFlag = ( bool ) ? 1 : 0; } );
+		gui.add( uParam, 'viewHome' ).name( 'camera: home view' );
+	}
+	
+	
+	// --------------------  main
+	
+	function main() {
+		// constract renderer
+		const width = 500;
+		const height = 480;
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+		
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, 0, r_camera);
+		controls = new OrbitControls(camera,renderer.domElement);
+		
+		constructScene();
+		animate();
+	}
+	
+	
+	function constructScene() {
+		
+		// init TDKS1D 
+		theModule.init( v_theme );
+		[ p_auLength, p_auTime, p_auEnergy, p_au2eV ] = theModule.getAUinSI();
+		[ p_nx, p_dx, p_dt, p_nState ] = theModule.getSysParam();
+		v_lossSW = 0;
+		uParam.loss = 0;
+		
+		hh = xBoxSize/p_nx;
+		yBoxSize = xBoxSize;
+		zBoxSize = xBoxSize;
+		y0 = yBoxSize/2;
+		z0 = zBoxSize/2;
+
+		// scene
+		scene = new THREE.Scene();
+ 
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xFFFFFF);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xFFFFFF, 0.5);
+		scene.add(light);
+		
+		
+		// color line: pLines, vLines, rhoLine
+		for (let i=0; i<p_nState; i++) {
+			// colorLine = m3js_colorLine( p_nx, xBoxSize )
+			pLines[i] = m3js_colorLine( p_nx, xBoxSize );
+			pLines[i].visible = false;
+			scene.add( pLines[i] );
+		}
+		
+		for (let i=0; i<5; i++) {
+			// colorLine = m3js_colorLine( p_nx, xBoxSize )
+			vLines[i] = m3js_colorLine( p_nx, xBoxSize );
+			vLines[i].visible = false;
+			scene.add( vLines[i] );
+		}
+		
+		// colorLine = m3js_colorLine( p_nx, xBoxSize )
+		rhoLine = m3js_colorLine( p_nx, xBoxSize );
+		rhoLine.visible = false;
+		scene.add( rhoLine );
+		
+		// line_box
+		{
+			const geometry = new THREE.BoxGeometry( xBoxSize, yBoxSize, zBoxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial( { 
+				color: 0x888844 } ) );
+			scene.add( line_box );
+		}
+		
+		// canvas sprite
+		// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 600, 600, 400 );
+		cnvsprite.position.set(0,0,0);
+		cnvsprite.visible = false;
+		scene.add( cnvsprite );
+		
+	}
+	
+	
+	// loop animation
+	function animate() {
+		
+		// select theme
+		if (resetFlag==1) {
+			resetFlag = 0;
+			
+			constructScene();
+			dispModeChanged = true;
+			count = 0;
+		}
+		
+		if ( viewHomeRequested ) {
+			camera.position.set(0, 0, r_camera);
+			viewHomeRequested = false;
+		}
+		
+		// clear world (object.visible -> false)
+		if ( dispModeChanged ) {
+			dispModeChanged = false;
+			
+			line_box.visible = (dispMode<=2) ? true : false;
+			for (let i=0; i<p_nState; i++) {
+				pLines[i].visible = false;
+			}
+			for (let i=0; i<5; i++) {
+				vLines[i].visible = false;
+			}
+			rhoLine.visible = false;
+			cnvsprite.visible = false;
+		}
+		
+		// TDKS1D update
+		if (pauseFlag==0) {
+			theModule.evolve( v_nCalc, v_lossSW, v_qmdSW );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( 1, v_lossSW, v_qmdSW );
+		}
+		[ dispOrbit, dispSpin ] = theModule.getState(dispState);
+		
+		
+		// threejs world update
+		if ( dispMode<=2 ) {
+			const mag = 200.0;
+			const vmag = 20.0;
+			const rmag = 80000.0;
+			
+			// Veff(x)
+			// colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+			vLines[0].update(
+				function(i) {
+					let vi;
+					vi = vmag*theModule.getVext(i);
+					return [ i*hh-x0, vi, 0, colour.vext ];
+				}
+			);
+			
+			// charge density rho(x)
+			// colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+			rhoLine.update(
+				function(i) {
+					let vi = vmag*theModule.getVext(i);
+					let ri = rmag*theModule.getDensity(i);
+					return [ i*hh-x0, vi+ri, 0, ( (ri>0.5*hh) ? colour.rho : colour.vext ) ];
+				}
+			);
+
+			// + state 
+			if ( dispMode==0 ) {
+				let orb, spin;
+				for (let ist=0; ist<p_nState; ist++ ) {
+					const occ = theModule.getOccupation(ist); 
+					if ( occ<0.0001 ) {
+						pLines[ist].visible = false;
+						continue;
+					}
+					[ orb, spin ] = theModule.getState(ist);
+					const energy = theModule.getStEnergy(ist);
+					// colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+					pLines[ist].update(
+						function(i) {
+							let pRe, pIm;
+							[ pRe , pIm ] = theModule.getPsi(orb,i);
+							return [ i*hh-x0, mag*pRe + vmag*energy, mag*pIm, stateColor[ist] ];
+					
+						}
+					);
+
+				}
+			}
+			
+			// + veff(x),Vh(x),Vxc(x)
+			if ( dispMode==2 ) {
+				// colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+				vLines[1].update( // Veff(x)
+					function(i) {
+						let vi;
+						vi = vmag*theModule.getVeff(i);
+						return [ i*hh-x0, vi, -1, colour.veff ];
+					}
+				);
+				
+				// colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+				vLines[2].update( // Vh(x) x 10
+					function(i) {
+						let vi;
+						vi = 10.0*vmag*theModule.getVh(i);
+						return [ i*hh-x0, vi, -2, colour.vH ];
+					}
+				);
+				
+				// colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+				vLines[3].update( // Vxc(x) x 10
+					function(i) {
+						let vi;
+						vi = 10.0*vmag*(theModule.getVx(i)+theModule.getVc(i));
+						return [ i*hh-x0, vi, -2, colour.vxc ];
+					}
+				);
+			}
+		}
+		
+		// sprite update
+		if ( dispMode>=3 ) {
+			// cnvsprite.update( drawFunc )
+			cnvsprite.update(
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					theModule.draw( ctx, dispMode-3 );
+				}
+			);
+		}
+		
+		
+		// output to innerHTML
+		if (count % 10 == 0) {
+			const realBoxSize = p_nx*p_dx;
+			let iterCount, time;
+			[ iterCount, time ] = theModule.getNow();
+			document.getElementById("text_caption").innerHTML = 
+				"box ="+realBoxSize+"(au) ~"+(realBoxSize*p_auLength*1.0e9).toFixed(2)+"(nm) "
+				+ ", time ="+time.toFixed(2)+"(au) ~"+(time*p_auTime*1.0e15).toFixed(2)+"(fs)<br>";
+			
+			if ( legendFlag && dispMode<3 ) {
+				let caption = 
+					"<span style='color:#ffaaff'>charge density(x)</span>" + ", "
+					+ "<span style='color:"+colour.vext+"'>Vext(x)</span>";
+				if (dispMode==2 ) {
+					caption += ", <span style='color:"+colour.veff+"'>Veff(x)</span> "
+							+ ", <span style='color:"+colour.vH+"'>Vh(x) x 10</span> "
+							+ ", <span style='color:"+colour.vxc+"'>Vxc(x) x 10 </span> ";
+				}
+				caption += "<br>";
+				
+				for (let ist=0; ist<p_nState; ist++ ) {
+					const occ = theModule.getOccupation(ist); 
+					if ( occ<0.0001 ) continue;
+					let orb, spin;
+					[ orb, spin ] = theModule.getState(ist);
+					const energy = theModule.getStEnergy(ist);
+					caption += " "+"<span style='color:"+stateColor[ist]+"'>"+"| "+ist+" &gt;</span>"
+							+ " , orbit energy ="+energy.toFixed(6)
+							+"(au), occ ="+occ.toFixed(4)
+							+", spin :"+ ((spin==1) ? "up" : "down")+"<br>";
+				}
+				document.getElementById('textOnCanvas').innerHTML = caption;
+			} else {
+				document.getElementById('textOnCanvas').innerHTML = "";
+			}
+			
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_colorLine function  ------------------------------
+	//
+	//    ver 0.0.0  2022.09.19 created, last updated on 2022.12.19
+	//
+	//  colorLine = m3js_colorLine( p_nx, xBoxSize )
+	//     p_nx: number of x-division
+	//     xBoxSize: x-box size in the threejs-world
+	//  
+	//  scene.add( colorLine );
+	//
+	//  colorLine.update( x_y_z_color_function ) // x_y_z_color_function: (i) --> [ x, y, z, color ]
+	//    x_y_z_color_function: function(i) { ... return [ x, y, z, color ]; }
+	//      (x,y,z): position, 
+	//      color: number: hue, 0...359
+	//             string: shch as 'red', '#ff0000', 'rgb(255,0,0)', 'hsl(0,100%,50%)'
+	//
+	//  colorLine.visible = false
+	//
+	
+	function m3js_colorLine( p_nx, xBoxSize ) {
+		const nx = p_nx;
+		const hh = xBoxSize/p_nx;
+		let colorLine;
+		
+ 		const geometry = new THREE.BufferGeometry();
+ 		const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+		const positions = new Float32Array( nx * 3 );
+		const colors = new Float32Array( nx * 3 );
+		geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+		geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+		geometry.setDrawRange( 0, nx );
+    	colorLine = new THREE.Line(geometry,material);
+		
+		colorLine.update = colorLine_update;
+		
+		return colorLine;
+		
+		
+		function colorLine_update( x_y_z_color_function ) {
+			const line = colorLine;
+			const positions = line.geometry.attributes.position.array;
+			const colors = line.geometry.attributes.color.array;
+			for (let i=0; i<nx; i++) {
+				let x, y, z, col;
+				[ x, y, z, col ] = x_y_z_color_function(i);
+				positions[i*3]   = x;
+				positions[i*3+1] = y;
+				positions[i*3+2] = z;
+				if ( col==undefined ) col = 'yellow';
+				const colorStr = ( typeof(col) == 'string' ) ? col : `hsl(${col},100%,50%)`;
+				const colr = new THREE.Color( colorStr );
+				colors[i*3]   = colr.r;
+				colors[i*3+1] = colr.g;
+				colors[i*3+2] = colr.b;
+			}
+			line.geometry.attributes.position.needsUpdate = true;
+			line.geometry.attributes.color.needsUpdate = true;
+			colorLine.visible = true;
+		}
+	
+	}
+	
+	// -----------------------  m3js_colorLine function end
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main: main, // main()
+		
+	}
+
+})(); // ====================  tjsm098 module end  ====================
+
+
+// event
+const tjsm = tjsm098;
+window.addEventListener('load', tjsm.main );
+
+
+</script>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+</head>
+
+<body>
+<p>[tm098] electrons - time dependent Kohn-Sham (TDKS1D)</p>
+<div style="position: relative; overflow: hidden; width: 500px; height: 480px">
+  <canvas id="myCanvas" style="position: absolute; top: 0px; left: 0px"></canvas>
+  <div id="textOnCanvas" 
+    style="position:absolute; top:5px; left:5px; color:#888888; background-color:rgba(0, 0, 0, 0);
+           font-size:0.9rem"> ... One moment, please.<br> ... setting up the studio ... </div>
+</div>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
