@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>tjs113_SEIRinfectionModel</title>
+  <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+  <!--
+  <script src="../lib/three.min.js"></script>
+  <script src="../lib/OrbitControls.js"></script>
+  -->
+  <script>
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tjs113_SEIRinfectionModel
+//    Copyright(C) 2022-2023 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2022.05.13 created, last updated on 2022.05.21
+//    ver 0.0.1  2022.10.12 v1, last updated on 2023.01.17
+//    ver 0.0.2  2024.01.06 v2, last updated on 2024.01.06
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  SEIR infection model -- differential equations
+//
+//    S-E-I-R model
+//
+//      [S] --- beta*I ---> [E] --- sigma ---> [I]--- gamma ---> [R] 
+//
+//
+//    S-E-I-R model -- differential equation
+//      dS/dt = -beta*S*I
+//      dE/dt = beta*S*I - sigma*E
+//      dI/dt = sigma*E - gamma*I
+//      dR/dt = gamma*I
+//    where
+//      S: susceptible
+//      E: exposed
+//      I: infectious
+//      R: removed (recover + dead)
+//      N = S + E + I + R = constant 
+//      beta: infection rate (1/day/I)
+//      sigma: incidence rate (1/day) ~ 1/(mean incubation period)
+//      gamma: recovery rate (1/day) ~ 1/(mean infected period)
+//      mue: birth rate = death rate (1/day) ~ 1/(mean life period)
+//
+//    basic reproduction number R0
+//      R0 = beta*S0/gamma
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const SEIRinfectionModel = (function(){ // ====================  SEIRinfectionModel Module  ====================
+
+	const g_nMax = 21600; // array max
+	const g_nTimes = 20;  // 1(day) = g_nTimes*g_dt
+
+	let g_sysTime = 0.0;  // (day) system time
+	let g_dt = 1.0/g_nTimes; // (day) time step g_dt
+	let g_dispTimeRange = 360; // (day)
+
+	let g_beta = 0.001;   // (1/day) infection rate
+	let g_sigma = 0.2;    // (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
+	let g_gamma = 0.1;    // (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
+
+	let g_nPop = 1000.0;  // (person) total number of the system
+	let g_susceptible = g_nPop-1.0; // (person) number of susceptible
+	let g_exposed = 1.0;  // (person) number of exposed
+	let g_infectius = 0.0;// (person) number of infectius
+	let g_removed = 0.0;  // (person) number of removed
+	let g_ss0 = g_susceptible; // (person) initial number of susceptible
+
+	let g_xBoxSize = 470; // in pixel
+	let g_yBoxSize = 400;
+	let g_yTextSize = 70;
+
+	const g_pS = dim1(g_nMax); // (person) susceptible
+	const g_pE = dim1(g_nMax); // (person) exposed
+	const g_pI = dim1(g_nMax); // (person) infectius
+	const g_pR = dim1(g_nMax); // (person) removed
+	const g_pN = dim1(g_nMax); // (person) total = S+E+I+R
+
+	function dim1( n ) {
+		return new Float64Array( n );
+	}
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition( v_nPop, v_beta, v_sigma, v_gamma, removedRatio ) {
+		const nMax=g_nMax;
+
+		// set initial value
+		g_sysTime = 0.0;	
+
+		g_nPop = v_nPop;
+		g_beta = v_beta;
+		g_sigma = v_sigma;
+		g_gamma = v_gamma;
+
+		g_susceptible = g_nPop - 1.0 - g_nPop*removedRatio;
+		g_exposed = 1.0;
+		g_infectius	= 0.0;
+		g_removed = g_nPop*removedRatio;
+		g_ss0 = g_susceptible;
+
+		// solve difference equation --> set S(t),E(t),I(t),R(t),N(t),  t=0...nMax
+		for (let i=0; i<nMax; i++) {
+			g_pS[i] = g_susceptible;
+			g_pE[i] = g_exposed;
+			g_pI[i] = g_infectius;
+			g_pR[i] = g_removed;
+			g_pN[i] = g_susceptible + g_exposed + g_infectius + g_removed;
+
+			// dS/dt = mue*(N - S) - beta*S*I
+			const dSvdt = -g_beta*g_susceptible*g_infectius;
+
+			// dE/dt = beta*S*I - sigma*E
+			const dEvdt = g_beta*g_susceptible*g_infectius - g_sigma*g_exposed;
+
+			// dI/dt = sigma*E - gamma*I
+			const dIvdt = g_sigma*g_exposed - g_gamma*g_infectius;
+
+			// dR/dt = gamma*I
+			const dRvdt = g_gamma*g_infectius;
+
+			g_sysTime += g_dt;
+			g_susceptible = g_susceptible + dSvdt*g_dt;
+			g_exposed = g_exposed + dEvdt*g_dt;
+			g_infectius = g_infectius + dIvdt*g_dt;
+			g_removed = g_removed + dRvdt*g_dt;
+		}
+
+	}
+	
+
+	// --------------------  time evolution  --------------------
+
+	function timeEvolution() {
+
+		;
+	}
+
+	function maxInfectiusIndex() {
+		const nMax=g_nMax;
+
+		let m = g_pI[0], im = 0;
+		for (let i=0; i<nMax; i++) {
+			if (g_pI[i]>m) {
+				m = g_pI[i];
+				im = i;
+			}
+		}
+
+		return im;
+	}
+
+
+	// --------------------  data output  --------------------
+
+	function outputTextArea( outputSW, timeRange ) {
+		// outputSW:  0:textarea clear,  1:output text data
+
+		let str = "";
+		if (outputSW==1) {
+			const rr0 = g_beta*g_ss0/g_gamma;
+			str = "beta = "+g_beta.toFixed(5)+",  sigma = "+g_sigma.toFixed(2)+",  gamma = "+g_gamma.toFixed(2)+" \n";
+			str += "R0 = "+rr0.toFixed(2)+" \n";
+			str += "S(0) = "+g_pS[0].toFixed(1)+",  E(0) = "+g_pE[0].toFixed(1)+",  I(0) = "+g_pI[0].toFixed(1)+" \n";
+			str += " \n";
+			str += " day,  S(t),  E(t),  I(t),  R(t) \n";
+			for (let i=0; i<timeRange; i++) {
+				const j = i*g_nTimes;
+				str += " "+(j*g_dt).toFixed(1)+",  "
+				+g_pS[j].toFixed(1)+",  "
+				+g_pE[j].toFixed(1)+",  "
+				+g_pI[j].toFixed(1)+",  "
+				+g_pR[j].toFixed(1)+"\n";
+			}
+		}
+		document.getElementById("outputText").innerHTML = str;
+	}
+
+
+	// --------------------  draw  --------------------
+
+	function draw( ctx, drawMode, timeRange, outputFlag ) {
+		const xp=60, yp=30;
+
+		//ctx.clearRect(0, 0, g_canvas.width, g_canvas.height);
+
+		if (drawMode==0) {
+			plotSEIR(ctx, xp,yp,timeRange);
+		} else if (drawMode==1) {
+			logPlotSEIR(ctx, xp,yp,timeRange);
+		}
+
+
+		ctx.fillStyle = "rgb(240,240,240)"; //background color
+		ctx.fillRect(0, g_yBoxSize,g_xBoxSize, g_yTextSize); //clear text area
+
+		const iMax = maxInfectiusIndex();
+		const piMax = g_pI[iMax];
+
+		ctx.fillStyle = "rgb(0,0,0)";
+		ctx.fillText("infectius max = "+piMax.toFixed(1)+" at "+(iMax*g_dt).toFixed(2)+"(day)",
+						10, g_yBoxSize+24);
+		ctx.fillText("R0 = "+(g_beta*g_ss0/g_gamma).toFixed(2),
+						320, g_yBoxSize+24);
+		ctx.fillText("S+E+I+R(at "+(iMax*g_dt).toFixed(2)+" day) = "+(g_pN[iMax]),
+						10, g_yBoxSize+44);
+		ctx.fillText("beta = "+g_beta.toFixed(5)
+						+ ",  sigma = "+g_sigma.toFixed(2)
+						+ ",  gamma = "+g_gamma.toFixed(2),
+						10, g_yBoxSize+64);
+		
+		if (outputFlag==1) outputTextArea(1,timeRange);
+	}
+
+	function plotSEIR( ctx, xp, yp, timeRange ) {
+		const mag=300.0/g_nPop, m=Math.floor(g_nTimes*timeRange/g_dispTimeRange);
+
+		//drawGrid(xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color)
+		drawGrid(ctx, xp,yp,360,300,30,30,"0",timeRange+"(day)","0","1000","rgb(40,40,40)");
+
+		drawText(ctx, "Susceptible", xp+20, yp-5, "rgb(0,0,250)");
+		drawText(ctx, "Exposed", xp+70, yp+20, "rgb(250,250,0)");
+		drawText(ctx, "Infectious", xp+120, yp-5, "rgb(250,0,0)");
+		drawText(ctx, "Removed", xp+220, yp-5, "rgb(0,250,0)");
+		drawText(ctx, "Population", xp+160, yp+20, "rgb(0,0,0)");
+		drawText(ctx, "plot SEIR", xp+20, yp+340, "rgb(0,0,0)");
+
+		plotFunc(ctx, xp,yp,g_pS,m,mag,"rgb(0,0,250)");
+		plotFunc(ctx, xp,yp,g_pE,m,mag,"rgb(250,250,0)");
+		plotFunc(ctx, xp,yp,g_pI,m,mag,"rgb(250,0,0)");
+		plotFunc(ctx, xp,yp,g_pR,m,mag,"rgb(0,250,0)");
+		plotFunc(ctx, xp,yp,g_pN,m,mag,"rgb(0,0,0)");
+	}
+
+	function plotFunc( ctx, xp, yp, pop, m, mag, colr ) {
+		const ndsp=g_dispTimeRange;
+
+		ctx.strokeStyle = colr;
+		ctx.beginPath();
+		for (let i=0; i<ndsp; i++) {
+			ctx.lineTo(xp+i, yp+300-mag*pop[i*m]);
+		}
+		ctx.stroke();
+	}
+
+	function logPlotSEIR( ctx, xp, yp, timeRange ) {
+		const m=Math.floor(g_nTimes*timeRange/g_dispTimeRange);
+
+		//drawGrid(xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color)
+		drawGrid(ctx, xp,yp,360,300,30,50,"0",timeRange+"(day)","10^0","10^3","rgb(40,40,40)");
+
+		drawText(ctx, "Susceptible", xp+20, yp-5, "rgb(0,0,250)");
+		drawText(ctx, "Infectious", xp+120, yp-5, "rgb(250,0,0)");
+		drawText(ctx, "Removed", xp+220, yp-5, "rgb(0,250,0)");
+		drawText(ctx, "Population", xp+160, yp+20, "rgb(0,0,0)");
+		drawText(ctx, "log plot SEIR", xp+20, yp+340, "rgb(0,0,0)");
+
+		plotLog10Func(ctx, xp,yp,g_pS,m,"rgb(0,0,250)");
+		plotLog10Func(ctx, xp,yp,g_pE,m,"rgb(250,250,0)");
+		plotLog10Func(ctx, xp,yp,g_pI,m,"rgb(250,0,0)");
+		plotLog10Func(ctx, xp,yp,g_pR,m,"rgb(0,250,0)");
+		plotLog10Func(ctx, xp,yp,g_pN,m,"rgb(0,0,0)");
+	}
+
+	function plotLog10Func( ctx, xp, yp, pop, m, colr ) {
+		const ndsp=g_dispTimeRange;
+
+		ctx.strokeStyle = colr;
+		ctx.beginPath();
+		for (let i=0; i<ndsp; i++) {
+			let p = pop[i*m]; 
+			if (p<=0.0) p = 0.1;
+			const logp = Math.log10(p);
+			if (logp>-0.5) ctx.lineTo(xp+i, yp+300-100.0*logp);
+		}
+		ctx.stroke();
+	}
+
+	function drawGrid( ctx, xp, yp, xLen, yLen, xDiv, yDiv, x0Str, xMaxStr, y0Str, yMaxStr, color ) {
+
+		ctx.strokeStyle = color;
+		ctx.fillStyle = color;
+		ctx.strokeRect(xp,yp,xLen,yLen);
+
+		for (let i=0; i<xLen; i+=xDiv) {
+			drawLine(ctx, xp+i,yp, xp+i, yp+yLen,color);
+		}
+		for (let j=0; j<yLen; j+=yDiv) {
+			drawLine(ctx, xp,yp+yLen-j, xp+xLen, yp+yLen-j,color);
+		}
+		ctx.fillText(x0Str, xp-5, yp+yLen+20);
+		ctx.fillText(xMaxStr, xp+xLen-xMaxStr.length*4, yp+yLen+20);
+		ctx.fillText(y0Str, xp-y0Str.length*8-8, yp+yLen+5);
+		ctx.fillText(yMaxStr, xp-yMaxStr.length*8-8, yp+5);
+	}
+
+	 function drawLine( ctx, x1, y1, x2, y2, color ) {
+	 	ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	}
+
+	function drawText( ctx, txt, x, y, color ) {
+		ctx.fillStyle = color;
+		ctx.fillText(txt, x, y);
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:       setInitialCondition, // setInitialCondition( v_nPop, v_beta, v_sigma, v_gamma, removedRatio)
+		evolve:     timeEvolution, // timeEvolution()
+		draw:       draw, // draw( ctx, drawMode, timeRange, outputFlag )
+		
+		getSysParam:function() { return [ g_nMax, g_dt, g_ss0 ]; },
+		getNow:     function() { return [ g_sysTime ]; },
+		getSEIRN:   function(i) { return [ g_pS[i], g_pE[i], g_pI[i], g_pR[i], g_pN[i] ]; },
+		getImax:    function() { const iMax = maxInfectiusIndex(); return [ iMax, g_pI[iMax] ]; },
+	}
+
+})(); // ====================  SEIRinfectionModel end  ====================
+
+
+const tjs113 = (function(){ // ====================  tjs Module  ====================
+
+	const theModule = SEIRinfectionModel;
+	
+	let theme = 0;			// no use
+	let v_nPop = 1000;		// nPop = susceptible + infectious
+	let v_beta = 0.00025;	// infection rate (1/day/I)
+	let v_sigma = 0.2;		// incidence rate (1/day) ~ 1/(mean incubation period) = 1/(5days)
+	let v_gamma = 0.1;		// recovery rate (1/day) ~ 1/(mean infected period)
+	let removedRatio = 0.0	// 
+	let drawMode = 0;			// 0:plot S-I-R, 1:plot log S-I-R
+	let timeRange = 360;		// 180, 360, 720, 1080 (days)
+	let outputFlag = 0;		// 0:do nothing, 1: output S-I-R data
+
+	let p_nMax, p_dt, p_ss0; // <-- theModule.getSysParam();
+	let p_time; // <-- theModule.getNow();
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let dispModeChanged = true;
+	let nCalc = 2;
+	let count = 0; // animate count
+
+	// threejs world object
+	let cnvsprite;
+
+	// three.js , OrbitControls.js
+	const width = 500;
+	const height = 480;
+	const r_camera = 1200.0;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+	
+	// -------------------- main
+	
+	function main() {
+		// construct renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+		
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, 0, r_camera);
+		//controls = new THREE.OrbitControls(camera,renderer.domElement); // lib/OrbitControls.js
+		
+		constructScene();
+		animate();
+	}
+
+
+	function constructScene() {
+
+		// initialize MD
+		theModule.init( v_nPop, v_beta, v_sigma, v_gamma, removedRatio );
+		[ p_nMax, p_dt, p_ss0 ] = theModule.getSysParam();
+
+		// scene
+		scene = new THREE.Scene();
+ 		
+ 		camera.position.set(0, 0, r_camera);
+ 		
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xFFFFFF,0.7);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xFFFFFF, 0.3);
+		scene.add(light);
+		
+		
+		// canvas sprite
+		// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 640, 640, 470 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+
+	}
+	
+	
+	// loop animation
+	function animate() {
+		
+		// select theme
+		if (resetFlag==1) {
+			resetFlag = 0;
+			constructScene();
+			dispModeChanged = true;
+			count = 0;
+		}
+		
+		if ( dispModeChanged ) {
+			cnvsprite.visible = false;
+		}
+		
+		
+		// theModule.evolve();
+		
+		
+		// sprite update
+		{
+			//cnvsprite.update( drawFunc )
+			cnvsprite.update(
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0,0, canvasWidth, canvasHeight);
+					
+					theModule.draw(ctx,drawMode,timeRange,outputFlag);
+					outputFlag = 0;
+				}
+			);
+		}
+		
+		
+		// output to innerHTML
+
+		if (count % 5 == 0) {
+			//let iMax, infectionMax, pS, pE, pI, pR, pN;
+			//[ iMax, infectionMax ] = theModule.getImax();
+			//[ pS, pE, pI, pR, pN ] = theModule.getSEIRN(iMax);
+			document.getElementById("text_caption").innerHTML = 
+				"basic reproduction number R0 = beta*S0/gamma = "+(v_beta*p_ss0/v_gamma).toFixed(2)
+		}
+
+		
+		count += 1;
+		//controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+	
+	// ----------  dom control
+	
+	function setBeta() {
+		const b = 0 + document.getElementById("range_beta").value;
+		v_beta = 0.00001*b;
+		document.getElementById("text_beta").innerHTML = " " + v_beta.toFixed(5);
+		resetFlag = 1;
+	}
+	
+	function setSigma() {
+		const s = 0 + document.getElementById("range_sigma").value;
+		v_sigma = 0.005*s;
+		document.getElementById("text_sigma").innerHTML =
+			" " + v_sigma.toFixed(2) + " (1/ " + (1.0/v_sigma).toFixed(1) + " day)";
+		resetFlag = 1;
+	}
+	
+	function setGamma() {
+		const g = 0 + document.getElementById("range_gamma").value;
+		v_gamma = 0.005*g;
+		document.getElementById("text_gamma").innerHTML =
+			" " + v_gamma.toFixed(2) + " (1/ " + (1.0/v_gamma).toFixed(1) + " day)";
+		resetFlag = 1;
+	}
+	
+	function setRemovedRatio() {
+		const r = 0 + document.getElementById("range_removedRatio").value;
+		removedRatio = 0.01*r;
+		document.getElementById("text_removedRatio").innerHTML = " " + removedRatio.toFixed(2);
+		resetFlag = 1;
+	}
+	
+	function setDrawMode() {
+		drawMode = document.getElementById("slct_drawMode").selectedIndex;
+	}
+	
+	function setTimeRange() {
+		timeRange = setTimeRange.range[document.getElementById("slct_timeRange").selectedIndex];
+	}
+	setTimeRange.range = [180,360,720,1080];
+	
+	function getData() {
+		outputFlag = 1; 
+	}
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main:				main,				// main()
+		
+		// dom control
+		setBeta:			setBeta,			// setBeta()
+		setSigma:			setSigma,			// setSigma()
+		setGamma:			setGamma,			// setGamma()
+		setRemovedRatio:	setRemovedRatio,	// setRemovedRatio()
+		
+		setDrawMode:		setDrawMode,		// setDrawMode()
+		setTimeRange:		setTimeRange,		// setTimeRange()
+		getData:			getData,			// getData()
+		
+	};
+
+})(); // ====================  tjs113 module end  ====================
+
+
+// event
+const tjs = tjs113;
+window.addEventListener('load', tjs.main );
+
+
+// --------------------  end of javaScript
+
+  </script>
+  <style type="text/css">
+    body { color:#000000; background-color:#fff8dd;}
+  </style>
+</head>
+<body>
+
+<p>[tjs113] SEIR infection model - solve finite defference equations</p>
+<canvas id="myCanvas" width="500" height="480" ></canvas><br>
+
+<label>beta (infection rate) =</label>
+<input type="range" id="range_beta" min="1" max="100" value="25" step="1" 
+style="width:200px" oninput="tjs.setBeta()">
+<label id="text_beta"> 0.00025</label> (1/day/I)
+<br>
+
+<label>sigma (incidence rate)=</label>
+<input type="range" id="range_sigma" min="1" max="100" value="40" step="1" 
+style="width:200px" oninput="tjs.setSigma()">
+<label id="text_sigma"> 0.20 (1/ 5.0 day)</label>
+<br>
+
+<label>gamma (recovery rate)=</label>
+<input type="range" id="range_gamma" min="1" max="100" value="20" step="1" 
+style="width:200px" oninput="tjs.setGamma()">
+<label id="text_gamma"> 0.10 (1/ 10.0 day)</label>
+<br>
+
+<label>vaccinated ratio =</label>
+<input type="range" id="range_removedRatio" min="0" max="100" value="0" step="1" 
+style="width:200px" oninput="tjs.setRemovedRatio()">
+<label id="text_removedRatio"> 0.00</label>
+<br>
+
+<label>drawMode:</label>
+<select id="slct_drawMode" onChange="tjs.setDrawMode()">
+<option selected>plot SEIR</option><option >log plot SEIR</option></select>
+    <span style="margin-right: 50px;"></span>
+<label>time range:</label>
+<select id="slct_timeRange" onChange="tjs.setTimeRange()">
+<option >0 - 180</option><option selected>0 - 360</option><option >0 - 720</option>
+<option >0 - 1080</option></select>
+<br>
+
+<button id="getData_button" onClick="tjs.getData()">output text data</button>
+<br>
+
+<textarea id="outputText" rows="4" cols="50" disabled></textarea>
+<br>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
+<br>
+</body>
+</html>
+
