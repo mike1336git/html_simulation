@@ -1,0 +1,50 @@
+file check
+
+2024.01.11
+
+folder: tjs_registered_20240111
+size: 6.3 MiB (6,607,253 バイト) 
+内容: 172 アイテム (156 ファイル, 15 フォルダー)
+
+--- 7z ---> 
+
+file name: tjs_registered_20240111.7z
+file size: 362.8 KiB (371,533 バイト)
+sha256sum: 05a86a325c454edbc8a945d1a6928dfcc19cd847cff24291651b96280659b240
+
+
+---------------------------------------------------------------------------------------
+mike@mx9501:~/app/a1_javaScript/a2_js_work/tjs_work/tjs_registered_20240111_7z
+$ ls -l
+合計 368
+-rwxr-xr-x 1 mike mike   1957  1月 17  2023 file_check.txt
+-rw-r--r-- 1 mike mike 371533  1月 11 19:26 tjs_registered_20240111.7z
+
+mike@mx9501:~/app/a1_javaScript/a2_js_work/tjs_work/tjs_registered_20240111_7z
+$ sha256sum tjs_registered_20240111.7z 
+05a86a325c454edbc8a945d1a6928dfcc19cd847cff24291651b96280659b240  tjs_registered_20240111.7z
+
+mike@mx9501:~/app/a1_javaScript/a2_js_work/tjs_work/tjs_registered_20240111_7z
+$ sha256sum tjs_registered_20240111.7z >sha256.txt
+
+mike@mx9501:~/app/a1_javaScript/a2_js_work/tjs_work/tjs_registered_20240111_7z
+$ cat sha256.txt 
+05a86a325c454edbc8a945d1a6928dfcc19cd847cff24291651b96280659b240  tjs_registered_20240111.7z
+
+mike@mx9501:~/app/a1_javaScript/a2_js_work/tjs_work/tjs_registered_20240111_7z
+$ sha256sum -c sha256.txt 
+tjs_registered_20240111.7z: 完了
+
+mike@mx9501:~/app/a1_javaScript/a2_js_work/tjs_work/tjs_registered_20240111_7z
+$ ls -l
+合計 372
+-rwxr-xr-x 1 mike mike   1708  1月 11 19:39 file_check.txt
+-rw-r--r-- 1 mike mike     93  1月 11 19:37 sha256.txt
+-rw-r--r-- 1 mike mike 371533  1月 11 19:26 tjs_registered_20240111.7z
+
+-----------------------------------------------------------------------------------------
+
+
+
+
+
