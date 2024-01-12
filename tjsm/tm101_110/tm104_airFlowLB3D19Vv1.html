@@ -1,0 +1,1390 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>tm104_airFlowLB3D19V</title>
+
+<style type="text/css">
+	body { color:#000000; background-color:#fff8dd; }
+</style>
+
+<style type="text/css">
+	.lil-gui {
+		--width: 300px;
+		--name-width: 30%;
+	}
+</style>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+<!--
+<script type="importmap">
+{
+  "imports": {
+    "three": "../libm/three.module.js",
+    "orb": "../libm/OrbitControls.js",
+    "lil-gui": "../libm/lil-gui.module.min.js"
+  }
+}
+</script>
+-->
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+    "orb": "https://unpkg.com/three@0.147.0/examples/jsm/controls/OrbitControls.js",
+    "lil-gui": "https://unpkg.com/three@0.147.0/examples/jsm/libs/lil-gui.module.min.js"
+  }
+}
+</script>
+
+<script type="module">
+
+import * as THREE from 'three';
+import { OrbitControls } from 'orb';
+import { GUI } from 'lil-gui';
+
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tm104_airFlowLB3D19V
+//    Copyright(C) 2023-2024 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2023.02.07 created, last updated on 2023.02.08
+//    ver 0.0.1  2024.01.12 v1, last updated on 2024.01.12
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  lattice Boltzmann Method : fluid dynamics
+//
+//    3D19V model
+//       base vectors:
+//         e[ 0]=[ 0, 0, 0], e[ 1]=[ 1, 0, 0], e[ 2]=[-1, 0, 0], e[ 3]=[ 0, 1, 0], e[ 4]=[ 0,-1, 0],
+//         e[ 5]=[ 0, 0, 1], e[ 6]=[ 0, 0,-1], e[ 7]=[ 1, 1, 0], e[ 8]=[-1,-1, 0], e[ 9]=[ 1,-1, 0],
+//         e[10]=[-1, 1, 0], e[11]=[ 1, 0, 1], e[12]=[-1, 0,-1], e[13]=[ 1, 0,-1], e[14]=[-1, 0, 1],
+//         e[15]=[ 0, 1, 1], e[16]=[ 0,-1,-1], e[17]=[ 0, 1,-1], e[18]=[ 0,-1, 1]
+//       velocity distribution at lattice i,j,k:
+//         fv[i][j][k][m]*e[m], m=0,1,2,...,18
+//       mass density
+//         rho = sum(fvi(x,t),{i=0,1,2,...,18})
+//       hydrodynamic momentum
+//         rho*u = sum(vi fvi(x,t),{i=0,1,2,...,18})
+//
+//    procedure
+//      (1) set lattice:
+//          density: rho[i][j][k]
+//          flow velocity: ux[i][j][k],uy[i][j][k],uz[i][j][k]
+//          velosity distribution: fv[i][j][k][m] (m=0,1,2,...,18)
+//
+//      (2) streaming  f(r+em*dt,t+dt) = f(r,t)
+//          fv[tnx][i][j][k][0] <-- fv[tpp][i][j][k][0];
+//          fv[tnx][i][j][k][1] <-- fv[tpp][i-1][j][k][1];
+//          fv[tnx][i][j][k][2] <-- fv[tpp][i+1][j][k][2];
+//          fv[tnx][i][j][k][3] <-- fv[tpp][i][j-1][k][3];
+//          fv[tnx][i][j][k][4] <-- fv[tpp][i][j+1][k][4];
+//          fv[tnx][i][j][k][5] <-- fv[tpp][i][j][k-1][5];
+//          fv[tnx][i][j][k][6] <-- fv[tpp][i][j][k+1][6];
+//          fv[tnx][i][j][k][7] <-- fv[tpp][i-1][j-1][k][7];
+//          fv[tnx][i][j][k][8] <-- fv[tpp][i+1][j+1][k][8];
+//          fv[tnx][i][j][k][9] <-- fv[tpp][i-1][j+1][k][9];
+//          fv[tnx][i][j][k][10] <-- fv[tpp][i+1][j-1][k][10];
+//          fv[tnx][i][j][k][11] <-- fv[tpp][i-1][j][k-1][11];
+//          fv[tnx][i][j][k][12] <-- fv[tpp][i+1][j][k+1][12];
+//          fv[tnx][i][j][k][13] <-- fv[tpp][i-1][j][k+1][13];
+//          fv[tnx][i][j][k][14] <-- fv[tpp][i+1][j][k-1][14];
+//          fv[tnx][i][j][k][15] <-- fv[tpp][i][j-1][k-1][15];
+//          fv[tnx][i][j][k][16] <-- fv[tpp][i][j+1][k+1][16];
+//          fv[tnx][i][j][k][17] <-- fv[tpp][i][j-1][k+1][17];
+//          fv[tnx][i][j][k][18] <-- fv[tpp][i][j+1][k-1][18];
+//            
+//      (3) scattering  fv(r,t+dt) = fv(r,t+dt) - omega*(fv(r,t+dt)-feq))
+//          rho[i][j][k] = sum(fv[i][j][k][m], m=0,1,2,...,18)
+//          ux[i][j][k] = sum(e[m][0]*fv[i][j][k][m], m=0,1,2,...,18)/rho[i][j][k]
+//          uy[i][j][k] = sum(e[m][1]*fv[i][j][k][m], m=0,1,2,...,18)/rho[i][j][k]
+//          uz[i][j][k] = sum(e[m][2]*fv[i][j][k][m], m=0,1,2,...,18)/rho[i][j][k]
+//          feq[m]: equilibrium velocity distribution (rho*u = sum(feq[m]*e[m],m=0,...,18)
+//            feq[m] = w[m]*rho[i][j][k]*(1+3*(e[m].u)+4.5*(e[m].u)^2-1.5u^2) (c=dx/dt=1)
+//                     w[m]=1/3 (m=0), w[m]=9/2 (m=1,..,6), w[m]=1/36 (m=7,..,18)
+//          fv[i][j][k][m] <-- fv[i][j][k][m] - omega*(fv[i][j][k][m]-feq[m])
+//            omega = 1/tau = 1/(3*kineticViscosity+0.5), tau:relaxation time
+//
+//      (4) set fan : ux=vx0 at x=0
+//
+//      goto (2)
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const airFlowLB3D19V = (function(){ // ====================  airFlowLB3D19V Module  ====================
+
+	const g_nxMax = 80; // maximum array x-size of field
+	const g_nyMax = 40; // maximum array y-size of field
+	const g_nzMax = 40; // maximum array z-size of field
+
+	let g_NNx = 80;     // array x-size of field
+	let g_NNy = 32;     // array y-size of field
+	let g_NNz = 32;     // array z-size of field
+	let g_sysTime = 0.0; // system time
+	let g_dt = 1.0;     // time step
+	let g_dx = 1.0;     // x-division
+	let g_dy = 1.0;     // y-division
+	let g_dz = 1.0;     // z-division
+	let g_tpp = 0;      // present time v9[g_tpp][i][j], g_tpp = 0 or 1 
+	let g_tnx = 1;      // next    time v9[g_tnx][i][j], g_tnx = 1 or 0
+	let g_status = 'STABLE'; // system status 'STABLE' or 'UNSTABLE'+message
+
+	let g_kineticViscosity = 0.005; // must >=0.002 for stability
+	let g_omega = 1.0/(3.0*g_kineticViscosity+0.5); //g_omega = 1/tau, tau:relaxation time
+	let g_typicalLength = 8.0;      // typicallength L : Re = L*(vflow/kineticViscosity)
+	let g_rhoRef = 1.0;             // reference rho
+	let g_vx0 = 0.1;                // flow speed at x=0
+	
+	const g_kind = dimInt3(g_nxMax,g_nyMax,g_nzMax); // g_kind[ix][iy][iz]==0 free space, ==1 wall
+	const g_fv = dim5(2,g_nxMax,g_nyMax,g_nzMax,19); // velocity distribution g_fv[tpp/tnx][ix][iy][iz][m]
+	const g_rho = dim3(g_nxMax,g_nyMax,g_nzMax);     // density g_rho[ix][iy][iz]
+	const g_ux = dim3(g_nxMax,g_nyMax,g_nzMax);      // x-flow velocity g_ux[ix][iy][iz]
+	const g_uy = dim3(g_nxMax,g_nyMax,g_nzMax);      // y-flow velocity g_uy[ix][iy][iz]
+	const g_uz = dim3(g_nxMax,g_nyMax,g_nzMax);      // z-flow velocity g_uz[ix][iy][iz]
+
+	//          0    1    2    3    4    5    6    7    8    9    10   11   12   13   14   15   16   17   18
+	const g_ccx = [ 0.0, 1.0,-1.0, 0.0, 0.0, 0.0, 0.0, 1.0,-1.0, 1.0,-1.0, 1.0,-1.0, 1.0,-1.0, 0.0, 0.0, 0.0, 0.0];
+	const g_ccy = [ 0.0, 0.0, 0.0, 1.0,-1.0, 0.0, 0.0, 1.0,-1.0,-1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,-1.0, 1.0,-1.0];
+	const g_ccz = [ 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,-1.0, 0.0, 0.0, 0.0, 0.0, 1.0,-1.0,-1.0, 1.0, 1.0,-1.0,-1.0, 1.0];
+	const g_cc2 = [ 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0];
+	const g_feq = [ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+
+	function dimInt2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Int32Array( nj );
+		}
+		return a;
+	}
+
+	function dim3( ni, nj, nk ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = [];
+			for (let j=0; j<nj; j++) {
+				a[i][j] = new Float64Array( nk );
+			}
+		}
+		return a;
+	}
+
+	function dimInt3( ni, nj, nk ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = [];
+			for (let j=0; j<nj; j++) {
+				a[i][j] = new Int32Array( nk );
+			}
+		}
+		return a;
+	}
+
+	function dim5( ni, nj, nk, nl, nm ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = [];
+			for (let j=0; j<nj; j++) {
+				a[i][j] = [];
+				for (let k=0; k<nk; k++) {
+					a[i][j][k] = [];
+					for (let l=0; l<nl; l++) {
+						a[i][j][k][l] =  new Float64Array( nm );
+					}
+				}
+			}
+		}
+		return a;
+	}
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition( theme, kineticViscosity, fanVx0 ) {
+
+		g_status = 'STABLE';
+		g_kineticViscosity = kineticViscosity;
+		g_vx0 = fanVx0;
+		g_sysTime = 0.0;
+		setInitialFv();
+		powder3D.setParticles(); // powder3D
+	}
+
+	function setInitialFv() {
+		const j0=g_NNy/2, k0=g_NNz/2, nnx=g_NNx, nny=g_NNy, nnz=g_NNz, fv=g_fv;
+
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				for (let k=0; k<nnz; k++) {
+					g_kind[i][j][k]=0; // free space
+					g_rho[i][j][k] = g_rhoRef;
+					g_ux[i][j][k] = g_vx0;
+					g_uy[i][j][k] = 0.0;
+					g_uz[i][j][k] = 0.0;
+
+					const f = fv[g_tpp][i][j][k];
+					setfveq19(f, g_rhoRef, g_vx0, 0.0, 0.0); //setfveq19(fveq, rh, vx, vy, vz)
+
+					if ((j-j0)*(j-j0)+(k-k0)*(k-k0)<24 && (i==20 || i==21)) {
+						g_kind[i][j][k]=1; // wall
+						for (let iv=0; iv<19; iv++) {
+							fv[g_tpp][i][j][k][iv] = 0.0;
+						}
+					}
+				}
+			}
+		}
+	}
+
+
+	// --------------------  time evolution  --------------------
+
+	function timeEvolution( kineticViscosity, fanVx0 ) {
+
+		if (g_status=='STABLE') {
+			g_kineticViscosity = kineticViscosity;
+			g_vx0 = fanVx0;
+			
+			g_omega = 1.0/(3.0*kineticViscosity+0.5);
+			streaming();
+			scattering(g_omega);
+			setFan();
+			powder3D.moveParticles(); // powder3D
+			g_sysTime += g_dt;
+			g_tpp = g_tnx;
+			g_tnx = (g_tnx+1)%2;
+		}
+		return g_status;
+	}
+
+	function streaming() {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, tpp=g_tpp, tnx=g_tnx, fv=g_fv;
+
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				for (let k=0; k<nnz; k++) {
+					const ip = (i+1)%nnx, im = (i-1+nnx)%nnx;
+					const jp = (j+1)%nny, jm = (j-1+nny)%nny;
+					const kp = (k+1)%nnz, km = (k-1+nnz)%nnz;
+					fv[tnx][i][j][k][0] = fv[tpp][i][j][k][0];
+					fv[tnx][i][j][k][1] = fv[tpp][im][j][k][1];
+					fv[tnx][i][j][k][2] = fv[tpp][ip][j][k][2];
+					fv[tnx][i][j][k][3] = fv[tpp][i][jm][k][3];
+					fv[tnx][i][j][k][4] = fv[tpp][i][jp][k][4];
+					fv[tnx][i][j][k][5] = fv[tpp][i][j][km][5];
+					fv[tnx][i][j][k][6] = fv[tpp][i][j][kp][6];
+					fv[tnx][i][j][k][7] = fv[tpp][im][jm][k][7];
+					fv[tnx][i][j][k][8] = fv[tpp][ip][jp][k][8];
+					fv[tnx][i][j][k][9] = fv[tpp][im][jp][k][9];
+					fv[tnx][i][j][k][10] = fv[tpp][ip][jm][k][10];
+					fv[tnx][i][j][k][11] = fv[tpp][im][j][km][11];
+					fv[tnx][i][j][k][12] = fv[tpp][ip][j][kp][12];
+					fv[tnx][i][j][k][13] = fv[tpp][im][j][kp][13];
+					fv[tnx][i][j][k][14] = fv[tpp][ip][j][km][14];
+					fv[tnx][i][j][k][15] = fv[tpp][i][jm][km][15];
+					fv[tnx][i][j][k][16] = fv[tpp][i][jp][kp][16];
+					fv[tnx][i][j][k][17] = fv[tpp][i][jm][kp][17];
+					fv[tnx][i][j][k][18] = fv[tpp][i][jp][km][18];
+				}
+			}
+		}
+	}
+
+	function scattering( omg ) {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, tnx=g_tnx, kind=g_kind, fv=g_fv, rho=g_rho;
+
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				for (let k=0; k<nnz; k++) {
+					if (kind[i][j][k]==0) {
+
+						setfveq(i,j,k);
+						if (rho[i][j][k]<=0.0) {
+							g_status = "UNSTABLE at i="+i+",j="+j+",rho="+rh.toFixed(3)+"<br>"+
+										"change kinetic viscosity or fan vx and press reset";
+							return
+						}
+						for (let iv=0; iv<19; iv++) {
+							fv[tnx][i][j][k][iv] -= omg*(fv[tnx][i][j][k][iv]-g_feq[iv]);
+						}
+
+					} else if (kind[i][j][k]==1) {
+
+						fv[tnx][i][j][k][0] = 0.0;
+
+						let m = fv[tnx][i][j][k][1]; 
+						fv[tnx][i][j][k][1]=fv[tnx][i][j][k][2];
+						fv[tnx][i][j][k][2]=m;
+
+						m = fv[tnx][i][j][k][3]; 
+						fv[tnx][i][j][k][3]=fv[tnx][i][j][k][4];
+						fv[tnx][i][j][k][4]=m;
+
+						m = fv[tnx][i][j][k][5]; 
+						fv[tnx][i][j][k][5]=fv[tnx][i][j][k][6];
+						fv[tnx][i][j][k][6]=m;
+
+						m = fv[tnx][i][j][k][7]; 
+						fv[tnx][i][j][k][7]=fv[tnx][i][j][k][8];
+						fv[tnx][i][j][k][8]=m;
+
+						m = fv[tnx][i][j][k][9]; 
+						fv[tnx][i][j][k][9]=fv[tnx][i][j][k][10];
+						fv[tnx][i][j][k][10]=m;
+
+						m = fv[tnx][i][j][k][11]; 
+						fv[tnx][i][j][k][11]=fv[tnx][i][j][k][12];
+						fv[tnx][i][j][k][12]=m;
+
+						m = fv[tnx][i][j][k][13]; 
+						fv[tnx][i][j][k][13]=fv[tnx][i][j][k][14];
+						fv[tnx][i][j][k][14]=m;
+
+						m = fv[tnx][i][j][k][15]; 
+						fv[tnx][i][j][k][15]=fv[tnx][i][j][k][16];
+						fv[tnx][i][j][k][16]=m;
+
+						m = fv[tnx][i][j][k][17]; 
+						fv[tnx][i][j][k][17]=fv[tnx][i][j][k][18];
+						fv[tnx][i][j][k][18]=m;
+					}
+				}
+			}
+		}
+	}
+
+	function setfveq( i, j, k ) {
+		setRho(i, j, k);
+		const rh = g_rho[i][j][k]; 
+		const vx = g_ux[i][j][k];
+		const vy = g_uy[i][j][k];
+		const vz = g_uz[i][j][k];
+		setfveq19(g_feq, rh, vx, vy, vz);
+	}
+
+	function setRho( i, j, k ) {
+		const tnx=g_tnx, fv=g_fv;
+
+		let rh = 0.0, rux = 0.0, ruy = 0.0, ruz = 0.0;
+		for (let iv=0; iv<19; iv++) {
+			rh += fv[tnx][i][j][k][iv];
+			rux += g_ccx[iv]*fv[tnx][i][j][k][iv];
+			ruy += g_ccy[iv]*fv[tnx][i][j][k][iv];
+			ruz += g_ccz[iv]*fv[tnx][i][j][k][iv];
+		}
+		g_rho[i][j][k] = rh;
+		if (rh>0.0) {
+			g_ux[i][j][k] = rux/rh;
+			g_uy[i][j][k] = ruy/rh;
+			g_uz[i][j][k] = ruz/rh;
+		} else {
+			g_ux[i][j][k] = 0.0;
+			g_uy[i][j][k] = 0.0;
+			g_uz[i][j][k] = 0.0;
+		}
+	}
+
+	function setfveq19( fveq, rh, vx, vy, vz ) {
+		const w0=1.0/3.0,w1=1.0/18.0,w2=1.0/36.0;
+
+		let roh = rh; if (rh<=0.0) roh = 0.0;
+		const w0rh=w0*roh;
+		const w1rh=w1*roh;
+		const w2rh=w2*roh;
+
+		const c0 = 1.0-1.5*(vx*vx+vy*vy+vz*vz);
+		const c1v = vx;
+		const c2v = -vx;
+		const c3v = vy;
+		const c4v = -vy;
+		const c5v = vz;
+		const c6v = -vz;
+		const c7v =  vx+vy;
+		const c8v = -vx-vy;
+		const c9v =  vx-vy;
+		const c10v = -vx+vy;
+		const c11v =  vx+vz;
+		const c12v = -vx-vz;
+		const c13v =  vx-vz;
+		const c14v = -vx+vz;
+		const c15v =  vy+vz;
+		const c16v = -vy-vz;
+		const c17v =  vy-vz;
+		const c18v = -vy+vz;
+
+		fveq[0] = w0rh*c0;
+		fveq[1] = w1rh*(c0+3.0*c1v+4.5*c1v*c1v);
+		fveq[2] = w1rh*(c0+3.0*c2v+4.5*c2v*c2v);
+		fveq[3] = w1rh*(c0+3.0*c3v+4.5*c3v*c3v);
+		fveq[4] = w1rh*(c0+3.0*c4v+4.5*c4v*c4v);
+		fveq[5] = w1rh*(c0+3.0*c5v+4.5*c5v*c5v);
+		fveq[6] = w1rh*(c0+3.0*c6v+4.5*c6v*c6v);
+
+		fveq[7] = w2rh*(c0+3.0*c7v+4.5*c7v*c7v);
+		fveq[8] = w2rh*(c0+3.0*c8v+4.5*c8v*c8v);
+		fveq[9] = w2rh*(c0+3.0*c9v+4.5*c9v*c9v);
+		fveq[10] = w2rh*(c0+3.0*c10v+4.5*c10v*c10v);
+		fveq[11] = w2rh*(c0+3.0*c11v+4.5*c11v*c11v);
+		fveq[12] = w2rh*(c0+3.0*c12v+4.5*c12v*c12v);
+		fveq[13] = w2rh*(c0+3.0*c13v+4.5*c13v*c13v);
+		fveq[14] = w2rh*(c0+3.0*c14v+4.5*c14v*c14v);
+		fveq[15] = w2rh*(c0+3.0*c15v+4.5*c15v*c15v);
+		fveq[16] = w2rh*(c0+3.0*c16v+4.5*c16v*c16v);
+		fveq[17] = w2rh*(c0+3.0*c17v+4.5*c17v*c17v);
+		fveq[18] = w2rh*(c0+3.0*c18v+4.5*c18v*c18v);
+	}
+
+	function setFan() {
+		const nny=g_NNy, nnz=g_NNz, tnx=g_tnx, fv=g_fv;
+
+		let i = 0;
+		for (let j=0; j<nny; j++) {
+			for (let k=0; k<nnz; k++) {
+				const f = fv[tnx][i][j][k];
+				setfveq19(f, g_rhoRef, g_vx0, 0.0, 0.0); //setfveq19(fveq, rh, vx, vy, vz)
+			}
+		}
+	}
+
+
+	// -------------------- utility
+
+	function zVorticity(i,j,k) {
+		if (i==0 || i==g_NNx-1 || j==0 || j==g_NNy-1) return 0.0;
+		return (g_uy[i+1][j][k]-g_uy[i-1][j][k])/(2*g_dx)-(g_ux[i][j+1][k]-g_ux[i][j-1][k])/(2*g_dy);
+	}
+
+	function xVorticity(i,j,k) {
+		if (j==0 || j==g_NNy-1 || k==0 || k==g_NNz-1) return 0.0;
+		return (g_uz[i][j+1][k]-g_uz[i][j-1][k])/(2*g_dy)-(g_uy[i][j][k+1]-g_uy[i][j][k-1])/(2*g_dz);
+	}
+
+	function yVorticity(i,j,k) {
+		if (i==0 || i==g_NNx-1 || k==0 || k==g_NNz-1) return 0.0;
+		return (g_ux[i][j][k+1]-g_ux[i][j][k-1])/(2*g_dz)-(g_uz[i+1][j][k]-g_uz[i-1][j][k])/(2*g_dx);
+	}
+
+	function absVorticity(i,j,k) {
+		var xv=xVorticity(i,j,k),yv=yVorticity(i,j,k),zv=zVorticity(i,j,k);
+
+		return Math.sqrt(xv*xv+yv*yv+zv*zv);
+	}
+
+	function speed(i,j,k) {
+		var vx=g_ux[i][j][k],vy=g_uy[i][j][k],vz=g_uz[i][j][k];
+
+		return Math.sqrt(vx*vx+vy*vy+vz*vz);
+	}
+
+	function totalRho() {
+		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, kind=g_kind, rho=g_rho;
+		let s=0.0;
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				for (let k=0; k<nnz; k++) {
+					if (kind[i][j][k]==0) s += rho[i][j][k];
+				}
+			}
+		}
+		return s;
+	}
+
+
+	// --------------------  powders 3D  --------------------
+
+	// external var g_NNx,g_NNy,g_NNz,g_ux[][][],g_uy[][][],g_uz[][][],g_dt
+
+	const powder3D = {};
+	powder3D.n = 6000;
+	powder3D.x = [];
+	powder3D.y = [];
+	powder3D.z = [];
+	powder3D.ux = [];
+	
+	powder3D.setParticles = function() {
+		const n = powder3D.n;
+
+		for (let i=0; i<n; i++) {
+			powder3D.x[i] = Math.floor((g_NNx-2)*Math.random())+1;
+			powder3D.y[i] = Math.floor((g_NNy-2)*Math.random())+1;
+			powder3D.z[i] = Math.floor((g_NNz-2)*Math.random())+1;
+		}
+	};
+
+	powder3D.moveParticles = function() {
+		const n=powder3D.n, dt=g_dt, kind=g_kind;
+
+		for (let i=0; i<n; i++) {
+			const ix = Math.floor(powder3D.x[i]);
+			const iy = Math.floor(powder3D.y[i]);
+			const iz = Math.floor(powder3D.z[i]);
+			powder3D.x[i] += g_ux[ix][iy][iz]*dt;
+			powder3D.y[i] += g_uy[ix][iy][iz]*dt;
+			powder3D.z[i] += g_uz[ix][iy][iz]*dt;
+			powder3D.ux[i] = g_ux[ix][iy][iz];
+			if (kind[ix][iy][iz]==1) {
+				powder3D.x[i] = 0.0;
+				powder3D.y[i] = Math.floor((g_NNy-2)*Math.random())+1;
+				powder3D.z[i] = Math.floor((g_NNz-2)*Math.random())+1;
+			} 
+			if (powder3D.x[i]>g_NNx) {
+				powder3D.x[i] -= g_NNx;
+				powder3D.y[i] = Math.floor((g_NNy-2)*Math.random())+1;
+				powder3D.z[i] = Math.floor((g_NNz-2)*Math.random())+1;
+			} 
+			if (powder3D.x[i]<0) powder3D.x[i] += NNx;
+			if (powder3D.y[i]>g_NNy) powder3D.y[i] -= g_NNy;
+			if (powder3D.y[i]<0) powder3D.y[i] += g_NNy;
+			if (powder3D.z[i]>g_NNy) powder3D.z[i] -= g_NNz;
+			if (powder3D.z[i]<0) powder3D.z[i] += g_NNz;
+		}
+	};
+
+	powder3D.getPowder = function(i) {
+		const vx = powder3D.ux[i];
+		const hue = Math.floor( 36090 + 1200.0*vx)%360;
+		return [ powder3D.x[i], powder3D.y[i], powder3D.z[i], hue ];
+	};
+
+
+	// --------------------  public
+
+	return {
+		init:           setInitialCondition, // setInitialCondition( theme, kineticViscosity, fanVx0 )
+		evolve:         timeEvolution, // timeEvolution( kineticViscosity, fanVx0 )
+
+		getSysParam:    function() { return [ g_NNx, g_NNy ,g_NNz, g_dx, g_dt, g_typicalLength, g_rhoRef, powder3D.n ]; },
+		getNow:         function() { return [ g_sysTime, g_status ]; },
+		getCellKind:    function(i,j,k) { return g_kind[i][j][k]; },
+		getFlow:        function(i,j,k) { return [ g_ux[i][j][k], g_uy[i][j][k], g_uz[i][j][k] ]; },
+		getDensity:     function(i,j,k) { return g_rho[i][j][k]; },	
+		getZVorticity:  zVorticity, // zVorticity(i,j,k)
+		getAbsVorticity:absVorticity, // absVorticity(i,j,k)
+		getSpeed:       speed, // speed(i,j,k)
+		getPowder:      powder3D.getPowder, // powder3D.getPowder(i)
+	};
+
+})(); // ====================  airFlowLB3D19V end  ====================
+
+
+const tjsm104 = (function(){ // ====================  tjsm Module  ====================
+
+	const theModule = airFlowLB3D19V;
+	let v_theme = 0;
+	let v_kineticViscosity = 0.005; // must >= 0.002
+	let v_fanVx0 = 0.1; // sound velocity c==1.0)
+	
+	let p_nx, p_ny, p_nz, p_dx, p_dt, p_typicalLength, p_rhoRef, p_nPowder; // <-- theModule.getSysParam();
+	
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let dispMode =  9; // 9:3D powder
+	let dispModeChanged = true;
+	let viewHomeRequested = false;
+	let legendFlag = true;
+	let count = 0;
+	
+	// sizes in the threejs world
+	let xBoxSize, yBoxSize, zBoxSize, x0, y0, z0, hh;
+	
+	// threejs world objects
+	let agrid;
+	let vfield;
+	let grid3D;
+	let powders;
+	let board; // wall
+	let line_box; // box
+
+	// three.js , OrbitControls.js
+	const width = 500;
+	const height = 480;
+	const r_camera = 1020;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+	
+	// -------------------- lil-gui setup
+	
+	const uParam = {
+		theme: 'wind tunnel (80x32x32)',
+		themeMenu: [ 'wind tunnel (80x32x32)' ],
+		nue: 0.005,
+		fanVx0: 0.1,
+		dispMode: '3D powder, color:vx',
+		dispMenu: [ '2D density(x,y,0)', '2D color:zVorticity(x,y,0)', '2D color:speed(x,y,0)-vx0',
+					'2D density(x,y,0) + flow(x,y,0)', '1/2 3D density(x,y,z)', '1/2 3D density(x,y,z)-dens0',
+					'1/2 3D zVorticity(x,y,z)', '1/2 3D |Vorticity(x,y,z)|', '1/2 3D speed(x,y,z)-vx0', 
+					'3D powder, color:vx', '1/2 3D powder, color:vx' ],
+		reset: function() { resetFlag = 1; },
+		pause: false,
+		viewHome: function() { viewHomeRequested = true; }
+	};
+	
+	const sysMonitor = {
+		time: 0.0,
+		Re: 160
+	};
+	
+	const gui = new GUI();
+	setupGUI();
+	
+	function setupGUI() {
+		gui.add( uParam, 'theme', uParam.themeMenu ).onChange( 
+			str => { v_theme = uParam.themeMenu.indexOf(str); /* resetFlag = 1;*/ } );
+		
+		gui.add( uParam, 'nue', 0.002, 0.1, 0.001 ).name( 'kinetic viscosity' ).onChange(
+			v => { v_kineticViscosity = v; } );
+		
+		gui.add( uParam, 'fanVx0', 0.0, 0.15, 0.001 ).name( 'vx / sound speed' ).onChange(
+			v => { v_fanVx0 = v; } );
+		
+		gui.add( uParam, 'dispMode', uParam.dispMenu ).name( 'disp. mode' ).onChange( 
+			str => { dispMode = uParam.dispMenu.indexOf(str); dispModeChanged = true; } );
+		
+		gui.add( uParam, 'reset' );
+		gui.add( uParam, 'pause' ).onChange( bool => { pauseFlag = ( bool ) ? 1 : 0; } );
+		gui.add( uParam, 'viewHome' ).name( 'camera: home view' );
+		
+		const folder = gui.addFolder( 'monitor' );
+		folder.add( sysMonitor, 'time' ).listen();
+		folder.add( sysMonitor, 'Re' ).listen();
+	}
+	
+	
+	// --------------------  main
+	
+	function main() {
+		// constract renderer
+		renderer = new THREE.WebGLRenderer({
+			canvas: document.querySelector('#myCanvas'),
+		});
+		renderer.setSize(width, height);
+		
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, -0.4*r_camera, 0.9*r_camera);
+		controls = new OrbitControls(camera,renderer.domElement);
+		
+		constructScene();
+		animate();
+	}
+	
+	
+	function constructScene() {
+		
+		// init LB3D
+		theModule.init( v_theme, v_kineticViscosity, v_fanVx0 );
+		[ p_nx, p_ny, p_nz, p_dx, p_dt, p_typicalLength, p_rhoRef, p_nPowder ] = theModule.getSysParam();
+		xBoxSize = 480; // xBoxSize in threejs world
+		hh = xBoxSize/p_nx;
+		yBoxSize = hh*p_ny;
+		zBoxSize = hh*p_nz;
+		x0 = xBoxSize/2;
+		y0 = yBoxSize/2;
+		z0 = zBoxSize/2;
+
+		// scene
+		scene = new THREE.Scene();
+ 
+		camera.position.set(0, -0.4*r_camera, 0.9*r_camera);
+ 
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xffffff,0.5);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xffffff, 1.0);
+		scene.add(light);
+		
+		
+		// color grid 2D
+		// agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+		agrid = m3js_grid2D( p_nx, p_ny, xBoxSize );
+		scene.add( agrid );
+		
+		// flow vector field 2D
+		// vfield = m3js_vField2D( p_nx, p_ny, xBoxSize [, colorMode] ); // colorMode  0:direction color, 1:blue|red
+		vfield = m3js_vField2D( p_nx, p_ny, xBoxSize, 0 );
+		scene.add( vfield );
+		
+		// grid3D
+		// grid3D = m3js_grid3D( p_nx, p_ny, p_nz, xBoxSize )
+		grid3D = m3js_grid3D( p_nx, p_ny, p_nz, xBoxSize );
+		scene.add( grid3D );
+		
+		// powders
+		{
+			powders = new THREE.Group();
+			powders.icosaArray = [];
+			const nn = p_nPowder;
+			const geometry = new THREE.IcosahedronGeometry( 0.25*hh, 1 );
+			for ( let i=0; i<nn; i++ ) {
+				const material = new THREE.MeshBasicMaterial({ color: 0x888800 });
+				const icosa = new THREE.Mesh( geometry, material );
+				icosa.visible = false;
+				powders.icosaArray[i] = icosa;
+				powders.add( powders.icosaArray[i] );
+			}
+			scene.add( powders );
+		}
+		
+		// board 
+		{
+			board = new THREE.Group();
+			for (let i=0; i<p_nx; i++) {
+				for (let j=0; j<p_ny; j++) {
+					for (let k=0; k<p_nz; k++) {
+						if (theModule.getCellKind(i,j,k)==1) { // wall
+							const geometry = new THREE.IcosahedronGeometry( 0.5*hh, 1 );
+							const material = new THREE.MeshBasicMaterial({ color: 0x888888 });
+							const icosa = new THREE.Mesh( geometry, material );
+							icosa.position.set(hh*i-x0, hh*j-y0, hh*k-z0);
+							board.add( icosa );
+						}
+					}
+				}
+			}
+			scene.add( board );
+		}
+		
+		// line box
+		{
+			const geometry = new THREE.BoxGeometry( xBoxSize, yBoxSize, zBoxSize );
+			const edges = new THREE.EdgesGeometry( geometry );
+			line_box = new THREE.LineSegments( edges, new THREE.LineBasicMaterial( { color: 0x888866 } ) );
+			scene.add( line_box );
+		}
+	}
+	
+	
+	// loop animation
+	function animate() {
+		
+		// select theme
+		if (resetFlag==1) {
+			resetFlag = 0;
+			constructScene();
+			count = 0;
+		}
+		
+		// view home
+		if ( viewHomeRequested ) {
+			camera.position.set(0, -0.4*r_camera, 0.9*r_camera);
+			viewHomeRequested = false;
+		}
+		
+		//  clear objects
+		if (dispModeChanged) {
+			dispModeChanged = false;
+			
+			agrid.visible = false;
+			powders.visible = false;
+			vfield.visible = false;
+			grid3D.visible = false;
+		}
+		
+		// LB3D update
+		if (pauseFlag==0) {
+			theModule.evolve( v_kineticViscosity, v_fanVx0 );
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( v_kineticViscosity, v_fanVx0 );
+		}
+		
+		
+		// disp update
+		if ( dispMode==0 ) { // density 2D density(x,y,0)
+			const kc = p_nz/2;
+			const rmag = 2000.0;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			agrid.update(
+				function(i,j) { return [ rmag*(theModule.getDensity(i,j,kc) - p_rhoRef), ]; } 
+			);
+
+		} else if ( dispMode==1 ) { // z-vorticity 2D z-vorticity(v,y,0)
+			const kc = p_nz/2;
+			const rmag = 2000.0;
+			const zvmag = 200.0;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			agrid.update(
+				function(i,j) {
+					const dens = rmag*(theModule.getDensity(i,j,kc) - p_rhoRef);
+					const deg = 20*zvmag*theModule.getZVorticity(i,j,kc);
+					return [ dens, Math.floor(36120.0 - deg+0.5)%360 ];
+				}
+			);
+
+		} else if ( dispMode==2 ) { // speed 2D speed(x,y,0)
+			const kc = p_nz/2;
+			const rmag = 2000.0;
+			// agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+			agrid.update(
+				function(i,j) {
+				const dens = rmag*(theModule.getDensity(i,j,kc) - p_rhoRef);
+				const deg = 2000*(theModule.getSpeed(i,j,kc)-v_fanVx0);
+					return [ dens, Math.floor(36120.0 - deg+0.5)%360 ]; 
+				}
+			);
+
+		} else if ( dispMode==3 ) { // flow 2D Vxy(x,y,0)
+			const kc = p_nz/2;
+			const rmag = 2000.0;
+			const fmag = 80.0;
+			// vfield.update( vx_vy_z_col_func [,step] ); // vx_vy_z_col_func: (i,j) --> [vx, vy, z, [col] ]
+			vfield.update(
+				function(i,j) {
+					if ( theModule.getCellKind(i,j,kc)==1 ) return 0;
+					let vx, vy, vz;
+					[ vx, vy, vz ] = theModule.getFlow(i,j,kc);
+					const z = rmag*(theModule.getDensity(i,j,kc) - p_rhoRef);
+					return [ vx*fmag, vy*fmag, z ];
+				}
+			);
+		
+		} else if (dispMode==4 ) { // density 3D density(x,y,z)
+       	const kc = p_nz/2;
+        	// m3js_icosaGrid3D.update( fieldFunc, [hueFunc] )
+        	grid3D.update(
+        		function(i,j,k) { // fieldFunc
+        			if ( k>kc ) return 0;
+        			return 5.0*theModule.getDensity(i,j,k);
+        		},
+        		function(i,j,k) { //hueFunc
+        			const deg = 8000*(theModule.getDensity(i,j,k) - p_rhoRef);
+        			return Math.floor(36120.0 - deg+0.5)%360;
+        		}
+        	);
+        
+		} else if (dispMode==5 ) { // density 3D density(x,y,z) - p_rhoRef
+       	const kc = p_nz/2;
+        	// grid3D.update( field_func, [hue_func] )
+        	grid3D.update(
+        		function(i,j,k) {
+					const deg = 8000*(theModule.getDensity(i,j,k) - p_rhoRef);
+        			if ( k>kc || Math.abs(deg)<30.0 ) return 0;
+        			return 5.0*theModule.getDensity(i,j,k);
+        		},
+        		function(i,j,k) { //hueFunc
+        			const deg = 8000*(theModule.getDensity(i,j,k) - p_rhoRef);
+        			return Math.floor(36120.0 - deg+0.5)%360;
+        		}
+        	);
+		} else if (dispMode==6 ) { // z-vorticity 3D
+       	const kc = p_nz/2;
+        	// grid3D.update( field_func, [hue_func] )
+        	grid3D.update(
+				function(i,j,k) { // fieldFunc
+					const deg = 3000*theModule.getZVorticity(i,j,k);
+					if ( k>kc || Math.abs(deg)<30.0 ) return 0;
+					return 10.0*theModule.getDensity(i,j,k);
+        		},
+				function(i,j,k) { // hueFunc
+					const deg = 3000*theModule.getZVorticity(i,j,k);
+					return Math.floor(36120.0 - deg+0.5)%360;
+				}
+        	);
+		
+		} else if (dispMode==7 ) { // abs-vorticity 3D
+       	const kc = p_nz/2;
+        	// grid3D.update( field_func, [hue_func] )
+        	grid3D.update(
+				function(i,j,k) { // fieldFunc
+					const deg = 3000*theModule.getAbsVorticity(i,j,k);
+					if ( k>kc || Math.abs(deg)<30.0 ) return 0;
+					return 10.0*theModule.getDensity(i,j,k);
+        		},
+				function(i,j,k) { // hueFunc
+					const deg = 3000*theModule.getAbsVorticity(i,j,k);
+					return Math.floor(36120.0 - deg+0.5)%360;
+				}
+        	);
+		
+		} else if (dispMode==8 ) { // speed 3D
+       	const kc = p_nz/2;
+			const rmag = 20000.0;
+        	// grid3D.update( field_func, [hue_func] )
+        	grid3D.update(
+				function(i,j,k) { // fieldFunc
+					const deg = 2000*(theModule.getSpeed(i,j,k)-v_fanVx0);
+					if ( k>kc || Math.abs(deg)<30.0 ) return 0;
+					return 10.0*theModule.getDensity(i,j,k);
+        		},
+				function(i,j,k) { // hueFunc
+					const deg = 2000*(theModule.getSpeed(i,j,k)-v_fanVx0);
+					return Math.floor(36120.0 - deg+0.5)%360; 
+				}
+        	);
+		
+		} else if (dispMode==9 || dispMode==10 ) { // powder 3D
+        	let xi, yi, zi, hue;
+        	const nn = p_nPowder;
+        	for ( let i=0; i<nn; i++ ) {
+        		const icosa = powders.icosaArray[i];
+        		[ xi, yi, zi, hue ] = theModule.getPowder(i);
+				icosa.position.set( xi*hh-x0, yi*hh-y0, zi*hh-z0 );
+				icosa.material.color = new THREE.Color(`hsl(${hue},100%,50%)`);
+				icosa.visible = ( dispMode==10 && zi*hh>z0 ) ? false : true;
+			}
+			powders.visible = true;
+		}
+		
+		
+		// output to innerHTML
+		if (count % 10 == 0) {
+			const xMax = p_nx*p_dx;
+			const yMax = p_ny*p_dx;
+			const zMax = p_nz*p_dx;
+			const L = p_typicalLength; // boad width
+			let sysTime, status;
+			[ sysTime, status ] = theModule.getNow();
+			const Re = L*v_fanVx0/v_kineticViscosity;
+			
+			document.getElementById("text_caption").innerHTML = 
+				"time = "+sysTime.toFixed()+", Re ="+Re.toFixed()+" (L="+L+")<br>";
+			
+			if (legendFlag) {
+				let msg = "periodic box = "+xMax+" x "+yMax+" x "+zMax+", system is "+status+"<br>";
+				document.getElementById('textOnCanvas').innerHTML = msg;
+			} else {
+				document.getElementById('textOnCanvas').innerHTML = "";
+			}
+			
+			sysMonitor.time = sysTime;
+			sysMonitor.Re = Re;
+
+		}
+		
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  m3js_grid3D function  ----------------------------------
+	//
+	//    ver 0.0.0  2022.06.07 created, last updated on 2022.12.22
+	//
+	//   grid3D = m3js_grid3D( p_nx, p_ny, p_nz, xBoxSize );
+	//      nx:sphere number of x-direction,
+	//      ny:sphere number of y-direction, 
+	//      nz:sphere number of z-direction,
+	//      xBoxSize: x-box size in the threejs-world
+	//
+	//   scene.add( grid3D );
+	//
+	//   grid3D.update( field_func, [hue_func] );
+	//      field_func: (i,j,k) --> field
+	//         (i,j,k) : index of 3D lattice
+	//         field : field value of lattce point
+	//      hue_func: (i,j,k) --> hue   // if undefined, use inner hue function hue(field))
+	//         hue : hsl color index 0,1,2, ... , 359
+	//         if typeof(hue)!='number', hue treat as color string
+	//
+	//   grid3D.setThreshold( th ) 
+	//      th: 0.0 ... 1.0 // if diameter of the sphere < hh*th, this sphere set to invisible
+	//          default th = 0.2
+	//
+	//   grid3D.visibility
+	//      grid3D.visible = true | false;
+	//
+		
+	const m3js_grid3D = function( p_nx, p_ny, p_nz, xBoxSize ) {
+		const gridArray = [];
+		const nx = p_nx;
+		const ny = p_ny;
+		const nz = p_nz;
+		const hh = xBoxSize/nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*ny/2.0;
+		const z0 = hh*nz/2.0;
+		let threshold = 0.2;
+		const grid3D = new THREE.Group();
+
+		const geometry = new THREE.IcosahedronGeometry( 0.5, 1 );
+		for ( let i=0; i<nx; i++ ) {
+			gridArray[i] = [];
+			for ( let j=0; j<ny; j++ ) {
+				gridArray[i][j] = [];
+				for ( let k=0; k<nz; k++ ) {
+					const material = new THREE.MeshBasicMaterial({ color: 0xaaaa00 });
+					const icosa = new THREE.Mesh( geometry, material );
+					icosa.position.x = i*hh - x0;
+					icosa.position.y = j*hh - y0;
+					icosa.position.z = k*hh - z0;
+					icosa.visible = false;
+					gridArray[i][j][k] = icosa;
+					grid3D.add( gridArray[i][j][k] );
+				}
+			}
+		}
+		
+		grid3D.update = grid3D_update; // grid3D_update( fieldFunc, hueFunc )
+		grid3D.setThreshold = setThreshold; // setThreshold( th )
+		return grid3D;
+		
+		// private function
+	
+		function grid3D_update( field_func, hue_func ) {
+			const th = threshold*hh;
+			const maxMag = 0.9*hh;
+			const adeg = 120.0/maxMag;
+			let hue;
+			for ( let i=0; i<nx; i++ ) {
+				for ( let j=0; j<ny; j++ ) {
+					for ( let k=0; k<nz; k++ ) {
+						const icosa = gridArray[i][j][k];
+						const field = field_func(i,j,k);
+						const afield = Math.abs(field);
+						if ( afield<th ) {
+							icosa.visible = false;
+							continue;
+						}
+						let mag = Math.pow(afield,0.5);
+						if ( mag>maxMag ) mag = maxMag;
+						icosa.scale.set(mag,mag,mag);
+						
+						if ( hue_func==undefined ) {
+							const hue = (field>=0.0) ? Math.floor(120.5-adeg*mag) : Math.floor(120.5+adeg*mag);
+							icosa.material.color = new THREE.Color(`hsl(${hue},100%,50%)`);
+						} else {
+							const hue = hue_func(i,j,k);
+							if ( typeof(hue)==='number' ) {
+								icosa.material.color = new THREE.Color(`hsl(${hue},100%,50%)`);
+							} else {
+								icosa.material.color = new THREE.Color( hue );
+							}
+						}
+						icosa.visible = true;
+					}
+				}
+			}
+			grid3D.visible = true;
+		}
+		
+		function setThreshold( th ) { 
+			threshold = th;
+		}
+		
+	};
+	
+	// -----------------------  m3js_grid3D function end
+	
+	
+	// -----------------------  m3js_grid2D function  -----------------------------------------
+	//
+	//    ver 0.0.0  2022.10.08 created, last updated on 2022.12.20
+	//
+	//  agrid = m3js_grid2D( p_nx, p_ny, xBoxSize, [zBoxSize], [mode] );
+	//      p_nx: number of x-direction lines, p_ny: number of y-direction lines
+	//      xBoxSize: x-box size in the threejs-world
+	//		[zBoxSize]: z-box size in the threejs-world
+	//      [mode]: if mode=='xLineOnly' -->  grid change to x-lines only
+	//            if mode=='yLineOnly' -->  grid change to y-lines only
+	//            else or undefined --> grid x-lines and y-lines
+	//
+	//  scene.add( agrid );
+	//
+	//  agrid.setPallet( pallet, color );
+	//      pallet: pallet number 372 ... 399, (371:inner pallet)
+	//      color: col = new THREE.Color( color )
+	//
+	//  agrid.update( z_hue_Func ); // z_hue_func: (i,j) --> [ z, [hue] ]
+	//      z_hue_func(i,j) { ... return [ z, [hue] ]; }
+	//          z: threejs world z-position at grid point (i,j)
+	//          hue: 0...359 huedeg, 360(black) ...gray...370(white) 371(inner pallet) 372...399 free
+	//              or string shch as 'red', '#ff0000', 'rgb(255,0,0)', 'hsl(0,100%,50%)'
+	//
+	// agrid.visible = false;
+	//
+	
+	const m3js_grid2D = function( p_nx, p_ny, xBoxSize, zBoxSize, mode ) {
+		const hueArray = []; // red:hue[deg][0]  green:hue[deg][1]  blue:hue[deg][2]
+		const gridArray = [];
+		const nx = p_nx;
+		const ny = p_ny
+		const hh = xBoxSize/nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*ny/2.0;
+		const z0 = ( zBoxSize==undefined ) ? y0 : zBoxSize/2.0;
+		const xLineOnly = ( mode==undefined || mode!='xLineOnly' ) ? false : true;
+		const yLineOnly = ( mode==undefined || mode!='yLineOnly' ) ? false : true;
+		const agrid = new THREE.Group();
+		
+		if ( hueArray.length<1 ) init_hueArray();
+		
+		if ( ! yLineOnly ) {
+			for (let j=0; j<ny; j++) {
+ 				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( nx * 3 );
+				const colors = new Float32Array( nx * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, nx );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[j] = line;
+    			agrid.add( gridArray[j] );
+			}
+		}
+		if ( ! xLineOnly ) {
+			for (let i=0; i<nx; i++) {
+				const geometry = new THREE.BufferGeometry();
+ 				const material = new THREE.LineBasicMaterial( { vertexColors: true } );
+				const positions = new Float32Array( ny * 3 );
+				const colors = new Float32Array( ny * 3 );
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+				geometry.setDrawRange( 0, ny );
+    			const line = new THREE.Line(geometry,material);
+    			gridArray[ny+i] = line;
+    			agrid.add( gridArray[ny+i] );
+    		}
+    	}
+    	
+    	agrid.setPallet = setPallet; // setPallet( pallet, color )
+		agrid.update = gridUpdate; // gridUpdate( fieldFunc, [hueFunc|huedeg|hueStr] )
+		agrid.visible = false;
+		
+		return agrid;
+
+
+		// private functions
+		
+		function gridUpdate( z_hue_Func ) {
+			if ( ! yLineOnly ) {
+				for (let j=0; j<ny; j++) {
+					const line = gridArray[j];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let i= 0; i<nx; i++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[i*3]   = hh*i - x0;
+						positions[i*3+1] = hh*j - y0;
+						positions[i*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[i*3]   = r;
+						colors[i*3+1] = g;
+						colors[i*3+2] = b;
+					}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			if ( ! xLineOnly ) {
+				for (let i=0; i<nx; i++) {
+					const line = gridArray[ny+i];
+					const positions = line.geometry.attributes.position.array;
+					const colors = line.geometry.attributes.color.array;
+					for (let j= 0; j<ny; j++) {
+						let z, hue, r=0.99, g=0.99, b=0.99;
+						[ z, hue ] = z_hue_Func(i,j);
+						positions[j*3]   = hh*i - x0;
+						positions[j*3+1] = hh*j - y0;
+						positions[j*3+2] = z;
+						
+						if ( hue==undefined ) hue = Math.floor(36180.0 - 180.0*(z/z0)) % 360;
+						if ( typeof(hue)=='number' ) {
+							const deg = Math.floor(hue);
+							r = hueArray[deg][0];
+							g = hueArray[deg][1];
+							b = hueArray[deg][2];
+						} else if ( typeof(hue)=='string' ) {
+							const col = new THREE.Color( hue );
+							r = col.r; g = col.g; b = col.b;
+						}
+						colors[j*3]   = r;
+            			colors[j*3+1] = g;
+            			colors[j*3+2] = b;
+    				}
+					line.geometry.attributes.position.needsUpdate = true;
+					line.geometry.attributes.color.needsUpdate = true;
+				}
+			}
+			agrid.visible = true;
+		}
+		
+		function setPallet( pallet, color ) {
+			const deg = Math.floor(pallet);
+			const col = new THREE.Color( color );
+			hueArray[deg][0] = col.r;
+			hueArray[deg][1] = col.g;
+			hueArray[deg][2] = col.b;
+		}
+		
+		function init_hueArray() {
+			// deg= 0...359 hue color, 360: black ... gray ...  370:white,
+			// 371: inner use, 372...399 as pallete
+			for (let deg=0; deg<360; deg++) {
+				hueArray[deg] = [];
+				const col = new THREE.Color( 'hsl('+deg+',100%,50%)');
+				hueArray[deg][0] = col.r;
+				hueArray[deg][1] = col.g;
+				hueArray[deg][2] = col.b;
+			}
+			for (let deg=360; deg<400; deg++) {
+				hueArray[deg] = [];
+				const x = (deg<371) ? (deg-360)*0.1 : 0.0;
+				hueArray[deg][0] = x;
+				hueArray[deg][1] = x;
+				hueArray[deg][2] = x;
+			}
+		}
+		
+	};
+	
+	// -----------------------  m3js_grid2D function end
+	
+	
+	// -----------------------  m3js_vField2D function  ---------------------------
+	//
+	//    ver 0.0.0  2022.02.04 created, last updated on 2022.12.20
+	//
+	//  vfield = m3js_vField2D( p_nx, p_ny, xBoxSize [, colorMode] ); // colorMode  0:direction color, 1:blue|red
+	//     nx: number of x-direction division, ny:number of y-direction division
+	//     xBoxSize: x-box size in threejs world
+	//  scene.add( vfield );
+	//
+	//  vfield.update( vx_vy_z_col_func [,step] ); // vx_vy_z_col_func: (i,j) --> [vx, vy, z, [col] ]
+	//     vx_vy_z_col_func: function(i,j) { return [vx, vy, z, [col] ]; }
+	//     [step]: step of for-loop, 1:default, else 2 or 3 or 4 ... 
+	//
+	//  vfield.visible = false;
+	//
+	
+	function m3js_vField2D( p_nx, p_ny, xBoxSize, colorMode ) {
+		const nx = p_nx;
+		const ny = p_ny;
+		const hh = xBoxSize/p_nx;
+		const x0 = xBoxSize/2.0;
+		const y0 = hh*p_ny/2.0;
+		const vectorArray = [];
+		const lines = new THREE.Group();
+		const cMode = ( colorMode==undefined ) ? 1 : colorMode;
+		
+		for (let i=0; i<nx; i++) {
+			vectorArray[i] = [];
+			for (let j=0; j<ny; j++) {
+				const geometry = new THREE.BufferGeometry();
+				const positions = new Float32Array( 2 * 3 ); // MAX_POINTS = 2,  3 vertices per point
+				geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.setDrawRange( 0, 2 );
+				const material = new THREE.LineBasicMaterial( { color: 0x888888 } );
+				const line = new THREE.Line( geometry, material );
+				line.visible = false;
+				vectorArray[i][j] = line;
+    			lines.add( vectorArray[i][j] );
+			}
+		}
+		
+		lines.update = linesUpdate;
+		
+		return lines;
+		
+		
+		function linesUpdate( vx_vy_z_col_func, step ) {
+			const inc = ( step == undefined ) ? 1 : step;
+			for (let i=0; i<nx; i+=inc) {
+				for (let j=1; j<ny; j+=inc) {
+					const line = vectorArray[i][j];
+					const positions = line.geometry.attributes.position.array;
+					const vec = vx_vy_z_col_func(i,j);
+					if ( !Array.isArray(vec) ) {
+						line.visible = false;
+						continue;
+					}
+					let vx, vy, z, col, h=0;
+					[ vx, vy, z, col ] = vec;
+					if ( col==undefined ) {
+						if ( cMode==0 ) {
+							h = Math.floor((Math.atan2(vy,vx))*180.0/Math.PI+180.0);
+
+						} else if ( cMode==1 ) {
+							h = (vx>=0.0) ? 240 : 0;
+						}
+						col = `hsl(${h},100%,50%)`;
+					}
+					let x = hh*i-x0, y = hh*j-y0;
+					positions[0] = x; // point 0
+					positions[1] = y;
+					positions[2] = z;
+					positions[3] = x + vx; // point 1
+					positions[4] = y + vy;
+					positions[5] = z;
+					line.visible = true;
+					line.material.color = new THREE.Color( col );
+					line.geometry.attributes.position.needsUpdate = true;
+				}
+			}
+			lines.visible = true;
+		}
+	}
+	
+	// -----------------------  m3js_vField2D function end
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main: main, // main()
+		
+	}
+
+})(); // ====================  tjsm104 module end  ====================
+
+
+// event
+const tjsm = tjsm104;
+window.addEventListener('load', tjsm.main );
+
+
+</script>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+</head>
+
+<body>
+<p>[tm104] air flow - Lattice Boltzmann Method Q3V19</p>
+<div style="position: relative; overflow: hidden; width: 500px; height: 480px">
+  <canvas id="myCanvas" style="position: absolute; top: 0px; left: 0px"></canvas>
+  <div id="textOnCanvas" 
+    style="position:absolute; top:5px; left:5px; color:#99aa44; background-color:rgba(0, 0, 0, 0);
+           font-size:0.9rem"> ... One moment, please.<br> ... setting up the studio ... </div>
+</div>
+
+<hr width="500" align="left" color="#a0a0a0">
+theme: wind tunnel 80x32x32
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
