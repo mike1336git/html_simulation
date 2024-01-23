@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>tm114_SEIRinfectionMCS2D</title>
+
+<style type="text/css">
+	body { color:#000000; background-color:#fff8dd; }
+</style>
+
+<style type="text/css">
+	.lil-gui {
+		--width: 300px;
+		--name-width: 40%;
+	}
+</style>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+<!--
+<script type="importmap">
+{
+  "imports": {
+    "three": "../libm/three.module.js",
+    "orb": "../libm/OrbitControls.js",
+    "lil-gui": "../libm/lil-gui.module.min.js"
+  }
+}
+</script>
+-->
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+    "orb": "https://unpkg.com/three@0.147.0/examples/jsm/controls/OrbitControls.js",
+    "lil-gui": "https://unpkg.com/three@0.147.0/examples/jsm/libs/lil-gui.module.min.js"
+  }
+}
+</script>
+
+<script type="module">
+
+import * as THREE from 'three';
+import { OrbitControls } from 'orb';
+import { GUI } from 'lil-gui';
+
+
+'use strict';
+
+/* =================================================================================================================
+//
+//  tm114_SEIRinfectionMCS2D
+//    Copyright(C) 2023-2024 Mitsuru Ikeuchi
+//    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
+//
+//    ver 0.0.0  2023.02.09 created, last updated on 2023.02.10
+//    ver 0.0.1  2024.01.23 v1, last updated on 2024.01.23
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+//
+//  SEIR infection Monte-Carlo simulation MCS2D
+//
+//    S-E-I-R model
+//
+//      [S] --- beta*I ---> [E] --- sigma ---> [I]--- gamma ---> [R] 
+//
+//
+//    S-E-I-R model -- differential equation
+//      dS/dt = -beta*S*I
+//      dE/dt = beta*S*I - sigma*E
+//      dI/dt = sigma*E - gamma*I
+//      dR/dt = gamma*I
+//    where
+//      S: susceptible
+//      E: exposed
+//      I: infectious
+//      R: removed (recover + dead)
+//      N = S + E + I + R = constant 
+//      beta: infection rate (1/day/I)
+//      sigma: incidence rate (1/day) ~ 1/(mean incubation period)
+//      gamma: recovery rate (1/day) ~ 1/(mean infected period)
+//      mue: birth rate = death rate (1/day) ~ 1/(mean life period)
+//
+//    basic reproduction number R0
+//      R0 = beta*S0/gamma
+//
+//
+//
+//    monte-Cerlo simulation: procedure in js code
+//
+
+	function timeStep() {
+		const nnp=g_NNp;
+		let onset=0;
+		g_nContact = 0;
+		for (let ipp=1; ipp<=nnp; ipp++) {
+			const st = g_status[ipp]; // g_status[ipp] 0:susceptible, 1:exposed, 2:infectius, 3:removed
+			if (st==1) { // 1:exposed  [E] --- sigma ---> [I]
+				if (Math.random()<g_sigma*g_dt) {
+					g_status[ipp] = 2; // 2:infectius
+					onset++;
+				}
+			} else if (st==2) {  // 2:infectius [I] --- gamma ---> [R]
+				if (Math.random()<g_gamma*g_dt) {
+					g_status[ipp] = 3; // 3:removed
+				}
+			}
+			moveWalker(ipp);
+		}
+		return onset;
+	}
+
+	function moveWalker( ipp ) {
+		const dir = Math.floor(Math.random()*4);
+		let ixx, iyy;
+		if (dir==0) { // east
+			ixx = (g_ix[ipp]+1)%g_NNx; iyy = g_iy[ipp];
+		} else if (dir==1) { // west
+			ixx = (g_ix[ipp]-1+g_NNx)%g_NNx; iyy = g_iy[ipp];
+		} else if (dir==2) { // north
+			ixx = g_ix[ipp]; iyy = (g_iy[ipp]+1)%g_NNy;
+		} else if (dir==3) { // south
+			ixx = g_ix[ipp]; iyy = (g_iy[ipp]-1+g_NNy)%g_NNy;
+		}
+		const f = g_field[ixx][iyy]; // g_field[][] 1...NNp: particle, 0:free space, -1:wall
+		if (f==0) { // free space
+			// ipp-walker move
+			g_field[g_ix[ipp]][g_iy[ipp]] = 0;
+			g_ix[ipp] = ixx; g_iy[ipp] = iyy;
+			g_field[g_ix[ipp]][g_iy[ipp]] = ipp;
+		} else if (f>0) { // other particle
+			// contact
+			g_nContact++;
+			// g_status[ipp] 0:susceptible, 1:exposed, 2:infectius, 3:removed
+			if (g_status[ipp]==0 && g_status[f]==2) { // contact S ===> I
+				if (Math.random()<0.5*g_infectiusProb) {
+					g_status[ipp] = 1; // 1:exposed  [S] --- 0.5*infectiusProb ---> [I]
+				}
+			} else if (g_status[ipp]==2 && g_status[f]==0) { // contact I ===> S
+				if (Math.random()<0.5*g_infectiusProb) { 
+					g_status[f] = 1; // 1:exposed  [S] --- 0.5*infectiusProb ---> [I]
+				}
+			}
+		} else if (f==-1) { // wall
+			; // ipp-walker not move
+		}
+	}
+
+//
+//    basic reproduction number R0 of this model
+//      R0 = numberOfContactToSusceptibleWalkerPerDay*infectiusProb/gamma
+//         = ((SS0/(NNx*NNy))/dt)*infectiusProb/gamma
+//
+//
+//------------------------------------------------------------------------------------------------------------------
+*/
+
+const SEIRinfectionMCS2D = (function(){ // ====================  SEIRinfectionMCS2D Module  ====================
+
+	const g_nMax = 100000; // walker array max
+	const g_ntMax = 21600; // max times of data record array (step dt)
+	const g_dayvdt = 20;   // 1(day) = g_dayvdt*dt
+
+	let g_NNp = 40000;  // number of walker
+	let g_NNx = 360;    // x-division of the field
+	let g_NNy = 360;    // y-division of the field
+
+	let g_sysTime = 0.0; // (day) system time
+	let g_dt = 1.0/g_dayvdt; // (day) time step dt
+	let g_incubationPeriod = 5.0; // (day) mean incubation period
+	let g_infectedPeriod = 10.0; // (day) mean infected period
+	let g_infectiusProb = 0.04; // infectius probability per one contact 
+	let g_sigma = 1.0/g_incubationPeriod; // (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
+	let g_gamma = 1.0/g_infectedPeriod; // (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
+
+	let g_nPop = g_NNp; // nPop = S+E+I+R number of walker
+	let g_susceptible = g_nPop-30; // number of susceptible walker
+	let g_exposed = 30; // number of exposed walker
+	let g_infectius = 0; // number of infectius walker
+	let g_removed = 0;  // number of removed walker
+	let g_onsetPerson = 0; // number of onset walker
+	let g_nContact = 0; // total number of contact per dt ( nContact ~ NNp*(NNp/(NNx*NNy)) )
+	let g_removedRatio = 0.0;
+	let g_ss0 = g_susceptible;
+
+	let g_xCanvasSize = 480; // in pixel
+	let g_yCanvasSize = 400;
+	let g_yTextSize = 80;
+	let g_imageData;    // g_imageData = g_ctx.getImageData(20, 20, NNx, NNy);
+
+	const g_field = dimInt2(g_NNx,g_NNy); // g_field[i][j]  1...NNp:walker number,  0:free space, -1:wall
+	const g_status = dimInt1(g_nMax); // g_status[i] 0:susceptible, 1:exposed, 2:infectius, 3:removed
+	const g_ix = dimInt1(g_nMax); // g_ix[i] x-position of i-th walker
+	const g_iy = dimInt1(g_nMax); // g_iy[i] y-position of i-th walker
+	
+	const g_pS = dimInt1(g_ntMax); // (person) susceptible
+	const g_pE = dimInt1(g_ntMax); // (person) exposed
+	const g_pI = dimInt1(g_ntMax); // (person) infectius
+	const g_pR = dimInt1(g_ntMax); // (person) removed
+	const g_pN = dimInt1(g_ntMax); // (person) total = S+E+I+R
+	const g_onsetvdt = dimInt1(g_ntMax); // (person) onset person per dt
+	const g_onsetvday = dimInt1(g_ntMax); // (person) onset person per day
+	const g_nContactvdt = dimInt1(g_ntMax); // number of contact per dt
+
+	function dimInt1( n ) {
+		return new Int32Array( n );
+	}
+
+	function dimInt2( ni, nj ) {
+		let a = [];
+		for (let i=0; i<ni; i++) {
+			a[i] = new Int32Array( nj );
+		}
+		return a;
+	}
+
+
+	// --------------------  set initial condition  --------------------
+
+	function setInitialCondition( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio ) {
+
+		setParam(v_infectiusProb,v_sigma,v_gamma,v_popDens,v_removedRatio);
+
+		g_sysTime = 0;						// (day) system time
+
+		g_nPop = g_NNp;						// nPop = S + E + I + R
+		g_removed = Math.floor(g_nPop*g_removedRatio);	// number of removed walkers
+		g_exposed = 30;						// number of exposed walkers
+		g_susceptible = g_nPop - g_removed - g_exposed;	// number of susceptible walkers
+		g_infectius = 0;					// number of infectius walkers
+		g_onsetPerson = 0;					// number of onset walker
+		g_nContact = 0;						// number of contact per dt
+		g_ss0 = g_susceptible;				// S(0): initial number of susceptible walkers
+
+		clearField();
+		clearPop();
+		setWalkers(g_nPop,g_exposed,g_removedRatio);
+	}
+
+	function setParam( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio ) {
+		g_infectiusProb = v_infectiusProb;	// infectius probability per one contact
+		g_sigma = v_sigma;					// (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
+		g_gamma = v_gamma;					// (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
+		g_NNp = v_popDens;					// nPop = S+E+I+R number of walkers
+		g_removedRatio = v_removedRatio;	// initial removed ratio: removed(t==0) = removedRatio*N
+	}
+
+	function clearField() {
+		const nnx=g_NNx, nny=g_NNy;
+
+		for (let i=0; i<nnx; i++) {
+			for (let j=0; j<nny; j++) {
+				g_field[i][j] = 0;
+			}
+		}
+	}
+
+	function clearPop() {
+		const nt=g_ntMax;
+
+		for (let i=0; i<nt; i++) {
+			g_pS[i] = 0;
+			g_pE[i] = 0;
+			g_pI[i] = 0;
+			g_pR[i] = 0;
+			g_pN[i] = 0;
+			g_onsetvdt[i] = 0;
+			g_onsetvday[i] = 0;
+			g_nContactvdt[i] = 0;
+		}
+	}
+
+	function setWalkers( nn, initExposedNum, removedRatio ) {
+		const rr0 = nn*removedRatio;
+		// set susceptible nn walkers
+		for (let i=1; i<=nn; i++) {
+			let x, y;
+			do {
+				x = Math.floor(g_NNx*Math.random());
+				y = Math.floor(g_NNy*Math.random());
+			} while (g_field[x][y]!=0); // g_field[][]: free space: 0, walker:1...NNp-1
+			g_field[x][y] = i;
+			g_ix[i] = x;
+			g_iy[i] = y;
+
+			if (i<=rr0) {
+				g_status[i] = 3; // 3:removed
+			} else {
+				g_status[i] = 0; // 0:susceptible
+			}
+		}
+
+		// set exposed initExposedNum walkers
+		for (let i=0; i<initExposedNum; i++) {
+			let ipp;
+			do {
+				ipp = Math.floor(nn*Math.random()) + 1;
+			} while (g_status[ipp]!=0); // g_status[ipp] 0:susceptible, 1:exposed, 2:infectius, 3:removed
+			g_status[ipp] = 1; // 1:exposed
+		}
+	}
+
+
+	// --------------------  time evolution  --------------------
+
+	function timeEvolution( nCalc ) {
+
+		for (let i=0; i<nCalc; i++) {
+			const it = Math.floor(g_sysTime/g_dt);
+			memoSEIRN(it); // set g_pS[it],g_pE[it],g_pI[it],g_pR[it],g_pN[it]
+
+			g_sysTime += g_dt;
+			g_onsetPerson = timeStep();
+		}
+	}
+
+	function timeStep() {
+		const nnp=g_NNp;
+		let onset=0;
+		g_nContact = 0;
+		for (let ipp=1; ipp<=nnp; ipp++) {
+			const st = g_status[ipp]; // g_status[ipp] 0:susceptible, 1:exposed, 2:infectius, 3:removed
+			if (st==1) { // 1:exposed  [E] --- sigma ---> [I]
+				if (Math.random()<g_sigma*g_dt) {
+					g_status[ipp] = 2; // 2:infectius
+					onset++;
+				}
+			} else if (st==2) {  // 2:infectius [I] --- gamma ---> [R]
+				if (Math.random()<g_gamma*g_dt) {
+					g_status[ipp] = 3; // 3:removed
+				}
+			}
+			moveWalker(ipp);
+		}
+		return onset;
+	}
+
+	function moveWalker( ipp ) {
+		const dir = Math.floor(Math.random()*4);
+		let ixx, iyy;
+		if (dir==0) { // east
+			ixx = (g_ix[ipp]+1)%g_NNx; iyy = g_iy[ipp];
+		} else if (dir==1) { // west
+			ixx = (g_ix[ipp]-1+g_NNx)%g_NNx; iyy = g_iy[ipp];
+		} else if (dir==2) { // north
+			ixx = g_ix[ipp]; iyy = (g_iy[ipp]+1)%g_NNy;
+		} else if (dir==3) { // south
+			ixx = g_ix[ipp]; iyy = (g_iy[ipp]-1+g_NNy)%g_NNy;
+		}
+		const f = g_field[ixx][iyy]; // g_field[][] 1...NNp: particle, 0:free space, -1:wall
+		if (f==0) { // free space
+			// ipp-walker move
+			g_field[g_ix[ipp]][g_iy[ipp]] = 0;
+			g_ix[ipp] = ixx; g_iy[ipp] = iyy;
+			g_field[g_ix[ipp]][g_iy[ipp]] = ipp;
+		} else if (f>0) { // other particle
+			// contact
+			g_nContact++;
+			// g_status[ipp] 0:susceptible, 1:exposed, 2:infectius, 3:removed
+			if (g_status[ipp]==0 && g_status[f]==2) { // contact S ===> I
+				if (Math.random()<0.5*g_infectiusProb) {
+					g_status[ipp] = 1; // 1:exposed  [S] --- 0.5*infectiusProb ---> [I]
+				}
+			} else if (g_status[ipp]==2 && g_status[f]==0) { // contact I ===> S
+				if (Math.random()<0.5*g_infectiusProb) { 
+					g_status[f] = 1; // 1:exposed  [S] --- 0.5*infectiusProb ---> [I]
+				}
+			}
+		} else if (f==-1) { // wall
+			; // ipp-walker not move
+		}
+	}
+
+	function memoSEIRN( i ) {
+		var nt=g_ntMax,nnp=g_NNp;
+
+		let ss = 0, ee = 0, ii = 0, rr = 0, nn = 0;
+		for (let ipp=1; ipp<=nnp; ipp++) {
+			const st = g_status[ipp];
+			if (st==0) {
+				ss++;
+			} else if (st==1) {
+				ee++;
+			} else if (st==2) {
+				ii++;
+			} else if (st==3) {
+				rr++;
+			}
+		}
+		g_susceptible = ss;
+		g_exposed = ee;
+		g_infectius = ii;
+		g_removed = rr;
+		g_nPop = ss + ee + ii + rr;
+
+		if (i>nt-1) return;
+
+		g_pS[i] = g_susceptible;
+		g_pE[i] = g_exposed;
+		g_pI[i] = g_infectius;
+		g_pR[i] = g_removed;
+		g_pN[i] = g_nPop;
+		g_onsetvdt[i] = g_onsetPerson;
+		setPoday(i);
+		g_nContactvdt[i] = g_nContact;
+	}
+
+	function setPoday( it ) {
+
+		let s = 0;
+		for (let i=-19; i<=0; i++) {
+			const ii = it + i;
+			if (ii>=0) {
+				s += g_onsetvdt[ii];
+			}
+		}
+		g_onsetvday[it] = s;
+	}
+
+
+	// --------------------  draw  --------------------
+
+	function draw( ctx, drawMode, timeRange, outputFlag ) {
+		const xp=60, yp=30;
+
+		if ( setImageData.isSet==false ) setImageData(ctx);
+		
+		//ctx.clearRect(0, 0, g_xCanvasSize, g_yCanvasSize);
+
+		if (drawMode==0) {
+			drawField(ctx);
+			drawCaption(ctx);
+		} else if (drawMode==1) {
+			drawFieldx5PartialView(ctx, 20,20,180-32,180-32);
+			drawCaption(ctx);
+		} else if (drawMode==2) {
+			plotSEIR(ctx, xp,yp,timeRange);
+		} else if (drawMode==3) {
+			logPlotSEIR(ctx, xp,yp,timeRange);
+		}
+
+		ctx.fillStyle = "rgb(240,240,240)"; //background color
+		ctx.fillRect(0, g_yCanvasSize,g_xCanvasSize, g_yTextSize); //clear text area
+
+		ctx.fillStyle = "rgb(0, 0, 0)";
+		ctx.fillText("time = "+g_sysTime.toFixed(2)+" (day)", 20, g_yCanvasSize+24);
+		ctx.fillText("contact = "+g_nContact+" (per dt)", 220, g_yCanvasSize+24);
+		ctx.fillText("N ="+g_nPop, 20, g_yCanvasSize+44);
+		ctx.fillText("infectius Prob. = "+g_infectiusProb.toFixed(3), 220, g_yCanvasSize+44);
+		ctx.fillText("sigma = "+g_sigma.toFixed(2)+" (1/day)", 20, g_yCanvasSize+64);
+		ctx.fillText("gamma = "+g_gamma.toFixed(2)+" (1/day)", 220, g_yCanvasSize+64);	
+	}
+
+	function setImageData( ctx ) {
+		if ( setImageData.isSet==false ) {
+			g_imageData = ctx.getImageData(20, 20, g_NNx, g_NNy);
+			setImageDataAlhpa();
+			setImageData.isSet = true;
+		}
+	}
+	setImageData.isSet = false;
+
+	function setImageDataAlhpa() {
+		const nnx=g_NNx, nny=g_NNy;
+		const data = g_imageData.data;
+		for (let j=0; j<nny; j++) {
+			for (let i = 0; i<nnx; i++) {
+				let idx = (j*nnx+i)*4;
+				data[idx] = 0;
+				data[++idx] = 0;
+				data[++idx] = 0;
+				data[++idx] = 255;
+			}
+		}
+	}
+
+	function drawCaption( ctx ) {
+		drawText(ctx, "S ="+g_susceptible, 20, 18, "rgb(0, 0, 250)");
+		drawText(ctx, "E ="+g_exposed, 120, 18, "rgb(160, 160, 0)");
+		drawText(ctx, "I ="+g_infectius, 220, 18, "rgb(250, 0, 0)");
+		drawText(ctx, "R ="+g_removed, 320, 18, "rgb(0, 160, 0)");
+		drawText(ctx, "N ="+g_nPop, 20, 397, "rgb(0, 0, 0)");
+	}
+
+	// --- field
+
+	function drawField( ctx ) {
+		const nnx=g_NNx, nny=g_NNy;
+		const data = g_imageData.data;
+		for (let j=0; j<nny; j++) {
+			const jj = nny-j-1;
+			for (let i = 0; i<nnx; i++) {
+				let idx = (jj*nnx+i)*4;
+				const f = g_field[i][j];
+				let r = 60, g = 60, b = 60;
+				if (f>0) {
+					const st = g_status[f];
+					if (st==0) { // susceptible
+						r = 80; g = 80; b = 255;
+					} else if (st==1) { // exposed
+						r = 200; g = 200; b = 0;
+					} else if (st==2) { // infectius
+						r = 255; g = 120; b = 120;
+					} else if (st==3) { // removed
+						r = 0; g = 160; b = 0;
+					}
+				} else if (f==-1) {
+					r = 0; g = 0; b = 0;
+				}
+				data[idx] = r;
+				data[++idx] = g;
+				data[++idx] = b;
+			}
+		}
+		ctx.putImageData(g_imageData, 20, 20);
+	}
+
+	function drawFieldx5PartialView( ctx, xp, yp, ix0, iy0 ) {
+		ctx.fillStyle = "rgb(60,60,60)";
+		ctx.fillRect(xp,yp,g_NNx,g_NNy);
+
+		for (let i=0; i<72; i++) {
+			for (let j=0; j<72; j++) {
+				const f = g_field[ix0+i][iy0+j];
+				let colr = "rgb(60,60,60)";
+				if (f>0) {
+					const st = g_status[f];
+					if (st==0) { // susceptible
+						colr = "rgb(80,80,255)";
+					} else if (st==1) { // exposed
+						colr = "rgb(200,200,0)";
+					} else if (st==2) { // infectius
+						colr = "rgb(255,120,120)";
+					} else if (st==3) { // removed
+						colr = "rgb(0,160,0)";
+					}
+					drawDisc(ctx, xp+i*5+2.5,yp+(71-j)*5+2.5,2.5,colr);
+				} else if (f==-1) {
+					colr = "rgb(0,0,0)";
+				}
+			}
+		}
+	}
+
+	function drawDisc( ctx, x, y, r, color ) {
+		ctx.fillStyle = color;
+		ctx.beginPath();
+		ctx.arc(x, y, r, 0, 2*Math.PI, false);
+		ctx.fill();
+	}
+
+	// ---  plot
+
+	function plotSEIR( ctx, xp, yp, timeRange ) {
+		const mag = 300.0/g_nPop, m=Math.floor(g_dayvdt*timeRange/360);
+
+		//drawGrid(xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color)
+		drawGrid(ctx, xp,yp,360,300,30,30,"0",timeRange+"(day)","0",""+g_nPop,"rgb(120,120,120)");
+
+		drawText(ctx, "Susceptible", xp+20, yp-5, "rgb(0,0,250)");
+		drawText(ctx, "Exposed", xp+70, yp+20, "rgb(160,160,0)");
+		drawText(ctx, "Infectious", xp+120, yp-5, "rgb(250,0,0)");
+		drawText(ctx, "Removed", xp+220, yp-5, "rgb(0,160,0)");
+		drawText(ctx, "Population", xp+160, yp+20, "rgb(0,0,0)");
+		drawText(ctx, "plot SEIR", xp+20, yp+340, "rgb(0,0,0)");
+		drawText(ctx, "daily new cases x 50", xp+140, yp+40, "rgb(250,0,250)");
+
+		plotFunc(ctx, xp,yp,g_pS,m,mag,"rgb(0,0,250)");
+		plotFunc(ctx, xp,yp,g_pE,m,mag,"rgb(160,160,0)");
+		plotFunc(ctx, xp,yp,g_pI,m,mag,"rgb(250,0,0)");
+		plotFunc(ctx, xp,yp,g_pR,m,mag,"rgb(0,160,0)");
+		plotFunc(ctx, xp,yp,g_pN,m,mag,"rgb(0,0,0)");
+		plotFunc(ctx, xp,yp,g_onsetvday,m,mag*50,"rgb(250,0,250)");
+	}
+
+	function plotFunc( ctx, xp, yp, pop, m, mag, colr ) {
+		ctx.strokeStyle = colr;
+		ctx.beginPath();
+		for (let i=0; i<360; i++) {
+			ctx.lineTo(xp+i, yp+300-mag*pop[i*m]);
+		}
+		ctx.stroke();
+	}
+
+	function logPlotSEIR( ctx, xp, yp, timeRange ) {
+		const m=Math.floor(g_dayvdt*timeRange/360);
+
+		//drawGrid(xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color)
+		drawGrid(ctx, xp,yp,360,300,30,60,"0",timeRange+"(day)","10^0","10^5","rgb(120,120,120)");
+
+		drawText(ctx, "Susceptible", xp+20, yp-5, "rgb(0,0,250)");
+		drawText(ctx, "Exposed", xp+70, yp+20, "rgb(160,160,0)");
+		drawText(ctx, "Infectious", xp+120, yp-5, "rgb(250,0,0)");
+		drawText(ctx, "Removed", xp+220, yp-5, "rgb(0,160,0)");
+		drawText(ctx, "Population", xp+160, yp+20, "rgb(0,0,0)");
+		drawText(ctx, "log plot SEIR", xp+20, yp+340, "rgb(0,0,0)");
+		drawText(ctx, "daily new cases", xp+140, yp+40, "rgb(250,0,250)");
+
+		plotLog10Func(ctx, xp,yp,g_pS,m,"rgb(0,0,250)");
+		plotLog10Func(ctx, xp,yp,g_pE,m,"rgb(160,160,0)");
+		plotLog10Func(ctx, xp,yp,g_pI,m,"rgb(250,0,0)");
+		plotLog10Func(ctx, xp,yp,g_pR,m,"rgb(0,160,0)");
+		plotLog10Func(ctx, xp,yp,g_pN,m,"rgb(0,0,0)");
+		plotLog10Func(ctx, xp,yp,g_onsetvday,m,"rgb(250,0,250)");
+	}
+
+	function plotLog10Func( ctx, xp, yp, pop, m, colr ) {
+		ctx.strokeStyle = colr;
+		ctx.beginPath();
+		for (let i=0; i<360; i++) {
+			let p = pop[i*m]; 
+			if (p<=0.0) p = 0.1;
+			const logp = Math.log10(p);
+			if (logp>-0.5) ctx.lineTo(xp+i, yp+300-60.0*logp);
+		}
+		ctx.stroke();
+	}
+
+	function drawGrid( ctx, xp, yp, xLen, yLen, xDiv, yDiv, x0Str, xMaxStr, y0Str, yMaxStr, color ) {
+		ctx.strokeStyle = color;
+		ctx.fillStyle = color;
+		ctx.strokeRect(xp,yp,xLen,yLen);
+
+		for (let i=0; i<xLen; i+=xDiv) {
+			drawLine(ctx, xp+i,yp, xp+i, yp+yLen,color);
+		}
+		for (let j=0; j<yLen; j+=yDiv) {
+			drawLine(ctx, xp,yp+yLen-j, xp+xLen, yp+yLen-j,color);
+		}
+		ctx.fillText(x0Str, xp-5, yp+yLen+20);
+		ctx.fillText(xMaxStr, xp+xLen-xMaxStr.length*4, yp+yLen+20);
+		ctx.fillText(y0Str, xp-y0Str.length*8-8, yp+yLen+5);
+		ctx.fillText(yMaxStr, xp-yMaxStr.length*8-8, yp+5);
+	}
+
+	 function drawLine( ctx, x1, y1, x2, y2, color ) {
+	 	ctx.strokeStyle = color;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(x2, y2);
+		ctx.stroke();
+	}
+
+	function drawText( ctx, txt, x, y, color ) {
+		ctx.fillStyle = color;
+		ctx.fillText(txt, x, y);
+	}
+
+
+	// --------------------  data output  --------------------
+
+	function outputTextArea( outputSW, timeRange ) {
+		// outputSW:  0:textarea clear,  1:output text data
+
+		let str = "";
+		if (outputSW==1) {
+			const rr0 = +(g_ss0/(g_NNx*g_NNy))/g_dt*g_infectiusProb/g_gamma;
+			str = "infectiusProb = "+g_infectiusProb.toFixed(5)
+					+ ",  sigma = "+g_sigma.toFixed(2)+",  gamma = "+g_gamma.toFixed(2)+" \n";
+			str += "R0 = "+rr0.toFixed(2)+" \n";
+			str += "S(0) = "+g_pS[0].toFixed(1)+",  E(0) = "+g_pE[0].toFixed(1)
+				+",  I(0) = "+g_pI[0].toFixed(1)+" \n";
+			str += " \n";
+			str += " day,  S(t),  E(t),  I(t),  R(t),  NewCase(t)\n";
+			for (let i=0; i<timeRange; i++) {
+				const j = i*g_dayvdt;
+				str += " "+(j*g_dt).toFixed(1)+",  "
+				+g_pS[j].toFixed(1)+",  "
+				+g_pE[j].toFixed(1)+",  "
+				+g_pI[j].toFixed(1)+",  "
+				+g_pR[j].toFixed(1)+",  "
+				+g_onsetvday[j].toFixed(1)+"\n";
+			}
+		}
+		document.getElementById("outputText").innerHTML = str;
+	}
+
+
+	// --------------------  public  --------------------
+
+	return {
+		init:       setInitialCondition, // setInitialCondition(v_infectiusProb,v_sigma,v_gamma,v_popDens,v_removedRatio)
+		setParam:   setParam, // setParam(v_infectiusProb, v_sigma,v_gamma,v_popDens,v_removedRatio)
+		evolve:     timeEvolution, // timeEvolution(nCalc)
+		draw:       draw, // draw(ctx, drawMode,timeRange,outputFlag)
+
+		getSysParam:function() { return [ g_NNx, g_NNy, g_dt, g_NNp, g_ss0 ]; },
+		getNow:     function() { return [ g_sysTime, g_nContact, g_susceptible ]; },
+		getNowSEIRN:function() { return [ g_susceptible, g_exposed, g_infectius, g_removed, g_nPop ]; },
+		getSEIRN:   function(i) { return [ g_pS[i], g_pE[i], g_pI[i], g_pR[i], g_pN[i], g_onsetvday[i] ]; },
+		getWalker:  function(i) { return [ g_status[i], g_ix[i], g_iy[i] ]; },
+		outputTextArea: outputTextArea, // outputTextArea(outputSW, timeRange)
+	};
+
+})(); // ====================  SEIRinfectionMCS2D end  ====================
+
+
+const tjsm114 = (function(){ // ====================  tjsm Module  ====================
+
+	const theModule = SEIRinfectionMCS2D;
+	
+	let theme = 0;				// no use
+	
+	let v_infectiusProb = 0.04;	// infectius probability per one contact ;
+	let v_sigma = 0.2;			// (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
+	let v_gamma = 0.1;			// (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
+	let v_popDens = 40000;		// = S+E+I+R number of walkers
+	let v_removedRatio = 0.0;	// for vaccinated ratio: inirial R(0) = removedRatio*nPop 
+	let nCalc = 1;
+	let drawMode = 2;			// 0:SEIR-walkers 1:SEIR-warkers x5 2:plot S-I-R, 3:plot log S-I-R
+	let timeRange = 360;		// 180, 360, 720, 1080 (days)
+	let outputFlag = 0;			// 0:do nothing, 1: output S-I-R data
+
+	let p_nx, p_ny, p_dt, p_nPop, p_ss0; // <-- theModule.getSysParam();
+	let p_time, p_nContact, p_susceptible; // <-- theModule.getNow();
+	// walker status   0:susceptible, 1:exposed, 2:infectius, 3:removed
+	const statusColor = [ "#6666ff", "#ffff00", "#ff6666", "#00ff00" ];
+	let resetFlag = 0;
+	let pauseFlag = 0;
+	let stepFlag = 0;
+	let changeFlag = 0;
+	let dispModeChanged = true;
+	let viewHomeRequested = false;
+	let legendFlag = true;
+	let count = 0; // animate count
+	
+	// sizes in the threejs world
+	const xBoxSize = 600;
+	let hh, x0, y0, z0;
+
+	// threejs world object
+	let cnvsprite;
+	let walkers;
+
+	// three.js , OrbitControls.js
+	const width = 500;
+	const height = 480;
+	const r_camera = 1260.0;
+	let renderer;
+	let scene;
+	let camera;
+	let controls;
+	
+	
+	// -------------------- lil-gui setup
+	
+	const uParam = {
+		theme: 'S-E-I-R infection model',
+		themeMenu: [ 'S-E-I-R infection model' ],
+		infectiusProb: 0.04,
+		sigma: 0.2,
+		gamma: 0.1,
+		popDens: 40000,
+		vaccinatedRatio: 0,
+		nCalc: 1,
+		nCalcMenu: [ 1, 2, 3, 4, 5, 6, 7, 8 ],
+		dispMode: 'plot SEIR',
+		dispMenu: [ 'walkers SEIR', 'magnify x 5', 'plot SEIR', 'log plot SEIR', 'threejs walkers' ],
+		timeRange: 360,
+		timeRangeMenu: { '0 - 180':180, '0 - 360':360, '0 - 720':720, '0 - 1080':1080, },
+		outputTextData: function() { outputFlag = 1 },
+		
+		reset: function() { resetFlag = 1; },
+		pause: false,
+		viewHome: function() { viewHomeRequested = true; }
+	};
+	
+	const gui = new GUI();
+	setupGUI();
+	
+	function setupGUI() {
+		gui.add( uParam, 'theme', uParam.themeMenu );
+	
+		gui.add( uParam, 'infectiusProb', 0.001, 0.1, 0.001 ).name( 'infectius prob. /contact' ).onChange(
+			v => { v_beta = v; changeFlag = 1; } );
+		
+		gui.add( uParam, 'sigma', 0.01, 0.5, 0.01 ).name( 'incidence rate (1/day)' ).onChange(
+			v => { v_sigma = v; changeFlag = 1; } );
+		
+		gui.add( uParam, 'gamma', 0.01, 0.5, 0.01 ).name( 'recovery rate (1/day)' ).onChange(
+			v => { v_gamma = v; changeFlag = 1; } );
+		
+		gui.add( uParam, 'popDens', 10000, 60000, 1000 ).name( 'population density' ).onChange(
+			v => { v_popDens = v; resetFlag = 1; } );
+		
+		gui.add( uParam, 'vaccinatedRatio', 0.0, 1.0, 0.01 ).name( 'vaccinated ratio' ).onChange(
+			v => { v_removedRatio = v; resetFlag = 1; } );
+		
+		gui.add( uParam, 'nCalc', uParam.nCalcMenu ).name( 'nCalc / frame' ).onChange( v => { nCalc = v; } );
+		
+		gui.add( uParam, 'dispMode', uParam.dispMenu ).onChange( 
+			str => { drawMode = uParam.dispMenu.indexOf(str); dispModeChanged = true; } );
+		
+		gui.add( uParam, 'timeRange', uParam.timeRangeMenu ).name( 'time range' ).onChange( v => { timeRange = v; } );
+		
+		gui.add( uParam, 'reset' );
+		gui.add( uParam, 'pause' ).onChange( bool => { pauseFlag = ( bool ) ? 1 : 0; } );
+		gui.add( uParam, 'viewHome' ).name( 'camera: home view' );
+		
+		gui.add( uParam, 'outputTextData' ).name( 'output data' );
+	}
+	
+	
+	// -------------------- main
+	
+	function main() {
+		// construct renderer
+		renderer = new THREE.WebGLRenderer({
+					//canvas: document.querySelector('#myCanvas') });
+					canvas: document.querySelector('#myCanvas'), antialias: true });
+		renderer.setSize(width, height);
+		
+		// camera
+		camera = new THREE.PerspectiveCamera(30, width / height, 1, 5000);
+		camera.position.set(0, 0, r_camera);
+		controls = new OrbitControls(camera,renderer.domElement);
+
+		constructScene();
+		animate();
+	}
+
+
+	function constructScene() {
+
+		// initialize MD
+		theModule.init(v_infectiusProb,v_sigma,v_gamma,v_popDens,v_removedRatio);
+		[ p_nx, p_ny, p_dt, p_nPop, p_ss0 ] = theModule.getSysParam();
+		hh = xBoxSize/p_nx;
+		x0 = xBoxSize/2, y0 = p_ny*hh/2, z0 = 0;
+
+		// scene
+		scene = new THREE.Scene();
+ 
+		camera.position.set(0, 0, r_camera); 
+ 
+		// light - DirectionalLight
+		const directionalLight = new THREE.DirectionalLight(0xFFFFFF,0.7);
+		directionalLight.position.set(1, 1, 1);
+		scene.add(directionalLight);
+		// light - AmbientLight
+		const light = new THREE.AmbientLight(0xFFFFFF, 0.3);
+		scene.add(light);
+		
+		
+		// walkers
+		walkers = addWalkers( scene, v_popDens, 3.8*hh );
+		
+		// canvas sprite
+		// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+		cnvsprite = m3js_canvasSprite( 600, 600, 470 );
+		cnvsprite.position.set(0,0,0);
+		scene.add( cnvsprite );
+
+	}
+	
+	
+	// loop animation
+	function animate() {
+		
+		// select theme
+		if ( resetFlag==1 ) {
+			resetFlag = 0;
+			constructScene();
+			dispModeChanged = true;
+			count = 0;
+		}
+		
+		if ( changeFlag==1 ) {
+			changeFlag = 0;
+			theModule.setParam(v_infectiusProb,v_sigma,v_gamma,v_popDens,v_removedRatio);
+		}
+		
+		if ( viewHomeRequested ) {
+			camera.position.set(0, 0, r_camera);
+			viewHomeRequested = false;
+		}
+		
+		if ( dispModeChanged ) {
+			cnvsprite.visible = false;
+			walkers.visible = false;
+		}
+		
+		if ( outputFlag==1 ) {
+			theModule.outputTextArea(outputFlag, timeRange);
+			outputFlag = 0;
+		}
+		
+		if ( pauseFlag==0 ) {
+			theModule.evolve(nCalc);
+			[ p_time, p_nContact, p_susceptible ] = theModule.getNow();
+		} else if ( pauseFlag==1 && stepFlag==1 ) {
+			stepFlag = 0;
+			theModule.evolve( 1 );
+			[ p_time, p_nContact, p_susceptible ] = theModule.getNow();
+		}
+		
+		
+		// 
+		if ( drawMode==4 ) {
+			walkers.update( v_popDens, hh, x0, y0, z0 );
+		}
+		
+		// sprite update
+		if ( drawMode<4 ) {
+			// cnvsprite.update( drawFunc )
+			cnvsprite.update(
+				function( sprite ) { // drawFunc(sprite)
+					const ctx = sprite.ctx;
+					const canvasWidth = sprite.canvas.width;
+					const canvasHeight = sprite.canvas.height;
+					
+					// clear canvas
+					ctx.fillStyle = "#bbbbbb";
+					ctx.fillRect( 0, 0, canvasWidth, canvasHeight);
+					
+					theModule.draw( ctx, drawMode, timeRange, outputFlag );
+					outputFlag = 0;
+				}
+			);
+		}
+		
+		
+		// output to innerHTML
+		if (count % 5 == 0) {
+			const msg = "time ="+p_time.toFixed(2)+"(day), N ="+v_popDens
+				+ ", contact/dt ="+p_nContact+"<br>"
+				+ "basic reproduction number R0 = "
+				+ ((p_ss0/(p_nx*p_ny))/p_dt*v_infectiusProb/v_gamma).toFixed(2)+"<br>"
+				+ "reproduction number at present Rp = "
+				+ ((p_susceptible/(p_nx*p_ny))/p_dt*v_infectiusProb/v_gamma).toFixed(2)+"<br>";
+			document.getElementById("text_caption").innerHTML = msg;
+			
+			if ( legendFlag && drawMode==4 ) {
+				let ss, ee, ii, rr, nn;
+				[ ss, ee, ii, rr, nn ] = theModule.getNowSEIRN();
+				let caption = "<span style='margin-right: 30px;'></span>"
+					+ "<span style='color:"+statusColor[0]+"'>S="+ss+"</span>" + ", "
+					+ "<span style='color:"+statusColor[1]+"'>E="+ee+"</span>" + ", "
+					+ "<span style='color:"+statusColor[2]+"'>I="+ii+"</span>" + ", "
+					+ "<span style='color:"+statusColor[3]+"'>R="+rr+"</span>" + ", "
+					+ "<span style='color:#dddddd'>N="+nn+"</span>"
+				document.getElementById('textOnCanvas').innerHTML = caption;
+			} else {
+				document.getElementById('textOnCanvas').innerHTML = "";
+			}
+			
+		}
+
+		
+		count += 1;
+		controls.update();
+		renderer.render(scene, camera);
+		requestAnimationFrame(animate);
+	}
+	
+	
+	
+	// -----------------------  walkers (points)
+	//
+	//    ver 0.0.0  2022.05.16 created, last updated on 2022.05.16
+	//
+	// walkers = addWalkers( scene, nnpMax, pointSize )
+	//     scene: threejs world scene
+	//     nnpMax: max. number of walkers
+	//     pointSize; point size in threejs world
+	// scene.add( walkers );
+	//
+	// walkers.update( nnp, hh, x0, y0, z0 )
+	//     nnp:  number of walkers
+	//     hh: xBoxSize/nx
+	//		x0: xBoxSize/2,  y0:yBoxSize/2,  z0:zBoxSize/2
+	// 
+	// walkers.visible = true|false;
+	//
+	/* sample code:
+			let walkers;
+	
+			// add walkers
+			walkers = addWalkers( scene, nnpMax, pointSize );
+
+			// update walkers
+			walkers.update( nnp, hh, x0, y0, z0 );
+			
+			// visibility
+			cnvsprite.visible = false;
+	*/
+
+	function addWalkers( scene, nnpMax, pointSize ) {
+		const geometry = new THREE.BufferGeometry();
+		const nn = nnpMax;
+		const positions = new Float32Array( nn * 3 );
+		const colors = new Float32Array( nn * 3 );
+		geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+		geometry.setAttribute( 'color', new THREE.BufferAttribute( colors, 3 ) );
+		const material = new THREE.PointsMaterial( { size: pointSize, vertexColors: true } );
+		const walkers = new THREE.Points( geometry, material );
+		scene.add( walkers );
+		walkers.visible = false;
+		walkers.update = updateWalkers; // updateWalkers( nnp, hh, x0, y0, z0 )
+		return walkers; 
+
+
+		function updateWalkers( nnp, hh, x0, y0, z0 ) {
+			const positions = walkers.geometry.attributes.position.array;
+			const colors = walkers.geometry.attributes.color.array;
+			const colorData = 
+				// walker status   0:susceptible, 1:exposed, 2:infectius, 3:removed
+				[ [ 0.20, 0.2, 0.99 ], [ 0.99, 0.99, 0.20 ], [ 0.99, 0.20, 0.20 ], [ 0.20, 0.99, 0.20 ] ];
+			let st, ix, iy;
+			for ( let i=0; i<nn; i++ ) {
+				[ st, ix, iy ] = theModule.getWalker(i);
+				positions[ 3 * i ] = ix*hh-x0;
+				positions[ 3 * i + 1 ] = iy*hh-y0;
+				positions[ 3 * i + 2 ] = z0;
+
+				colors[ 3 * i ] = colorData[st][0]; // red
+				colors[ 3 * i + 1 ] = colorData[st][1]; // green
+				colors[ 3 * i + 2 ] = colorData[st][2]; // blue
+			}
+			walkers.visible = true;
+			walkers.geometry.attributes.position.needsUpdate = true;
+			walkers.geometry.attributes.color.needsUpdate = true;
+		}
+	}
+	
+	
+	// -----------------------  m3js_canvasSprite function  ------------------------------
+	//
+	//    ver 0.0.0  2022.05.06 created, last updated on 2022.12.19
+	//
+	// cnvsprite = m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight )
+	//     spriteWidth: world width of sprite 3D object
+	//     spriteHeight: world height of sprite 3D object
+	//     canvasHeight: canvas height in pixel
+	// scene.add( cnvsprite );
+	//
+	// cnvsprite.update( drawFunc )
+	//     sprite: sprite object
+	//     drawFunc: draw(sprite)
+	// 
+	// cnvsprite.visible = true | false;
+	//
+	
+	function m3js_canvasSprite( spriteWidth, spriteHeight, canvasHeight ) {
+		// canvas setup
+		const canvasWidth = Math.ceil(spriteWidth*canvasHeight/spriteHeight);
+		const canvas = document.createElement("canvas");
+		canvas.width  = canvasWidth;
+		canvas.height = canvasHeight;
+		const ctx = canvas.getContext('2d');
+		ctx.font = "16px 'sans-serif'";
+		ctx.textBaseline = "bottom";
+		ctx.textAlign = "left";
+		
+		// texture <-- canvas
+		const texture = new THREE.Texture(canvas);
+		texture.needsUpdate = true;
+		
+		// sprite <-- texture
+		const spriteMaterial = new THREE.SpriteMaterial( { map: texture } );
+		const sprite = new THREE.Sprite( spriteMaterial );
+		
+		sprite.scale.set(spriteWidth, spriteHeight, 1);
+		sprite.canvas = canvas;
+		sprite.ctx = ctx;
+		sprite.texture = texture;
+		sprite.visible = false;
+		sprite.update =
+			function( drawFunc ) {
+				drawFunc(sprite);
+				sprite.visible = true;
+				sprite.texture.needsUpdate = true;
+			};
+		return sprite;
+	}
+	
+	// -----------------------  m3js_canvasSprite function end
+	
+	
+	// --------------------  public  --------------------
+	
+	return {
+		main: main, // main()
+		
+	};
+
+})(); // ====================  tjsm114 module end  ====================
+
+
+// event
+const tjsm = tjsm114;
+window.addEventListener('load', tjsm.main );
+
+
+</script>
+
+<!-- %%%%%%%%%%%%%%%%%%%%  end of javaScript  %%%%%%%%%%%%%%%%%%%% -->
+
+</head>
+
+<body>
+
+<p>[tm114] SEIR infection - Monte-Carlo simulation MCS2D</p>
+<div style="position: relative; overflow: hidden; width: 500px; height: 480px">
+  <canvas id="myCanvas" style="position: absolute; top: 0px; left: 0px"></canvas>
+  <div id="textOnCanvas" 
+    style="position:absolute; top:5px; left:5px; color:#888888; background-color:rgba(0, 0, 0, 0);
+           font-size:0.9rem"> ... One moment, please.<br> ... setting up the studio ... </div>
+</div>
+
+output data text area<br>
+<textarea id="outputText" rows="6" cols="72" disabled></textarea>
+<br>
+
+<hr width="500" align="left" color="#a0a0a0">
+<div id="text_caption" ></div>
+<hr width="500" align="left" color="#a0a0a0">
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
+<br>
+
+</body>
+</html>
+
