@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js115_maskEffectMSC2D
-//    Copyright(C) 2021-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2021-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2021.01.08 created, last updated on 2021.02.18
 //    ver 0.0.1  2021.10.21 v1, last updated on 2021.10.21
 //    ver 0.0.2  2021.11.08 v2, last updated on 2021.11.08
-//    ver 0.0.3  2023.05.22 v3, last updated on 2023.09.13
+//    ver 0.0.3  2023.05.22 v3, last updated on 2024.01.30
 //
 // -------------------- SEIR infection model - monte-Cerlo simulation
 //
@@ -250,12 +250,11 @@ const maskEffectMSC2D = (function(){ // ====================  maskEffectMSC2D Mo
 		setMask(g_nPop,g_maskRatio);
 	}
 	
-	function setParam( v_infectiusProb,v_sigma,v_gamma,v_popDens,v_removedRatio,v_maskFactor,v_maskRatio ) {
+	function setParam( v_infectiusProb,v_sigma,v_gamma,v_popDens,v_maskFactor,v_maskRatio ) {
 		g_infectiusProb = v_infectiusProb;// infectius probability per one contact
 		g_sigma = v_sigma;				// (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
 		g_gamma = v_gamma;				// (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
 		g_NNp = v_popDens;				// nPop = S+E+I+R number of walkers
-		g_removedRatio = v_removedRatio;	// initial removed ratio: removed(t==0) = removedRatio*N
 		g_maskFactor = v_maskFactor;	// (0.0 ... 1.0), infectius probability = maskFactor*(infectiusProb)
 		g_maskRatio = v_maskRatio;		// = (masked person)/(all)
 		
