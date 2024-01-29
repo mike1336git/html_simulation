@@ -1,0 +1,34 @@
+
+2024.01.29
+--------------------------------------------------------------------------
+ike@mx9501:~/app/a1_javaScript/a1_registered/4_tjsm/tjsm_registered_20240129_7z
+$ ls -l
+合計 444
+-rwxr-xr-x 1 mike mike   1387  6月 14  2023 check.txt
+-rw-r--r-- 1 mike mike 447246  1月 29 07:07 tjsm_registered_20240129.7z
+
+mike@mx9501:~/app/a1_javaScript/a1_registered/4_tjsm/tjsm_registered_20240129_7z
+$ sha256sum tjsm_registered_20240129.7z >sha256.txt
+
+mike@mx9501:~/app/a1_javaScript/a1_registered/4_tjsm/tjsm_registered_20240129_7z
+$ cat sha256.txt 
+9b1ef5fc7d48f8334761a08d72977970799b48501c7f03df5a61ea269b8dc4f8  tjsm_registered_20240129.7z
+
+mike@mx9501:~/app/a1_javaScript/a1_registered/4_tjsm/tjsm_registered_20240129_7z
+$ sha256sum tjsm_registered_20240129.7z 
+9b1ef5fc7d48f8334761a08d72977970799b48501c7f03df5a61ea269b8dc4f8  tjsm_registered_20240129.7z
+
+mike@mx9501:~/app/a1_javaScript/a1_registered/4_tjsm/tjsm_registered_20240129_7z
+$ sha256sum -c sha256.txt 
+tjsm_registered_20240129.7z: 完了
+
+mike@mx9501:~/app/a1_javaScript/a1_registered/4_tjsm/tjsm_registered_20240129_7z
+$ ls -l
+合計 448
+-rwxr-xr-x 1 mike mike   1366  1月 29 07:14 check.txt
+-rw-r--r-- 1 mike mike     94  1月 29 07:11 sha256.txt
+-rw-r--r-- 1 mike mike 447246  1月 29 07:07 tjsm_registered_20240129.7z
+
+--------------------------------------------------------------------------
+
+
