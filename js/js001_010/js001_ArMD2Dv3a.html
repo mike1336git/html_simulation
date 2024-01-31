@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js001_ArMD2D
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT )
 //
 //    ver 0.0.0  2017.04.25 created, last updated on 2018.11.10
 //    ver 0.0.1  2019.01.06 v1, last updated on 2021.04.20
 //    ver 0.0.2  2021.10.27 v2, last updated on 2021.10.27
-//    ver 0.0.3  2023.02.11 v3, last updated on 2023.08.11
+//    ver 0.0.3  2023.02.11 v3, last updated on 2024.01.31
 //
 // --------------------  molecular dynamics 2D
 //
@@ -36,56 +36,54 @@
 */
 
 const ArMD2D = (function(){ // ====================  ArMD2D Module  ====================
-	
-	const g_AMU = 1.66053904e-27;			// (kg) atomic mass unit
-	const g_kB = 1.380649e-23;				// (J/K) Boltzmann's constant
-	const g_nMax = 500;						// array max
-	
-	let g_nParticles = 300;					// number of particles
-	let g_sysTime = 0.0;					// (s) system time
-	let g_timeStep = 5.0e-15;				// (s) time step dt
-	let g_xMax = 8.0E-9;					// (m) x-box size
-	let g_yMax = 8.0E-9;					// (m) y-box size
-	let g_kineticEnergy = 0.0;				// (J) total kinetic energy
-	let g_potentialEnergy = 0.0;			// (J) total potential energy
-	
-	const g_xx = dim1( g_nMax );			// (m) x-component of i-th particle position
-	const g_yy = dim1( g_nMax );			// (m) y-component of i-th particle position
-	const g_vx = dim1( g_nMax );			// (m/s) x-component of i-th particle velocity
-	const g_vy = dim1( g_nMax );			// (m/s) y-component of i-th particle velocity
-	const g_ffx = dim1( g_nMax );			// (N) x-component of total force applied i-th particle
-	const g_ffy = dim1( g_nMax );			// (N) y-component of total force applied i-th particle
-	
+
+	const g_AMU = 1.66053904e-27;// (kg) atomic mass unit
+	const g_kB = 1.380649e-23;   // (J/K) Boltzmann's constant
+	const g_nMax = 500;          // array max
+
+	let g_nParticles = 300;      // number of particles
+	let g_sysTime = 0.0;         // (s) system time
+	let g_timeStep = 5.0e-15;    // (s) time step dt
+	let g_xMax = 8.0E-9;         // (m) x-box size
+	let g_yMax = 8.0E-9;         // (m) y-box size
+	let g_kineticEnergy = 0.0;   // (J) total kinetic energy
+	let g_potentialEnergy = 0.0; // (J) total potential energy
+
+	const g_xx = dim1(g_nMax);   // (m) x-component of i-th particle position
+	const g_yy = dim1(g_nMax);   // (m) y-component of i-th particle position
+	const g_vx = dim1(g_nMax);   // (m/s) x-component of i-th particle velocity
+	const g_vy = dim1(g_nMax);   // (m/s) y-component of i-th particle velocity
+	const g_ffx = dim1(g_nMax);  // (N) x-component of total force applied i-th particle
+	const g_ffy = dim1(g_nMax);  // (N) y-component of total force applied i-th particle
+
 	function dim1( n ) {
-		return new Float64Array( n );
+		return new Float64Array(n);
 	}
-	
+
 	// ---  material data
-	
-	const g_mass = 39.95*g_AMU;			// (kg) mass of Ar
-	const g_sigma = 3.418e-10;			// (m) Lennard-Jones potential sigma for Ar 
-	const g_epsilon = 1.711e-21;		// (J) Lennard-Jones potential epsilon for Ar
-	
-	
+
+	const g_mass = 39.95*g_AMU;  // (kg) mass of Ar
+	const g_sigma = 3.418e-10;   // (m) Lennard-Jones potential sigma for Ar 
+	const g_epsilon = 1.711e-21; // (J) Lennard-Jones potential epsilon for Ar
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( nn, BoxSizeInNM, contTemp ) {
-		
 		g_sysTime = 0.0;
 		g_nParticles = nn;
 		g_xMax = BoxSizeInNM*1.0e-9;
 		g_yMax = BoxSizeInNM*1.0e-9;
-		g_nParticles = setParticles( nn );
+		g_nParticles = setParticles(nn);
 		ajustVelocity(contTemp);
 	}
-	
+
 	function setParticles( nn ) {
 		const sigma = g_sigma;
 		let nParticles = nn;
-		
+
 		for ( let j=0; j<nn; j++ ) {
-			let loopCount = 0;
-			let i;
+			let loopCount=0, i;
 			do {
 				g_xx[j] = (g_xMax-1.2*sigma)*Math.random() + 0.6*sigma;
 				g_yy[j] = (g_yMax-1.2*sigma)*Math.random() + 0.6*sigma;
@@ -108,22 +106,22 @@ const ArMD2D = (function(){ // ====================  ArMD2D Module  ============
 		}
 		return nParticles;
 	}
-	
+
 	// normal distributed random number: -3.0 <= normalRandom3() < 3.0
 	function normalRandom3() {
 		return (Math.random()+Math.random()+Math.random()+Math.random()+Math.random()+Math.random()-3.0);
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
+
 	function timeEvolution( nCalc ) {
 		for (let i=0; i<nCalc; i++) {
 			g_sysTime += g_timeStep;
 			moveParticles(g_timeStep);
 		}
 	}
-	
+
 	function moveParticles( dt ) {
 		const nn=g_nParticles;
 		let a = 0.5*dt/g_mass;
@@ -143,11 +141,11 @@ const ArMD2D = (function(){ // ====================  ArMD2D Module  ============
 			g_kineticEnergy += 0.5*g_mass*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
 		}
 	}
-	
+
 	function calcForce() {
 		const nn = g_nParticles, sgm = g_sigma, eps = g_epsilon;
 		const s05 = 0.5*g_sigma;
-		
+
 		g_potentialEnergy = 0.0;
 		for (let i=0; i<nn; i++) {
 			g_ffx[i]=0; g_ffy[i]=0;
@@ -178,17 +176,17 @@ const ArMD2D = (function(){ // ====================  ArMD2D Module  ============
 			g_ffy[i] += boundaryForce(g_yy[i]+s05) + boundaryForce(g_yy[i]-g_yMax-s05);
 		}
 	}
-	
+
 	function boundaryForce(r) { // boundary:L-J type; epsilon = 0.5*epsilonOfAr, sigma = sigmaOfAr
 		const ri = (g_sigma/r);
 		const r6 = ri*ri*ri*ri*ri*ri;
 		g_potentialEnergy += 4.0*0.5*g_epsilon*r6*(r6-1.0);
 		return (24.0*0.5*g_epsilon*r6*(2.0*r6-1.0)/r);
 	}
-	
-	
+
+
 	// --------------------  utility  --------------------
-	
+
 	function systemTemperature() {
 		const nn=g_nParticles;
 		let ek= 0.0; // kinetic energy (J)
@@ -197,7 +195,7 @@ const ArMD2D = (function(){ // ====================  ArMD2D Module  ============
 		}
 		return ek/(nn*g_kB); // for 2D
 	}
-	
+
 	function ajustVelocity(temp) {
 		const nn = g_nParticles;
 		const a = Math.sqrt(temp/systemTemperature());
@@ -206,54 +204,54 @@ const ArMD2D = (function(){ // ====================  ArMD2D Module  ============
 			g_vy[i] = a*g_vy[i];
 		}
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	// setInitialCondition( nn, BoxSizeInNM, contTemp )
-		evolve:			timeEvolution,			// timeEvolution( nCalc )
-		
-		setTemp:		ajustVelocity,			// ajustVelocity( contTemp )
-		
-		getSysParam:	function() { return [ g_nParticles, g_timeStep, g_xMax, g_yMax ]; },
-		getNow:			function() { return [ g_sysTime, systemTemperature(), g_kineticEnergy, g_potentialEnergy ]; },
-		getArData:		function() { return [ g_mass, g_sigma, g_epsilon, 'Ar' ]; },
-		
-		getPosition:	function(i) { return [ g_xx[i], g_yy[i] ]; },
-		getVelocity:	function(i) { return [ g_vx[i], g_vy[i] ]; },
-		getForce:		function(i) { return [ g_ffx[i], g_ffy[i] ]; },
+		init:       setInitialCondition, // setInitialCondition( nn, BoxSizeInNM, contTemp )
+		evolve:     timeEvolution, // timeEvolution( nCalc )
+
+		setTemp:    ajustVelocity, // ajustVelocity( contTemp )
+
+		getSysParam:function() { return [ g_nParticles, g_timeStep, g_xMax, g_yMax ]; },
+		getNow:     function() { return [ g_sysTime, systemTemperature(), g_kineticEnergy, g_potentialEnergy ]; },
+		getArData:  function() { return [ g_mass, g_sigma, g_epsilon, 'Ar' ]; },
+
+		getPosition:function(i) { return [ g_xx[i], g_yy[i] ]; },
+		getVelocity:function(i) { return [ g_vx[i], g_vy[i] ]; },
+		getForce:   function(i) { return [ g_ffx[i], g_ffy[i] ]; },
 	};
-	
+
 })(); // ====================  ArMD2D Module end  ====================
 
 
 const js001 = (function(){ // ====================  js Module  ====================
-	
+
 	const theModule = ArMD2D;
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel
+	const xCanvasSize = 480; // in pixel
+	const yCanvasSize = 480; // in pixel
 	let canvas;
 	let ctx;
-	
+
 	let v_nn = 100;
 	let v_BoxSizeInNM = 8.0;
-	let v_tempMode = 0;			// 0: adiabatic, 1: temp.control
+	let v_tempMode = 0;      // 0: adiabatic, 1: temp.control
 	let v_contTemp = 300.0;
-	
+
 	let p_nParticles, p_timeStep, p_xMax, p_yMax; // = theModule.getSysParam();
-	
-	let dispMode = 0;			// no use
+
+	let dispMode = 0;        // no use
 	let resetFlag = true;
 	let pauseFlag = false;
-	
-	
+
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
-		
+
 		animate();
-		
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -265,48 +263,48 @@ const js001 = (function(){ // ====================  js Module  =================
 			ctx.lineWidth = 1;
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
+
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_nn, v_BoxSizeInNM, v_contTemp ); // ( nn, BoxSizeInNM, contTemp )
 			[ p_nParticles, p_timeStep, p_xMax, p_yMax ] = theModule.getSysParam();
 		}
-		
+
 		if ( !pauseFlag ) {
 			const nCalc = 40;
 			theModule.evolve( nCalc );
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	const molecColor = '#b4ff00';
-	
+
 	function draw( ctx, dispMode ) {
 		const xp = 40, yp = 5, xBoxSize = 400, yBoxSize = 400, yTextPos = yCanvasSize-45;
-		
+
 		ctx.clearRect( 0, 0, xCanvasSize, yCanvasSize );
-		
+
 		// draw box
 		ctx.strokeStyle = "#888800";
 		ctx.strokeRect( xp, yp, xBoxSize, yBoxSize );
-		
+
 		// draw ball
 		drawBalls( ctx, xp, yp, xBoxSize/p_xMax );
-		
+
 		// caption
 		let sysTime, temperature, kineticEnergy, potentialEnergy;
 		[ sysTime, temperature, kineticEnergy, potentialEnergy ] = theModule.getNow();
 		const energy = kineticEnergy+potentialEnergy;
-		
+
 		ctx.fillStyle = "#888888";
 		ctx.fillText( `time = ${(sysTime*1.0e12).toFixed(1)} (ps)`, xp, yTextPos );
 		ctx.fillText( `Temp = ${temperature.toFixed(1)} (K)`, xp+200, yTextPos );
@@ -315,11 +313,11 @@ const js001 = (function(){ // ====================  js Module  =================
 		ctx.fillText( `Box = ${(p_xMax*1.0e9).toFixed(1)+"x"+(p_yMax*1.0e9).toFixed(1)} (nm)`, xp, yTextPos+40 );
 		//document.getElementById("text_caption").innerHTML = "minimum molecular dynamics code"
 	}
-	
+
 	function drawBalls( ctx, xp, yp, scale ) {
 		const yMax = p_yMax, nn = p_nParticles, twoPi = 2.0*Math.PI;
 		const r = 0.5*theModule.getArData()[1]; // r = 0.5*sigma of Ar
-		
+
 		ctx.fillStyle = molecColor;
 		for (let i=0; i<nn; i++) {
 			ctx.beginPath();
@@ -329,23 +327,23 @@ const js001 = (function(){ // ====================  js Module  =================
 			ctx.fill();
 		}
 	}
-	
-	
+
+
 	// --------------------  control  --------------------
-	
+
 	function pause() {
 		pauseFlag = ( pauseFlag==false );
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:			main,			// main()
-		
-		pause:			pause,			// pause();
+		main:  main, // main()
+
+		pause: pause, // pause();
 	};
-	
+
 })(); // ====================  js001 module end  ====================
 
 
@@ -372,7 +370,7 @@ window.addEventListener('load', js.main );
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
 
 </body>
