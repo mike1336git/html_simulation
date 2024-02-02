@@ -13,13 +13,13 @@
 //
 //  js003_waveFDTD2D
 //
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2017.04.29 created, last updated on 2018.11.10
 //    ver 0.0.1  2019.01.08 v1, last updated on 2021.04.22
 //    ver 0.0.2  2021.10.27 v2, last updated on 2021.10.27
-//    ver 0.0.3  2023.02.17 v3, last updated on 2023.08.11
+//    ver 0.0.3  2023.02.17 v3, last updated on 2024.02.02
 //
 // --------------------  FDTD2D: finite-difference time-domain method 2D
 //
@@ -59,24 +59,24 @@
 */
 
 const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====================
-	
-	const g_nMax = 400;						// array max
-	
-	let g_NNx = 320;						// number of space division (NNx*dx = x-length)
-	let g_NNy = 320;						// number of space division (NNy*dx = y-length)
-	let g_sysTime = 0.0;					// system time
-	let g_dt = 1.0;							// time step
-	let g_dx = 1.0;							// space division dx =1.0, (dy = 1.0 (no use))
-	let g_omega = Math.PI/16.0;				// generator wave angular velocity: phase angle += omega*dt
-	let g_theta = 0.0;						// generator phase angle
-	
-	const g_Ez = dim2( g_nMax, g_nMax );	// z-component of electric field
-	const g_Hx = dim2( g_nMax, g_nMax );	// x-component of magnetic field
-	const g_Hy = dim2( g_nMax, g_nMax );	// y-component of magnetic field
-	const g_ep = dim2( g_nMax, g_nMax );	// dielectric constant
-	const g_mu = dim2( g_nMax, g_nMax );	// magnetic permeability
-	const g_sg = dim2( g_nMax, g_nMax );	// Electrical conductivity
-	
+
+	const g_nMax = 400; // array max
+
+	let g_NNx = 320;    // number of space division (NNx*dx = x-length)
+	let g_NNy = 320;    // number of space division (NNy*dx = y-length)
+	let g_sysTime = 0.0;// system time
+	let g_dt = 1.0;     // time step
+	let g_dx = 1.0;     // space division dx =1.0, (dy = 1.0 (no use))
+	let g_omega = Math.PI/16.0; // generator wave angular velocity: phase angle += omega*dt
+	let g_theta = 0.0;  // generator phase angle
+
+	const g_Ez = dim2( g_nMax, g_nMax ); // z-component of electric field
+	const g_Hx = dim2( g_nMax, g_nMax ); // x-component of magnetic field
+	const g_Hy = dim2( g_nMax, g_nMax ); // y-component of magnetic field
+	const g_ep = dim2( g_nMax, g_nMax ); // dielectric constant
+	const g_mu = dim2( g_nMax, g_nMax ); // magnetic permeability
+	const g_sg = dim2( g_nMax, g_nMax ); // Electrical conductivity
+
 	function dim2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {  
@@ -84,15 +84,15 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 		}
 		return a;
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( theme ) {
 		g_sysTime = 0.0;
 		g_theta = 0.0;
 		clearField();
-		
+
 		let eps, mue, sgm;
 		if (theme==0) {
 			eps=4.0; mue=1.0; sgm=0.0; // glass n=2.0
@@ -103,7 +103,7 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 		}
 		setOpticalDevice(eps,mue,sgm);
 	}
-	
+
 	function clearField() {
 		const nnx=g_NNx, nny=g_NNy;
 		for (let i=0; i<nnx+1; i++) {
@@ -117,7 +117,7 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 			}
 		}
 	}
-	
+
 	function setOpticalDevice(eps,mue,sgm) {
 		const nnx=g_NNx, nny=g_NNy;
 		for (let i=0; i<nnx; i++) {
@@ -130,14 +130,14 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 			}
 		}
 	}
-	
-	
+
+
 	// --------------------  evolve Field Ez,Hx,Hy  --------------------
-	
+
 	function evolveField( nTimes, nWaves ) {
 		const n=2*nTimes;
 		g_sysTime = g_sysTime + nTimes*g_dt;
-		
+	
 		for (let i=0; i<n; i++) { // evolve 0.5dt
 			evolveEz();
 			generateEz(nWaves);
@@ -145,7 +145,7 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 		}
 	}
 
-	function generateEz(nwave) {  // plane wave 
+	function generateEz( nwave ) {  // plane wave 
 		const nny=g_NNy;
 		g_theta = g_theta + g_omega*0.5*g_dt
 		const Ezt = Math.sin(g_theta);
@@ -161,7 +161,7 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 			}
 		}
 	}
-	
+
 	function evolveEz() {  // dD/dt=rotH + J , D=eps*E
 		const nnx=g_NNx, nny=g_NNy, dtv2 = 0.5*g_dt;
 		for (let i=0; i<nnx; i++) {
@@ -173,9 +173,9 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 			}
 		}
 	}
-	
+
 	function evolveHxHy() {  // dB/dt=-rotE , B=mue*H
-		const nnx=g_NNx, nny=g_NNy, dtv2 = 0.5*g_dt;
+		const nnx=g_NNx, nny=g_NNy, dtv2=0.5*g_dt;
 		// boundary : no-reflect (in vacuum) condition (Mur 1st)
 		// MUR Hx(n+1,i,0) = Hx(n,i,1)-(dx-dt)/(dx+dt){Hx(n+1,i,1)-Hx(n,i,0)}
 		const c = (g_dx-dtv2)/(g_dx+dtv2);
@@ -191,7 +191,7 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 		for (let j=0; j<nny; j++) {
 			g_Hy[nnx][j] = c*g_Hy[nnx][j] + g_Hy[nnx-1][j];
 		}
-		
+
 		// Hx(i,j) - dt(1/mue)(Ez(i,j)-Ez(i,j-1))/dy
 		for (let i=0; i<nnx; i++) {
 			for (let j=1; j<nny; j++) {
@@ -204,7 +204,7 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 				g_Hy[i][j] += dtv2/g_mu[i][j]*(g_Ez[i][j]-g_Ez[i-1][j]);
 			}
 		}
-		
+
 		// boundary : no-reflect (in vacuum) condition (Mur 1st)
 		for (let i=0; i<nnx; i++) {
 			g_Hx[i][0] -= c*g_Hx[i][1];
@@ -219,55 +219,55 @@ const waveFDTD2D = (function(){ // ====================  waveFDTD2D Module  ====
 			g_Hy[nnx][j] -= c*g_Hy[nnx-1][j];
 		}
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	// setInitialCondition( theme )
-		evolve:			evolveField,			// evolveField( nTimes,nWaves )
-		
-		getSysParam:	function() { return [ g_NNx, g_NNy, g_dx, g_dt ]; },
-		getSysTime:		function() { return g_sysTime; },
-		getEz:			function(i,j) { return g_Ez[i][j]; },
-		getHxy:			function(i,j) { return [ g_Hx[i][j], g_Hy[i][j] ]; },
-		getEps:			function(i,j) { return g_ep[i][j]; },
-		getMue:			function(i,j) { return g_mu[i][j]; },
-		getSgm:			function(i,j) { return g_sg[i][j]; },
+		init:       setInitialCondition, // setInitialCondition( theme )
+		evolve:     evolveField, // evolveField( nTimes,nWaves )
+
+		getSysParam:function() { return [ g_NNx, g_NNy, g_dx, g_dt ]; },
+		getSysTime: function() { return g_sysTime; },
+		getEz:      function(i,j) { return g_Ez[i][j]; },
+		getHxy:     function(i,j) { return [ g_Hx[i][j], g_Hy[i][j] ]; },
+		getEps:     function(i,j) { return g_ep[i][j]; },
+		getMue:     function(i,j) { return g_mu[i][j]; },
+		getSgm:     function(i,j) { return g_sg[i][j]; },
 	};
-	
+
 })(); // ====================  waveFDTD2D end  ====================
 
 
 const js003 = (function(){ // ====================  js Module  ====================
 	
 	const theModule = waveFDTD2D;
-	const xCanvasSize = 420;	// in pixel
-	const yCanvasSize = 420;	// in pixel
-	let canvas;					// canvas2d
-	let ctx;					// = canvas.getContext('2d');
+	const xCanvasSize = 420; // in pixel
+	const yCanvasSize = 420;
+	let canvas; // canvas2d
+	let ctx; // = canvas.getContext('2d');
 	let imageEz = null;
 	let imageEps = null;
-	
+
 	let v_theme = 0;
 	let v_nTimes = 1;
 	let v_nWaves = 2;
-	
+
 	let p_NNx, p_NNy, p_dx, p_dt; // = theModule.getSysParam();
-	
+
 	let dispMode = 0;
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
-	
-	
+
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
-		
+
 		animate();
-		
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -279,10 +279,10 @@ const js003 = (function(){ // ====================  js Module  =================
 			ctx.lineWidth = 1;
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
+
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_theme ); // ( nn, BoxSizeInNM, contTemp )
@@ -290,49 +290,49 @@ const js003 = (function(){ // ====================  js Module  =================
 			imageEz = null;
 			imageEps = null;
 		}
-		
+
 		if ( !pauseFlag ) {
 			theModule.evolve( v_nTimes, v_nWaves );
 		} else if ( pauseFlag && stepFlag ) {
 			stepFlag = false;
 			theModule.evolve( v_nTimes, v_nWaves );
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	function draw( ctx, dispMode ) {
-		const sysTime = theModule.getSysTime();
-		const xp = 40, yp = 40, xBoxSize = 320, yBoxSize = 320, ytexPos = 400;
-		
+		const sysTime=theModule.getSysTime();
+		const xp=40, yp=40, xBoxSize=320, yBoxSize=320, ytexPos=400;
+
 		if ( imageEps == null ) {
 			imageEz = ctx.getImageData(xp, yp, p_NNx, p_NNy);
 			imageEps = ctx.getImageData(xp, yp, p_NNx, p_NNy);
 			setImageEps( p_NNx, p_NNy );
 		}
-		
+
 		ctx.clearRect( 0, 0, xCanvasSize, yCanvasSize );
-		
+
 		ctx.strokeStyle = "#888800";
 		ctx.strokeRect( xp, yp, xBoxSize, yBoxSize );
-		
+
 		if ( dispMode==0 ) {
 			drawEzField( ctx, p_NNx, p_NNy, xp, yp );
 		} else if ( dispMode==1 ) {
 			drawHxyField( ctx, p_NNx, p_NNy, xp, yp );
 		}
-		
+
 		ctx.fillStyle = "#888888";
 		ctx.fillText(`time = ${sysTime}`, xp, ytexPos );
 	}
-	
+
 	function setImageEps( nnx, nny ) {;
-		
+
 		const data = imageEps.data;
 		for (let j=0; j<nny; j++) {
 			const jj = nny - j - 1;
@@ -347,10 +347,10 @@ const js003 = (function(){ // ====================  js Module  =================
 			}
 		}
 	}
-	
+
 	function drawEzField( ctx, nnx, nny, xp, yp ) {
-		const mag = 250.0;
-		
+		const mag=250.0;
+
 		const data = imageEz.data;
 		for (let j=0; j<nny; j++) {
 			const jj = nny - j - 1;
@@ -374,10 +374,10 @@ const js003 = (function(){ // ====================  js Module  =================
 		}
 		ctx.putImageData(imageEz, xp, yp);
 	}
-	
+
 	function drawHxyField( ctx, nnx, nny, xp, yp ) {
-		const mag = 10.0;
-		
+		const mag=10.0;
+
 		ctx.putImageData(imageEps, xp, yp); // draw optical object
 		for (let i=2; i<nnx; i+=4) {
 			for (let j=2; j<nny; j+=4) {
@@ -393,7 +393,7 @@ const js003 = (function(){ // ====================  js Module  =================
 			}
 		}
 	}
-	
+
 	function drawLine( ctx, x1, y1, x2, y2, color ) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -401,10 +401,10 @@ const js003 = (function(){ // ====================  js Module  =================
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	}
-	
+
 	function drawBirdsEyeView( ctx, nnx, nny) {
 		const xp=20, yp=220, mag=20;
-		
+
 		ctx.strokeStyle = "rgb(0, 200, 0)";
 		ctx.lineWidth = 1;
 		for (let j=0; j<nny; j=j+6) {
@@ -424,19 +424,19 @@ const js003 = (function(){ // ====================  js Module  =================
 			ctx.stroke();
 		}
 	}
-	
-	
+
+
 	// ----------  dom control
-	
+
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-
+		
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
 		
@@ -446,36 +446,35 @@ const js003 = (function(){ // ====================  js Module  =================
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
 	
 	function setTheme() {  // select theme
 		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = true;
 	}
-	
+
 	function setnWaves() {  // select nWaves
 		v_nWaves = 1 + document.getElementById("slct_cycle").selectedIndex;
 		resetFlag = true;
 	}
-	
+
 	function setDispMode() {
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
 	}
-	
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:			main,			// main()
+		main:		main, // main()
+
+		reset:		reset, // reset()
+		pause:		pause, // pause()
+		step:		step, // step()
 		
-		// dom control
-		reset:			reset,			// reset()
-		pause:			pause,			// pause()
-		step:			step,			// step()
-		
-		setTheme:		setTheme,		// setTheme()
-		setnWaves:		setnWaves,		// setnWaves()
-		setDispMode:	setDispMode,	// setDispMode()
+		setTheme:	setTheme, // setTheme()
+		setnWaves:	setnWaves, // setnWaves()
+		setDispMode:setDispMode, // setDispMode()
 	};
 	
 })(); // ====================  js003 module end  ====================
@@ -529,7 +528,7 @@ waves
 
 <p id="text_caption" ></p>
 <hr width="420" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
 
 </body>
