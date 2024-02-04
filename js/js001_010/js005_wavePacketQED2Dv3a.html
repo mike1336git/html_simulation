@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js005_wavePacketQED2D
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2017.05.15 created, last updated on 2018.11.11
 //    ver 0.0.1  2019.01.09 v1, last updated on 2021.04.24
 //    ver 0.0.2  2021.10.27 v2, last updated on 2021.10.27
-//    ver 0.0.3  2023.02.12 v3, last updated on 2023.08.11
+//    ver 0.0.3  2023.02.12 v3, last updated on 2024.02.04
 //
 //
 // --------------------  QED: Quantum Electron Dynamics 2D
@@ -68,40 +68,39 @@
 */
 
 const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Module  ====================
-	
+
 	// au: atomic unit hBar=1,e=1,me=1,a0=1
-	const g_auLength = 5.29177211e-11;				// (m) 1(au) = auLength (m)
-	const g_auTime = 2.418884326e-17;				// (s) 1(au) = auTime (s)
-	const g_auEnergy = 4.35974465e-18;				// (J) 1(au) = auEnergy (J)
-	const g_au2eV = 27.211386;						// (eV) 1(au) = 27.211386 (eV)
-	const g_Pi = Math.PI;							// Pi = 3.141592653589792...
-	const g_nxMax = 320;							// NNx max
-	const g_nyMax = 320;							// NNy max
-	const g_nMax = 320;								// = Math.max(nxMax,nyMax);
-	
-	let g_NNx = 160;								// number of space x-division, NNx*dx == x-boxsize
-	let g_NNy = 160;								// number of space y-division, NNy*dy == y-boxsize
-	let g_sysTime = 0.0;							// (au) system time
-	let g_dx = 0.5;									// (au) x-division
-	let g_dy = 0.5;									// (au) y-division
-	let g_timeStep = 0.5*g_dx*g_dx;					// (au) time step dt=0.5*dx*dx
-	let g_dampingFactor = 0.05;						// for lossEnergy() :steepest descent method
-	
-	const g_psi = dim3( g_nxMax, g_nyMax, 2 );		// psi[nMax][nMax][2] wave function 
-													// [][][0]:real part [][][1]:imaginary part
-	const g_vv = dim2( g_nxMax, g_nyMax );			// vv[nMax][nMax] external potential
-	const g_wrk = dim3( g_nxMax, g_nyMax, 2 );		// wrk[nMax][nMax][2] work space in lossEnergy()
-	const g_bRe = dim1( g_nMax );					// real part of b vector in kxStep(),kyStep()
-	const g_bIm = dim1( g_nMax );					// imaginal part of b vector in kxStep(),kyStep()
-	const g_uRe = dim1( g_nMax );					// real part of u vector in kxStep(),kyStep()
-	const g_uIm = dim1( g_nMax );					// imaginal part of u vector in kxStep(),kyStep()
-	const g_srnd = dim1( 1002 );					// 1000 RND orderd series 0 to 1,use drawCloud()
-	const g_cloud = dimInt2( g_nxMax, g_nyMax );	// if cloud[i][j]>0, plot cloud point
-	
+	const g_auLength = 5.29177211e-11; // (m) 1(au) = auLength (m)
+	const g_auTime = 2.418884326e-17;  // (s) 1(au) = auTime (s)
+	const g_auEnergy = 4.35974465e-18; // (J) 1(au) = auEnergy (J)
+	const g_au2eV = 27.211386;         // (eV) 1(au) = 27.211386 (eV)
+	const g_nxMax = 320; // NNx max
+	const g_nyMax = 320; // NNy max
+	const g_nMax = 320;  // = Math.max(nxMax,nyMax);
+
+	let g_NNx = 160;     // number of space x-division, NNx*dx == x-boxsize
+	let g_NNy = 160;     // number of space y-division, NNy*dy == y-boxsize
+	let g_sysTime = 0.0; // (au) system time
+	let g_dx = 0.5;      // (au) x-division
+	let g_dy = 0.5;      // (au) y-division
+	let g_timeStep = 0.5*g_dx*g_dx; // (au) time step dt=0.5*dx*dx
+	let g_dampingFactor = 0.05; // for lossEnergy() :steepest descent method
+
+	const g_psi = dim3( g_nxMax, g_nyMax, 2 );  // psi[nMax][nMax][2] wave function 
+												// [][][0]:real part [][][1]:imaginary part
+	const g_vv = dim2( g_nxMax, g_nyMax ); // vv[nMax][nMax] external potential
+	const g_wrk = dim3( g_nxMax, g_nyMax, 2 ); // wrk[nMax][nMax][2] work space in lossEnergy()
+	const g_bRe = dim1( g_nMax ); // real part of b vector in kxStep(),kyStep()
+	const g_bIm = dim1( g_nMax ); // imaginal part of b vector in kxStep(),kyStep()
+	const g_uRe = dim1( g_nMax ); // real part of u vector in kxStep(),kyStep()
+	const g_uIm = dim1( g_nMax ); // imaginal part of u vector in kxStep(),kyStep()
+	const g_srnd = dim1( 1002 );  // 1000 RND orderd series 0 to 1,use drawCloud()
+	const g_cloud = dimInt2( g_nxMax, g_nyMax ); // if cloud[i][j]>0, plot cloud point
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
-	
+
 	function dim2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -109,7 +108,7 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 		}
 		return a;
 	}
-	
+
 	function dimInt2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -117,7 +116,7 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 		}
 		return a;
 	}
-	
+
 	function dim3( ni, nj, nk ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -128,15 +127,15 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 		}
 		return a;
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
-	function setInitialCondition(theme,canvasId) {
+
+	function setInitialCondition( theme, canvasId ) {
 		// theme  0:free space, 1:parabolic potential, 2:tunnel effect, 3:step hill,
 		//        4:double slit, 5:cylinder scattering
 		const xMax=g_NNx*g_dx, yMax=g_NNy*g_dy, dx=g_dx, dy=g_dy;
-		
+
 		g_sysTime = 0.0;
 		if (theme==0) { // 0:free space
 			setGaussianWave(0.25*xMax,0.5*yMax,5.0,1.0,0.0); //(xPos,yPos,waveWidth,kx,ky)
@@ -158,8 +157,8 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 			setCylinderPotential(0.6*xMax,0.4*yMax,0.1*xMax,1.0); //(xPos,yPos, radius, vHeight)
 		}
 	}
-	
-	function setGaussianWave(xPos,yPos,waveWidth,kx,ky) {
+
+	function setGaussianWave( xPos, yPos, waveWidth, kx, ky ) {
 		const nnx=g_NNx, nny=g_NNy, dx=g_dx, dy=g_dy;
 
 		for (let i=1; i<nnx-1; i++) {
@@ -186,10 +185,10 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 		}
 		normalize(g_psi);
 	}
-	
-	function setParabolicPotential(k0) { // V(r)= k0*r^2
+
+	function setParabolicPotential( k0 ) { // V(r)= k0*r^2
 		const nnx=g_NNx, nny=g_NNy, dx=g_dx, dy=g_dy;
-		
+
 		const aa = k0/(nnx*dx*nnx*dx/4.0);
 		const x0 = nnx*dx/2.0;
 		const y0 = nny*dy/2.0;
@@ -201,10 +200,10 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 			}
 		}
 	}
-	
-	function setWallPotential(xPos, vThick, vHeight) {
+
+	function setWallPotential( xPos, vThick, vHeight ) {
 		const nnx=g_NNx, nny=g_NNy, dx=g_dx, dy=g_dy;
-		
+
 		for (let i=0; i<nnx; i++) {
 			for (let j=0; j<nny; j++) {
 				const x = i*dx;
@@ -213,8 +212,8 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 			}
 		}
 	}
-	
-	function setCylinderPotential(xPos,yPos, radius, vHeight) {
+
+	function setCylinderPotential( xPos, yPos, radius, vHeight ) {
 		const nnx=g_NNx, nny=g_NNy, dx=g_dx, dy=g_dy;
 		
 		for (let i=0; i<nnx; i++) {
@@ -226,10 +225,10 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 			}
 		}
 	}
-	
-	function setSlitPotential(wallPos, wallThick, wallHeight, slitWidth, slitSpan) {
+
+	function setSlitPotential( wallPos, wallThick, wallHeight, slitWidth, slitSpan ) {
 		const nnx=g_NNx, nny=g_NNy, dx=g_dx, dy=g_dy;
-		
+
 		const ym = nny*dy/2.0;
 		const w = slitWidth/2.0;
 		const d = slitSpan/2.0;
@@ -246,13 +245,13 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 			}
 		}
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
+
 	function timeEvolution( lossSW ) {
 		// lossSW   0:no loss, 1:loss
-		
+
 		for (let i=0; i<2; i++) {
 			g_sysTime += g_timeStep;
 			phaseStep(g_psi,g_vv,0.5*g_timeStep);
@@ -262,10 +261,10 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 		}
 		if (lossSW==1) lossEnergy(g_psi,g_vv,g_dampingFactor);
 	}
-	
+
 	function phaseStep( ph, vv, dt ) {
 		const nnx=g_NNx, nny=g_NNy;
-		
+
 		for (let i=1; i<nnx-1; i++) {
 			for (let j=1; j<nny-1; j++) {
 				const th = dt*g_vv[i][j];
@@ -278,10 +277,10 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 			}
 		}
 	}
-	
+
 	function kxStep( ph, dt ) {
 		const nnx=g_NNx, nny=g_NNy;
-		
+
 		const a = 4.0*g_dy*g_dy/dt;
 		const aaAb = 4.0+a*a;
 		for (let j=1; j<nny-1; j++) {
@@ -309,10 +308,10 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 			}
 		}
 	}
-	
+
 	function kyStep( ph, dt ) {
 		const nnx=g_NNx, nny=g_NNy;
-		
+
 		const a = 4.0*g_dy*g_dy/dt;
 		const aaAb = 4.0+a*a;
 		for (let i=1; i<nnx-1; i++) {
@@ -340,12 +339,12 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 			}
 		}
 	}
-	
+
 	// steepest descent method: psi_next = |psi) - damp*|psi)(psi|H-E|psi)
 	// H = d^2/dx^2 + d^2/dy^2 + V
 	function lossEnergy( ph, vv, damp ) {
-		const nnx=g_NNx, nny=g_NNy, h2 = 2.0*g_dx*g_dx, ee = meanKinetic(ph) + meanPotential(ph,vv);
-		
+		const nnx=g_NNx, nny=g_NNy, h2=2.0*g_dx*g_dx, ee=meanKinetic(ph)+meanPotential(ph,vv);
+
 		for (let i=1; i<nnx-1; i++) {
 			for (let j=1; j<nny-1; j++) {
 				g_wrk[i][j][0] = -(ph[i+1][j][0]+ph[i-1][j][0]+ph[i][j+1][0]+ph[i][j-1][0]
@@ -362,13 +361,12 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 		}
 		normalize(ph);
 	}
-	
-	
+
+
 	// --------------------  utility  --------------------
-	
+
 	function norm( ph ) {
 		const nnx=g_NNx, nny=g_NNy;
-		
 		let p = 0.0;
 		for (let i=1; i<nnx-1; i++) {
 			for (let j=1; j<nny-1; j++) {
@@ -377,10 +375,9 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 		}
 		return p*g_dx*g_dy;
 	}
-	
+
 	function normalize( ph ) {
 		const nnx=g_NNx, nny=g_NNy;
-
 		const a = 1.0/Math.sqrt(norm(ph));
 		for (let i=1; i<nnx-1; i++) {
 			for (let j=1; j<nny-1; j++) {
@@ -389,10 +386,9 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 			}
 		}
 	}
-	
+
 	function meanPotential( ph, vv ) {
 		const nnx=g_NNx, nny=g_NNy;
-		
 		let p = 0.0
 		for (let i=1; i<nnx-1; i++) {
 			for (let j=1; j<nny-1; j++) {
@@ -401,11 +397,10 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 		}
 		return p*g_dx*g_dy;
 	}
-	
+
 	function meanKinetic( ph ) {
 		const nnx=g_NNx, nny=g_NNy, h2=g_dx*g_dx;
 		let p = 0.0;
-		
 		for (let i=1; i<nnx-1; i++) {
 			for (let j=1; j<nny-1; j++) {
 				const d2phRe = (ph[i+1][j][0]+ph[i-1][j][0]+ph[i][j+1][0]+ph[i][j-1][0]-4.0*ph[i][j][0])/h2;
@@ -415,34 +410,32 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 		}
 		return -0.5*p*g_dx*g_dy;
 	}
-	
-	function psiDensity(i,j) {
+
+	function psiDensity( i, j ) {
 		return (g_psi[i][j][0]*g_psi[i][j][0]+g_psi[i][j][1]*g_psi[i][j][1]);
 	}
-	
-	function psiPhase(i,j) { // 0...2PI
+
+	function psiPhase( i, j ) { // 0...2PI
 		return (Math.PI + Math.atan2(g_psi[i][j][1],g_psi[i][j][0])); // atan2(y,x)
 	}
-	
-	function psiXCurrent(i,j) {
+
+	function psiXCurrent( i, j ) {
 		const pRe = (g_psi[i+1][j][1]-g_psi[i-1][j][1])/(2*g_dx);
 		const pIm = (-g_psi[i+1][j][0]+g_psi[i-1][j][0])/(2*g_dx);
-
 		return (g_psi[i][j][0]*pRe + g_psi[i][j][1]*pIm)*g_dx*g_dy;
 	}
-	
-	function psiYCurrent(i,j) {
+
+	function psiYCurrent( i, j ) {
 		const pRe = (g_psi[i][j+1][1]-g_psi[i][j-1][1])/(2*g_dy);
 		const pIm = (-g_psi[i][j+1][0]+g_psi[i][j-1][0])/(2*g_dy);
-
 		return (g_psi[i][j][0]*pRe + g_psi[i][j][1]*pIm)*g_dx*g_dy;
 	}
-	
+
 	function setCloud() {
 		const nnx=g_NNx, nny=g_NNy;
-		
+
 		set_srnd();
-		
+
 		for (let i=1; i<nnx-1; i++) {
 			for (let j=1; j<nny-1; j++) {
 				g_cloud[i][j] = 0;
@@ -461,9 +454,8 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 			}
 		}
 	}
-	
-	function set_srnd() {
 
+	function set_srnd() {
 		g_srnd[0] = Math.random();
 		for (let i=1; i<1001; i++) {
 			g_srnd[i] = g_srnd[i-1] + Math.random();
@@ -472,60 +464,60 @@ const wavePacketQED2D = (function(){ // ====================  wavePacketQED2D Mo
 			g_srnd[i] = g_srnd[i]/g_srnd[1000];
 		}
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	// setInitialCondition( theme )
-		evolve:			timeEvolution,			// timeEvolution( lossSW )
-		
-		setCloud:		setCloud,				// setCloud()
-		
-		getAUinSI:		function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
-		getSysParam:	function() { return [ g_NNx, g_NNy, g_dx, g_timeStep ]; },
-		getNow:			function() { return [ g_sysTime, norm(g_psi), meanKinetic(g_psi), meanPotential(g_psi,g_vv) ]; },
-		getPsiDensity:	psiDensity,				// psiDensity(i,j)			
-		getPsiPhase:	psiPhase,				// psiPhase(i,j)
-		getPsiCurrent:	function(i,j) { return [ psiXCurrent(i,j), psiYCurrent(i,j) ]; },
-		getPsi:			function(i,j) { return [ g_psi[i][j][0], g_psi[i][j][1] ]; },
-		getVext:		function(i,j) { return g_vv[i][j]; },
-		getCloud:		function(i,j) { return g_cloud[i][j]; },
+		init:           setInitialCondition, // setInitialCondition( theme )
+		evolve:         timeEvolution, // timeEvolution( lossSW )
+
+		setCloud:       setCloud, // setCloud()
+
+		getAUinSI:      function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:    function() { return [ g_NNx, g_NNy, g_dx, g_timeStep ]; },
+		getNow:         function() { return [ g_sysTime, norm(g_psi), meanKinetic(g_psi), meanPotential(g_psi,g_vv) ]; },
+		getPsiDensity:  psiDensity, // psiDensity(i,j)			
+		getPsiPhase:    psiPhase, // psiPhase(i,j)
+		getPsiCurrent:  function(i,j) { return [ psiXCurrent(i,j), psiYCurrent(i,j) ]; },
+		getPsi:         function(i,j) { return [ g_psi[i][j][0], g_psi[i][j][1] ]; },
+		getVext:        function(i,j) { return g_vv[i][j]; },
+		getCloud:       function(i,j) { return g_cloud[i][j]; },
 	};
-	
+
 })(); // ====================  end of wavePacketQED2D Module  ====================
 
 
 const js005 = (function(){ // ====================  js Module  ====================
-	
+
 	const theModule = wavePacketQED2D;
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel
-	let canvas;					// canvas2d
-	let ctx;					// = canvas.getContext('2d');
-	let imgVext = null;			// image in draw()
-	
-	let v_theme = 1;			// 0:free space, 1:parabolic potential, 2:tunnel effect 3:step hill 4:step higher hill
-	let v_lossSW = 0;			// if lossSW==1, call lossEnergy()
-	
+	const xCanvasSize = 480; // in pixel
+	const yCanvasSize = 480;
+	let canvas;
+	let ctx; // = canvas.getContext('2d');
+	let imgVext = null; // image in draw()
+
+	let v_theme = 1;  // 0:free space, 1:parabolic potential, 2:tunnel effect 3:step hill 4:step higher hill
+	let v_lossSW = 0; // if lossSW==1, call lossEnergy()
+
 	let p_auLength, p_auTime, p_auEnergy, p_au2eV; // <-- theModule.getAUinSI();
 	let p_NNx, p_NNy, p_dx, p_timeStep; // <-- theModule.getSysParam();
 	let p_NNz;
-	
+
 	let dispMode = 1;
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
 	let onlyFlag = false;
-	
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
 		viewHome();
-		
+
 		animate();
-		
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -538,10 +530,10 @@ const js005 = (function(){ // ====================  js Module  =================
 			g3d.setMouseOnCanvas( canvas ); // 3D graphics - mouse event listener
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
+
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_theme ); // ( nn, BoxSizeInNM, contTemp )
@@ -553,7 +545,7 @@ const js005 = (function(){ // ====================  js Module  =================
 			g3d.init( p_NNx, p_NNy, p_NNz, p_dx, xCanvasSize, yCanvasSize, 300, 20 );
 			g3d.drawVectorField2D.threshold = 0.2;
 		}
-		
+
 		if ( !pauseFlag ) {
 			theModule.evolve( v_lossSW );
 		} else if ( pauseFlag && stepFlag ) {
@@ -561,34 +553,34 @@ const js005 = (function(){ // ====================  js Module  =================
 			onlyFlag = true;
 			theModule.evolve( v_lossSW );
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	function draw( ctx, dispMode ) {
-		const xp = 80, yp = 20, sc = 2, xBoxSize = 320, yBoxSise = 320, yTextPos = yCanvasSize-45; // image2d
+		const xp=80, yp=20, sc=2, xBoxSize=320, yBoxSise=320, yTextPos=yCanvasSize-45; // image2d
 		const colour = { text:'#888888', box:'#999900', vext:'#00ff00' };
-		
+
 		ctx.clearRect( 0, 0, xCanvasSize, yCanvasSize );
-		
+
 		if ( dispMode<=3 ) {
 			ctx.strokeStyle = colour.box;
 			ctx.strokeRect( xp, yp, xBoxSize, yBoxSise );
-		
+
 			if ( imgVext == null ) setImg_Vext( ctx, p_NNx, p_NNy, xp, yp, sc );
 			ctx.putImageData( imgVext, xp, yp ); // potential vv[][] imageData
 		}
-		
+
 		if ( dispMode==0 || dispMode==1 || dispMode==2 ) { // 0:density 1:phase 2::prob.current
 			drawPh( ctx, dispMode, p_NNx, p_NNy, xp, yp, sc );
 		} else if ( dispMode==3 ) { // 3:cloud
 			drawCloud( ctx, p_NNx, p_NNy, xp, yp, sc );
-			
+
 		} else if (dispMode==4 ) { // 4: 3D Vext(x,y)
 			const zFunc = function(i,j) { return 10.0*theModule.getVext(i,j); };
 			//g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
@@ -637,7 +629,6 @@ const js005 = (function(){ // ====================  js Module  =================
 			}
 			//g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
 			g3d.drawGrid2D( ctx, 0.0, zFunc, colorFunc, 2 );
-			
 			const vFunc = function(i,j) {
 				const mag = 15000.0;
 				const z = 1500.0*theModule.getPsiDensity(i,j)
@@ -649,7 +640,7 @@ const js005 = (function(){ // ====================  js Module  =================
 			//drawVectorField2D(ctx, rotAngle, zFunc, vFunc, colorMode, inc [, showBox] )
 			g3d.drawVectorField2D(ctx, 0.0, zFunc, vFunc, 1, 4, 2 )
 		}
-		
+
 		let sysTime, norm, meanKinetic, meanPotential;
 		[ sysTime, norm, meanKinetic, meanPotential ] = theModule.getNow();
 		const totalEnergy = meanKinetic + meanPotential;
@@ -660,9 +651,8 @@ const js005 = (function(){ // ====================  js Module  =================
 		ctx.fillText(`potentialE = ${(meanPotential*p_au2eV).toFixed(2)} (eV)`, 240, yTextPos+20);
 		ctx.fillText(`totalE= ${(totalEnergy*p_au2eV).toFixed(2)} (eV)`, 20, yTextPos+40);
 		ctx.fillText("box = 80x80 (au)", 240, yTextPos+40);
-		
 	}
-	
+
 	function setImg_Vext( ctx, nnx, nny, xp, yp, sc ) {
 		for (let i=0; i<nnx; i++) {
 			for (let j=0; j<nny; j++) {
@@ -674,10 +664,9 @@ const js005 = (function(){ // ====================  js Module  =================
 		}
 		imgVext = ctx.getImageData(xp,yp,320,320);
 	}
-	
+
 	function drawPh( ctx, drawMode, nnx, nny, xp, yp, sc ) {
 		const velocityMag = 300000.0;
-		
 		for (let i=1; i<nnx-1; i++) {
 			for (let j=1; j<nny-1; j++) {
 				const d = theModule.getPsiDensity(i,j)*100000;
@@ -712,9 +701,8 @@ const js005 = (function(){ // ====================  js Module  =================
 			}
 		}
 	}
-	
+
 	function drawCloud( ctx, nnx, nny, xp, yp, sc ) { // drawMode = 3:cloud
-		
 		if ( !pauseFlag || onlyFlag ) {
 			theModule.setCloud();
 			onlyFlag = false;
@@ -732,7 +720,7 @@ const js005 = (function(){ // ====================  js Module  =================
 			}
 		}
 	}
-	
+
 	function drawLine( ctx, x1, y1, x2, y2, color ) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -740,24 +728,24 @@ const js005 = (function(){ // ====================  js Module  =================
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	}
-	
-	
+
+
 	// --------------------  graphics 3D (field) module  --------------------
 	//
 	// ver 0.0.1  2018.12.16  last updated on 2023.03.01
 	// ver 0.0.2  2023.03.03  last updated on 2023.06.01
-	
+
 	let g_NNx, g_NNy, g_NNz, g_dx, g_dy, g_dz, g_xCanvasSize, g_yCanvasSize, g_xBoxSize, g_yShift;
-	
+
 	const g3d = {};				// namespace of graphic 3D module
-	
+
 	g3d.mouseDownFlag = 0;		// 1:on mouse down, 0:else
 	g3d.x_mouse = 0;			// x-position of mouse
 	g3d.y_mouse = 0;			// y-position of mouse
 	g3d.x0_mouse = 0;			// drag-started x-position of mouse
 	g3d.y0_mouse = 0;			// drag-started y-position of mouse
 	g3d.zoom = 1.0;
-	
+
 	g3d.xMax = 0.0;				// x-length of box
 	g3d.yMax = 0.0;				// y-length of box
 	g3d.zMax = 0.0;				// z-length of box
@@ -771,7 +759,7 @@ const js005 = (function(){ // ====================  js Module  =================
 	g3d.sinAx = 0.0;			// sinAx=Math.sin(Ax)
 	g3d.cosAy = 0.0;			// cosAy=Math.cos(Ay)
 	g3d.sinAy = 0.0;			// sinAy=Math.sin(Ay)
-	
+
 	g3d.xApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
 	g3d.yApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
 	g3d.zApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
@@ -781,9 +769,9 @@ const js005 = (function(){ // ====================  js Module  =================
 	g3d.boxApex = [[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1], [1,0,1], [0,1,1], [1,1,1] ];
 	g3d.boxEdge = [[0,1,9], [0,2,9], [0,4,9], [1,3,9], [1,5,9], [2,3,9], 
 					[2,6,9], [3,7,9], [4,5,9], [4,6,9], [5,7,9], [6,7,9] ];
-	
+
 	//--- set mouse on canvas
-	
+
 	// g3d.setMouseOnCanvas( canvas );
 	g3d.setMouseOnCanvas = function( canvas ) {
 		canvas.addEventListener('mousemove', g3d.mouse_move);
@@ -791,10 +779,9 @@ const js005 = (function(){ // ====================  js Module  =================
 		canvas.addEventListener('mouseup', g3d.mouse_up);
 		canvas.addEventListener("mousewheel", g3d.mouseWheel);
 	};
-	
+
 	g3d.mouse_move = function(e) {
 		const pi = Math.PI;
-
 		if (g3d.mouseDownFlag==1) {
 			g3d.x_mouse = e.clientX;
 			g3d.y_mouse = e.clientY;
@@ -809,7 +796,7 @@ const js005 = (function(){ // ====================  js Module  =================
 			g3d.y0_mouse = g3d.y_mouse;
 		}
 	};
-	
+
 	g3d.mouse_down = function(e) {
 		if (g3d.mouseDownFlag==0) {
 			g3d.x0_mouse = e.clientX;
@@ -819,13 +806,13 @@ const js005 = (function(){ // ====================  js Module  =================
 			g3d.mouseDownFlag = 1;
 		}
 	};
-	
+
 	g3d.mouse_up = function(e) {
 		if (g3d.mouseDownFlag==1) {
 			g3d.mouseDownFlag = 0;
 		}
 	};
-	
+
 	g3d.mouseWheel = function(e) {
 		g3d.deltaY = e.deltaY;
 		if ( g3d.deltaY > 0 ) g3d.zoom *= 0.95;
@@ -833,9 +820,9 @@ const js005 = (function(){ // ====================  js Module  =================
 		if ( g3d.zoom<0.5 ) g3d.zoom = 0.5;
 		if ( g3d.zoom>2.0 ) g3d.zoom = 2.0;
 	};
-	
+
 	//--- 3D graphics aid
-	
+
 	// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
 	g3d.init = function( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift ) {
 		g_NNx = NNx; g_NNy = NNy; g_NNz = NNz;
@@ -845,7 +832,7 @@ const js005 = (function(){ // ====================  js Module  =================
 		g_yShift = (yShift==undefined) ? 20 : yShift;
 		g3d.setSize();
 	}
-	
+
 	g3d.setSize = function() {
 		g3d.xMax = g_NNx*g_dx;		// x-length of box
 		g3d.yMax = g_NNy*g_dy;		// y-length of box
@@ -854,13 +841,13 @@ const js005 = (function(){ // ====================  js Module  =================
 		g3d.cy0 = 0.5*g3d.yMax;		// y-component of rotate center
 		g3d.cz0 = 0.5*g3d.zMax;		// z-component of rotate center
 	};
-	
+
 	// g3d.setRotateAngle( AxInDegree, AyInDegree );
 	g3d.setRotateAngle = function( AxInDegree, AyInDegree ) {
 		g3d.Ax = AxInDegree*Math.PI/180.0;
 		g3d.Ay = AyInDegree*Math.PI/180.0;
 	};
-	
+
 	// g3d.scxpypFunc();
 	g3d.scxpypFunc = function() {
 		const xBoxSize = g_xBoxSize;
@@ -869,7 +856,7 @@ const js005 = (function(){ // ====================  js Module  =================
 		const sc = xBoxSize/(g_NNx*g_dx)*g3d.zoom;
 		return [ sc, xp, yp ];
 	}
-	
+
 	g3d.set3DRotateXY = function(rotateRateOfAyInDegree) {
 		g3d.ddAy = rotateRateOfAyInDegree*Math.PI/180.0;
 		g3d.Ay= g3d.Ay + g3d.ddAy; // auto-rotate : if (ddAy==0.0), stop
@@ -880,7 +867,7 @@ const js005 = (function(){ // ====================  js Module  =================
 		g3d.rotateApexXY();     // box Apex rotate--> pxApex[i],pyApex[i],pzApex[i]
 		g3d.markFarEdge();      // boxEdge[iEdge][2]=1:far side edge or 0:near side edge
 	};
-	
+
 	g3d.setBox = function() {
 		for (let i=0; i<8; i++) {
 			g3d.xApex[i] = g3d.boxApex[i][0]*g3d.xMax;
@@ -888,7 +875,7 @@ const js005 = (function(){ // ====================  js Module  =================
 			g3d.zApex[i] = g3d.boxApex[i][2]*g3d.zMax;
 		}
 	};
-	
+
 	g3d.setRotateXY = function(angleX,angleY) {
 		g3d.cosAx = Math.cos(angleX);
 		g3d.sinAx = Math.sin(angleX);
@@ -898,17 +885,16 @@ const js005 = (function(){ // ====================  js Module  =================
 		g3d.cy0 = 0.5*g3d.yMax;
 		g3d.cz0 = 0.5*g3d.zMax;
 	};
-	
+
 	g3d.rotateApexXY = function() { // rotate box apex
 		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
 		for (let i=0; i<8; i++) {
 			g3d.pxApex[i] = cosAy*(g3d.xApex[i]-cx0)+sinAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cx0;
 			g3d.pyApex[i] = cosAx*(g3d.yApex[i]-cy0)-sinAx*(g3d.zApex[i]-cz0) + cy0;
 			g3d.pzApex[i] =-sinAy*(g3d.xApex[i]-cx0)+cosAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cz0;
 		}
 	};
-	
+
 	g3d.markFarEdge = function() {
 		//seek far apex --> iMin
 		let zMin = g3d.pzApex[0];
@@ -925,26 +911,24 @@ const js005 = (function(){ // ====================  js Module  =================
 			if (g3d.boxEdge[iEdge][0]==iMin || g3d.boxEdge[iEdge][1]==iMin) g3d.boxEdge[iEdge][2] = 1;
 		}
 	};
-	
+
 	g3d.drawRotatedDisc = function(ctx, x,y,z,r,color,sc,xp,yp) {
 		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
 		const x1 = cosAy*(x-cx0)+sinAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cx0
 		const y1 = cosAx*(y-cy0)-sinAx*(z-cz0) + cy0
 		//z1 =-sinAy*(x-cx0)+cosAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cz0
 		g3d.drawDisc(ctx, x1*sc+xp,y1*sc+yp,r,color);
 	};
-	
+
 	g3d.drawRotatedLine = function(ctx, x1,y1,z1,x2,y2,z2,color,sc,xp,yp) {
 		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
 		const x1p = cosAy*(x1-cx0)+sinAy*(sinAx*(y1-cy0)+cosAx*(z1-cz0)) + cx0
 		const y1p = cosAx*(y1-cy0)-sinAx*(z1-cz0) + cy0
 		const x2p = cosAy*(x2-cx0)+sinAy*(sinAx*(y2-cy0)+cosAx*(z2-cz0)) + cx0
 		const y2p = cosAx*(y2-cy0)-sinAx*(z2-cz0) + cy0
 		g3d.drawLine(ctx, x1p*sc+xp,y1p*sc+yp,x2p*sc+xp,y2p*sc+yp,color);
 	};
-	
+
 	g3d.plotNearEdge = function(ctx, sc,xp,yp,color) {
 		for (let iEdge=0; iEdge<12; iEdge++) {
 			if (g3d.boxEdge[iEdge][2]==0) { //far edge mark = 1
@@ -952,7 +936,7 @@ const js005 = (function(){ // ====================  js Module  =================
 			}
 		}
 	};
-	
+
 	g3d.plotFarEdge = function(ctx, sc,xp,yp,color) {
 		for (let iEdge=0; iEdge<12; iEdge++) {
 			if (g3d.boxEdge[iEdge][2]==1) { //far edge mark = 1
@@ -960,7 +944,7 @@ const js005 = (function(){ // ====================  js Module  =================
 			}
 		}
 	};
-	
+
 	g3d.plotEdge = function(ctx, iEdge,sc,xp,yp,color) {
 		let iApex = g3d.boxEdge[iEdge][0];
 		const x1=g3d.pxApex[iApex]*sc+xp, y1=g3d.pyApex[iApex]*sc+yp;
@@ -968,7 +952,7 @@ const js005 = (function(){ // ====================  js Module  =================
 		const x2=g3d.pxApex[iApex]*sc+xp, y2=g3d.pyApex[iApex]*sc+yp;
 		g3d.drawLine(ctx, x1, y1, x2, y2, color);
 	};
-	
+
 	g3d.drawLine = function(ctx, x1, y1, x2, y2, color) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -976,22 +960,22 @@ const js005 = (function(){ // ====================  js Module  =================
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	};
-	
+
 	g3d.drawDisc = function(ctx, x, y, r, color) {
 		ctx.fillStyle = color;
 		ctx.beginPath();
 		ctx.arc(x, y, r, 0, 2*Math.PI, false);
 		ctx.fill();
 	};
-	
+
 	// --------------------  end of graphics 3D (field) module  --------------------
-	
+
 	// g3d_extension grid2d  created 2023.06.01, last updated 2023.06.04
 	// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
 	g3d.drawGrid2D = function ( ctx, rotAngle, zFunc, colorFactor, inc, showBox ) {
 		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
-		const nnx = g_NNx, nny = g_NNy, threshold = g3d.drawGrid2D.threshold;
-		
+		const nnx=g_NNx, nny=g_NNy, threshold=g3d.drawGrid2D.threshold;
+
 		g3d.set3DRotateXY(rotAngle);
 		if ( (showBox & 1)>0 || showBox==undefined ) g3d.plotFarEdge(ctx, sc,xp,yp,"#444400"); // dark yellow
 		for (let jj=0; jj<nny; jj+=inc) {
@@ -1046,10 +1030,10 @@ const js005 = (function(){ // ====================  js Module  =================
 		ctx.font = "16px 'sans-serif'";
 	};
 	g3d.drawGrid2D.threshold = 0.005;
-	
+
 	// g3d_extension gvextor field  created 2023.06.01, last updated 2023.06.08
 	// g3d.drawVectorField2D(ctx, rotAngle, zFunc, vFunc, colorMode, inc [, showBox] )
-	g3d.drawVectorField2D = function(ctx, rotAngle, zFunc, vFunc, colorMode, inc, showBox ) {
+	g3d.drawVectorField2D = function( ctx, rotAngle, zFunc, vFunc, colorMode, inc, showBox ) {
 		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, dx=g_dx, threshold = g3d.drawVectorField2D.threshold;
 	
@@ -1084,66 +1068,66 @@ const js005 = (function(){ // ====================  js Module  =================
 		ctx.font = "16px 'sans-serif'";
 	};
 	g3d.drawVectorField2D.threshold = 0.5;
-	
-	
+
+
 	// --------------------  control  --------------------
-	
+
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
 
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
-		
+
 		if ( pauseFlag==true ) {
 			document.getElementById("step_button").style.visibility = "visible";
 		} else {
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setTheme() {  // select theme
 		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = true;
 	}
-	
+
 	function setLossSW() {  // select lossSW
 		v_lossSW = 0 + document.getElementById("slct_loss").selectedIndex;
 	}
-	
+
 	function setDispMode() {  // select dispMode
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
 	}
-	
+
 	function viewHome() {
 		g3d.setRotateAngle( 15, -10 );
 		g3d.zoom = 1.0;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:			main,			// main()
-		
-		reset:			reset,			// reset()
-		pause:			pause,			// pause()
-		step:			step,			// step()
-		
-		setTheme:		setTheme,		// setTheme()
-		setLossSW:		setLossSW,		// setLossSW()
-		setDispMode:	setDispMode,	// setDispMode()
-		viewHome:		viewHome,		// viewHome()
+		main:       main, // main()
+
+		reset:      reset, // reset()
+		pause:      pause, // pause()
+		step:       step, // step()
+
+		setTheme:   setTheme, // setTheme()
+		setLossSW:  setLossSW, // setLossSW()
+		setDispMode:setDispMode, // setDispMode()
+		viewHome:   viewHome, // viewHome()
 	};
-	
-})(); // ====================  js005 module end  ====================
+
+})(); // ====================  js005 module end  ===================
 
 
 // event
@@ -1200,7 +1184,7 @@ window.addEventListener('load', js.main );
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
 
 </body>
