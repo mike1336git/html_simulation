@@ -10,13 +10,13 @@
 /* --------------------
 //
 //  js006_ArMD3D
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT )
 //
 //    ver 0.0.0  2017.05.03 created, last updated on 2018.11.11
 //    ver 0.0.1  2019.01.10 v1, last updated on 2021.04.26
 //    ver 0.0.2  2021.10.28 v2, last updated on 2021.10.28
-//    ver 0.0.3  2023.02.14 v3, last updated on 2023.08.11
+//    ver 0.0.3  2023.02.14 v3, last updated on 2024.02.05
 //
 // -------------------- molecular dynamics 3D - Lennard-Jones potential
 //
@@ -34,43 +34,43 @@
 */
 
 const ArMD3D = (function(){ // ====================  ArMD3D Module  ====================
-	
-	const g_AMU = 1.66053904e-27;		// (kg) atomic mass unit
-	const g_kB = 1.380649e-23;			// (J/K) Boltzmann's constant
-	const g_nMax = 500;					// array max
-	
-	let g_nParticles = 200;				// number of particles
-	let g_sysTime = 0.0;				// (s) system time
-	let g_timeStep = 5.0*1.0e-15;		// (s) time step dt
-	let g_xMax = 6.0E-9;				// (m) x-Box size
-	let g_yMax = 6.0E-9;				// (m) y-Box size
-	let g_zMax = 6.0E-9;				// (m) z-Box size
-	let g_kineticEnergy = 0.0;			// (J) total kinetic energy
-	let g_potentialEnergy = 0.0;		// (J) total potential energy
-	
-	const g_xx = dim1( g_nMax );		// (m) x-component of i-th particle position
-	const g_yy = dim1( g_nMax );		// (m) y-component of i-th particle position
-	const g_zz = dim1( g_nMax );		// (m) z-component of i-th particle position
-	const g_vx = dim1( g_nMax );		// (m/s) x-component of i-th particle velocity
-	const g_vy = dim1( g_nMax );		// (m/s) y-component of i-th particle velocity
-	const g_vz = dim1( g_nMax );		// (m/s) z-component of i-th particle velocity
-	const g_ffx = dim1( g_nMax );		// (N) x-component of total force applied i-th particle
-	const g_ffy = dim1( g_nMax );		// (N) y-component of total force applied i-th particle
-	const g_ffz = dim1( g_nMax );		// (N) z-component of total force applied i-th particle
-	
+
+	const g_AMU = 1.66053904e-27; // (kg) atomic mass unit
+	const g_kB = 1.380649e-23;    // (J/K) Boltzmann's constant
+	const g_nMax = 500;           // array max
+
+	let g_nParticles = 200;       // number of particles
+	let g_sysTime = 0.0;          // (s) system time
+	let g_timeStep = 5.0*1.0e-15; // (s) time step dt
+	let g_xMax = 6.0E-9;          // (m) x-Box size
+	let g_yMax = 6.0E-9;          // (m) y-Box size
+	let g_zMax = 6.0E-9;          // (m) z-Box size
+	let g_kineticEnergy = 0.0;    // (J) total kinetic energy
+	let g_potentialEnergy = 0.0;  // (J) total potential energy
+
+	const g_xx = dim1( g_nMax );  // (m) x-component of i-th particle position
+	const g_yy = dim1( g_nMax );  // (m) y-component of i-th particle position
+	const g_zz = dim1( g_nMax );  // (m) z-component of i-th particle position
+	const g_vx = dim1( g_nMax );  // (m/s) x-component of i-th particle velocity
+	const g_vy = dim1( g_nMax );  // (m/s) y-component of i-th particle velocity
+	const g_vz = dim1( g_nMax );  // (m/s) z-component of i-th particle velocity
+	const g_ffx = dim1( g_nMax ); // (N) x-component of total force applied i-th particle
+	const g_ffy = dim1( g_nMax ); // (N) y-component of total force applied i-th particle
+	const g_ffz = dim1( g_nMax ); // (N) z-component of total force applied i-th particle
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
-	
+
 	//--- material data
-	
-	const g_mass = 39.948*g_AMU;		// (kg) mass of Ar
-	const g_sigma = 3.418e-10;			// (m) Lennard-Jones potential sigma for Ar
-	const g_epsilon = 124.0*g_kB;		// (J) Lennard-Jones potential epsilon FOR Ar
-	
-	
+
+	const g_mass = 39.948*g_AMU;  // (kg) mass of Ar
+	const g_sigma = 3.418e-10;    // (m) Lennard-Jones potential sigma for Ar
+	const g_epsilon = 124.0*g_kB; // (J) Lennard-Jones potential epsilon FOR Ar
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( nn, BoxSizeInNM, contTemp ) {
 		g_sysTime = 0.0;
 		g_xMax = BoxSizeInNM*1.0e-9;
@@ -79,11 +79,10 @@ const ArMD3D = (function(){ // ====================  ArMD3D Module  ============
 		g_nParticles = setParticles(nn);
 		ajustVelocity(contTemp);
 	}
-	
+
 	function setParticles( nn ) {
-		const sigma = g_sigma;
-		let nParticles = nn;
-		
+		const sigma=g_sigma;
+		let nParticles=nn;
 		for ( let j=0; j<nn; j++ ) {
 			let loopCount = 0;
 			let i;
@@ -113,27 +112,25 @@ const ArMD3D = (function(){ // ====================  ArMD3D Module  ============
 		}
 		return nParticles;
 	}
-	
+
 	// normal distributed random number: -3.0 <= normalRandom3() < 3.0
 	function normalRandom3() {
 		return (Math.random()+Math.random()+Math.random()+Math.random()+Math.random()+Math.random()-3.0);
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
-	function timeEvolution(tempMode,contTemp) {
-		
+
+	function timeEvolution( tempMode, contTemp ) {
 		if (tempMode==1) ajustVelocity(contTemp);
 		for (let i=0; i<20; i++) {
 			g_sysTime += g_timeStep;
 			moveParticles(g_timeStep);
 		}
 	}
-	
-	function moveParticles(dt) {
-		const nn = g_nParticles, a = 0.5*dt/g_mass;
-		
+
+	function moveParticles( dt ) {
+		const nn=g_nParticles, a=0.5*dt/g_mass;
 		for (let i=0; i<nn; i++) {
 			g_vx[i] += a*g_ffx[i];
 			g_vy[i] += a*g_ffy[i];
@@ -153,15 +150,15 @@ const ArMD3D = (function(){ // ====================  ArMD3D Module  ============
 			g_kineticEnergy += 0.5*g_mass*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]+g_vz[i]*g_vz[i]);
 		}
 	}
-	
+
 	function calcForce() {
-		const nn = g_nParticles, s05 = 0.5*g_sigma;
-		
+		const nn=g_nParticles, s05=0.5*g_sigma;
+
 		g_potentialEnergy = 0.0;
 		for (let i=0; i<nn; i++) {
 			g_ffx[i]=0; g_ffy[i]=0; g_ffz[i]=0;
 		}
-		
+
 		for (let i=0; i<nn-1; i++) {
 			for (let j=i+1; j<nn; j++) {
 				const xij=g_xx[i]-g_xx[j], yij=g_yy[i]-g_yy[j], zij=g_zz[i]-g_zz[j];
@@ -187,28 +184,27 @@ const ArMD3D = (function(){ // ====================  ArMD3D Module  ============
 			g_ffz[i] += boundaryForce(g_zz[i]+s05)+boundaryForce(g_zz[i]-g_zMax-s05);
 		}
 	}
-	
+
 	// boundary:L-J type; epsilon = 0.5*epsilonOfAr, sigma = sigmaOfAr
-	function boundaryForce(r) {
+	function boundaryForce( r ) {
 		const ri = (g_sigma/r);
 		const r6 = ri*ri*ri*ri*ri*ri;
 		g_potentialEnergy += 4.0*0.5*g_epsilon*r6*(r6-1.0);
 		return (24.0*0.5*g_epsilon*r6*(2.0*r6-1.0)/r);
 	}
-	
-	
+
+
 	// --------------------  utility  --------------------
-	
+
 	function systemTemperature() {
-		const nn = g_nParticles;
-		
+		const nn=g_nParticles;
 		let ek=0.0; // kinetic energy (J)
 		for (let i=0; i<nn; i++) {
 			ek = ek + 0.5*g_mass*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]+g_vz[i]*g_vz[i]);
 		}
 		return 2.0*ek/(3.0*nn*g_kB); //2D: E/N=kT, 3D: E/N=(3/2)kT
 	}
-	
+
 	function ajustVelocity(temp) {
 		const nn=g_nParticles;
 		const a = Math.sqrt(temp/systemTemperature());
@@ -218,53 +214,53 @@ const ArMD3D = (function(){ // ====================  ArMD3D Module  ============
 			g_vz[i] = a*g_vz[i];
 		}
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	// setInitialCondition( nn, BoxSizeInNM, contTemp )
-		evolve:			timeEvolution,			// timeEvolution( tempMode, contTemp)
+		init:        setInitialCondition, // setInitialCondition( nn, BoxSizeInNM, contTemp )
+		evolve:      timeEvolution, // timeEvolution( tempMode, contTemp)
+
+		setTemp:     ajustVelocity, // ajustVelocity( contTemp )
 		
-		setTemp:		ajustVelocity,			// ajustVelocity( contTemp )
-		
-		getSysParam:	function() { return [ g_nParticles, g_timeStep, g_xMax, g_yMax, g_zMax ]; },
-		getNow:			function() { return [ g_sysTime, systemTemperature(), g_kineticEnergy, g_potentialEnergy ]; },
-		getMolecData:	function() { return [ g_mass, g_sigma, g_epsilon, "Ar", 0xaadd00 ]; },
-		getPosition:	function(i) { return [ g_xx[i], g_yy[i], g_zz[i] ]; },
-		getVelocity:	function(i) { return [ g_vx[i], g_vy[i], g_vz[i] ]; },
-		getForce:		function(i) { return [ g_ffx[i], g_ffy[i], g_ffz[i] ]; },
+		getSysParam: function() { return [ g_nParticles, g_timeStep, g_xMax, g_yMax, g_zMax ]; },
+		getNow:		 function() { return [ g_sysTime, systemTemperature(), g_kineticEnergy, g_potentialEnergy ]; },
+		getMolecData:function() { return [ g_mass, g_sigma, g_epsilon, "Ar", 0xaadd00 ]; },
+		getPosition: function(i) { return [ g_xx[i], g_yy[i], g_zz[i] ]; },
+		getVelocity: function(i) { return [ g_vx[i], g_vy[i], g_vz[i] ]; },
+		getForce:    function(i) { return [ g_ffx[i], g_ffy[i], g_ffz[i] ]; },
 	};
-	
+
 })(); // ====================  ArMD3D Module end  ====================
 
 
 const js006 = (function(){ // ====================  js Module  ====================
-	
+
 	const theModule = ArMD3D;
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel 
+	const xCanvasSize = 480; // in pixel
+	const yCanvasSize = 480;
 	let canvas;
 	let ctx;
-	
+
 	let v_theme = 2; // no use
 	let v_nn = 200;
 	let v_BoxSizeInNM = 6.0;
-	let v_tempMode = 0;			// 0: adiabatic, 1: temp.control
+	let v_tempMode = 0; // 0: adiabatic, 1: temp.control
 	let v_contTemp = 300.0;
-	
+
 	let p_nParticles, p_timeStep, p_xMax, p_yMax, p_zMax; // = theModule.getSysParam();
-	
+
 	let dispMode = 0;
 	let resetFlag = true;
 	let pauseFlag = false;
-	
-	
+
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		animate();
-		
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -277,10 +273,10 @@ const js006 = (function(){ // ====================  js Module  =================
 			g3d.setMouseOnCanvas( canvas ); // 3D graphics
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
+
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_nn, v_BoxSizeInNM, v_contTemp );
@@ -288,27 +284,27 @@ const js006 = (function(){ // ====================  js Module  =================
 			// g3d.init( nParticles, xMax, yMax, zMax, xCanvasSize, yCanvasSize, xBoxSize, yShift )
 			g3d.init( p_nParticles, p_xMax, p_yMax, p_zMax, xCanvasSize, yCanvasSize, 300, 20 );
 		}
-		
+
 		if ( !pauseFlag ) theModule.evolve( v_tempMode, v_contTemp );
-		
+
 		draw( ctx );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	function draw( ctx ) {
 		let sysTime, sysTemp, kineticEnergy, potentialEnergy;
 		[ sysTime, sysTemp, kineticEnergy, potentialEnergy ] = theModule.getNow();
 		let mass, sigma, epsilon, str, colour;
 		[ mass, sigma, epsilon, str, colour ] = theModule.getMolecData();
-		
+
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
+
 		draw3D( ctx, p_nParticles, sigma );
-		
+
 		// caption
 		const yTextPos = yCanvasSize-45; // in pixel
 		ctx.fillStyle = "#888888";
@@ -320,16 +316,15 @@ const js006 = (function(){ // ====================  js Module  =================
 						40, yTextPos+40);
 		ctx.fillText(`Energy = ${(kineticEnergy+potentialEnergy).toExponential(4)} (J)`, 260, yTextPos+40);
 	}
-	
+
 	function draw3D( ctx, nn, sigma ) {
 		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc(); // g3d sc, xp, yp
-		
 		const ArBallColor = [ 0xb4, 0xff, 0x00 ];
-		
+
 		// draw 3D
 		g3d.set3DRotatedObjects(0.0); //(rotateRateOfAyInDegree) eg. 0.0 or 0.5
 		g3d.plotFarEdge(ctx, sc,xp,yp,"#444400"); // dark yellow
-		
+
 		for (let i=0; i<nn; i++) {
 			const j = g3d.srtzix[i];
 			const zr = (g3d.ppz[j]/g_zMax+1.27)/3.0; // -0.73 < g3d.ppz[j]/g_zMax < 1.73
@@ -337,29 +332,29 @@ const js006 = (function(){ // ====================  js Module  =================
 			g3d.drawDisc( ctx, x, y, r, ballColor( ArBallColor, zr ) );
 			g3d.strokeCircle( ctx, x, y, r, ballColor( ArBallColor, 0.7*zr ) );
 		}
-		
+
 		g3d.plotNearEdge(ctx, sc,xp,yp,"#999900"); // yellow
 		ctx.font = "12px 'sans-serif'";
 		ctx.fillStyle = "#888888";
 		ctx.fillText(`Ax=${(g3d.Ax*180/Math.PI).toFixed(1)}, Ay=${(g3d.Ay*180/Math.PI).toFixed(1)}`, 10, 15);
 		ctx.font = "16px 'sans-serif'";
 	}
-	
+
 	function ballColor( ballColorV3, zr ) {
 		const r = Math.floor(ballColorV3[0]*zr);
 		const g = Math.floor(ballColorV3[1]*zr);
 		const b = Math.floor(ballColorV3[2]*zr);
 		return `rgb(${r},${g},${b})`;
 	}
-	
-	
+
+
 	// --------------------  3D graphics (particles) module  --------------------
 	//
 	// ver 0.0.1  2018.12.23  last updated on 2023.04.10
 	// ver 0.0.2  2023.05.02  last updated on 2023.06.02
-	
+
 	let g_nParticles, g_xMax, g_yMax, g_zMax, g_xCanvasSize, g_yCanvasSize, g_xBoxSize, g_yShift; // gloval in g3d 
-	
+
 	const g3d = {};				// namespace of graphic 3D module
 	g3d.mouseDownFlag = 0;		// 1:on mouse down, 0:else
 	g3d.x_mouse = 0;			// x-position of mouse
@@ -367,7 +362,7 @@ const js006 = (function(){ // ====================  js Module  =================
 	g3d.x0_mouse = 0;			// drag-started x-position of mouse
 	g3d.y0_mouse = 0;			// drag-started y-position of mouse
 	g3d.zoom = 1.0;
-	
+
 	g3d.cx0 = 0.0;				// x-rotate center (3D graphics)
 	g3d.cy0 = 0.0;				// y-rotate center (3D graphics)
 	g3d.cz0 = 0.0;				// z-rotate center (3D graphics)
@@ -378,12 +373,12 @@ const js006 = (function(){ // ====================  js Module  =================
 	g3d.sinAx = 0.0;			// sinAx=Math.sin(Ax)
 	g3d.cosAy = 0.0;			// cosAy=Math.cos(Ay)
 	g3d.sinAy = 0.0;			// sinAy=Math.sin(Ay)
-	
+
 	g3d.ppx = [];				// (m) rotated x-component of i-th particle position
 	g3d.ppy = [];				// (m) rotated y-component of i-th particle position
 	g3d.ppz = [];				// (m) rotated z-component of i-th particle position
 	g3d.srtzix = [];			// z(depth)-sorted index: srtzix[1], srtzix[2],...,srtzix[g_nParticles]
-	
+
 	g3d.xApex = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];		// x-apex of box
 	g3d.yApex = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];		// y-apex of box
 	g3d.zApex = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];		// z-apex of box
@@ -393,9 +388,9 @@ const js006 = (function(){ // ====================  js Module  =================
 	g3d.boxApex = [[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1], [1,0,1], [0,1,1], [1,1,1] ];
 	g3d.boxEdge = [[0,1,9], [0,2,9], [0,4,9], [1,3,9], [1,5,9], [2,3,9], 
 				   [2,6,9], [3,7,9], [4,5,9], [4,6,9], [5,7,9], [6,7,9] ];
-	
+
 	//--- set mouse on canvas
-	
+
 	// g3d.setMouseOnCanvas( canvas );
 	g3d.setMouseOnCanvas = function( canvas ) {
 		canvas.addEventListener('mousemove', g3d.mouse_move);
@@ -404,10 +399,9 @@ const js006 = (function(){ // ====================  js Module  =================
 		canvas.addEventListener("mousewheel", g3d.mouseWheel);
 	};
 	g3d.setMouseOnCanvas.defined = false;
-	
+
 	g3d.mouse_move = function(e) {
 		const pi = Math.PI;
-
 		if (g3d.mouseDownFlag==1) {
 			g3d.x_mouse = e.clientX;
 			g3d.y_mouse = e.clientY;
@@ -422,7 +416,7 @@ const js006 = (function(){ // ====================  js Module  =================
 			g3d.y0_mouse = g3d.y_mouse;
 		}
 	};
-	
+
 	g3d.mouse_down = function(e) {
 		if (g3d.mouseDownFlag==0) {
 			g3d.x0_mouse = e.clientX;
@@ -432,7 +426,7 @@ const js006 = (function(){ // ====================  js Module  =================
 			g3d.mouseDownFlag = 1;
 		}
 	};
-	
+
 	g3d.mouse_up = function(e) {
 		if (g3d.mouseDownFlag==1) {
 			g3d.mouseDownFlag = 0;
@@ -446,9 +440,9 @@ const js006 = (function(){ // ====================  js Module  =================
 		if ( g3d.zoom<0.5 ) g3d.zoom = 0.5;
 		if ( g3d.zoom>2.0 ) g3d.zoom = 2.0;
 	};
-	
+
 	//--- 3D graphics aid (particles)
-	
+
 	// g3d.init( nParticles, xMax, yMax, zMax, xCanvasSize, yCanvasSize, xBoxSize, yShift )
 	g3d.init = function( nParticles, xMax, yMax, zMax, xCanvasSize, yCanvasSize, xBoxSize, yShift ) {
 		g_nParticles = nParticles;
@@ -462,13 +456,13 @@ const js006 = (function(){ // ====================  js Module  =================
 		g3d.cy0 = 0.5*g_yMax;		// y-rotate center (3D graphics)
 		g3d.cz0 = 0.5*g_zMax;		// z-rotate center (3D graphics)
 	}
-	
+
 	// g3d.setRotateAngle( AxInDegree, AyInDegree );
 	g3d.setRotateAngle = function( AxInDegree, AyInDegree ) {
 		g3d.Ax = AxInDegree*Math.PI/180.0;
 		g3d.Ay = AyInDegree*Math.PI/180.0;
 	};
-	
+
 	// g3d.scxpypFunc();
 	g3d.scxpypFunc = function() {
 		const xBoxSize = g_xBoxSize;
@@ -477,7 +471,7 @@ const js006 = (function(){ // ====================  js Module  =================
 		const sc = (xBoxSize/g_xMax)*g3d.zoom;
 		return [ sc, xp, yp ];
 	}
-	
+
 	g3d.set3DRotatedObjects = function(rotateRateOfAyInDegree) {
 		g3d.ddAy = rotateRateOfAyInDegree*Math.PI/180.0;
 		g3d.Ay= g3d.Ay + g3d.ddAy; // auto-rotate : if (ddAy==0.0), stop
@@ -489,7 +483,7 @@ const js006 = (function(){ // ====================  js Module  =================
 		g3d.sortz();            // sort ppz(i) : ppz(srtzix(1)),ppz(srtzix(2)),...,ppz(srtzix(g_nParticles))
 		g3d.markFarEdge();      // boxEdge[iEdge][2]=1:far side edge or 0:near side edge
 	};
-	
+
 	g3d.setBox = function() {
 		for (let i=0; i<8; i++) {
 			g3d.xApex[i] = g3d.boxApex[i][0]*g_xMax;
@@ -497,7 +491,7 @@ const js006 = (function(){ // ====================  js Module  =================
 			g3d.zApex[i] = g3d.boxApex[i][2]*g_zMax;
 		}
 	};
-	
+
 	g3d.setRotateXY = function(angleX,angleY) {
 		g3d.cosAx = Math.cos(angleX);
 		g3d.sinAx = Math.sin(angleX);
@@ -507,11 +501,10 @@ const js006 = (function(){ // ====================  js Module  =================
 		g3d.cy0 = 0.5*g_yMax;
 		g3d.cz0 = 0.5*g_zMax;
 	};
-	
+
 	g3d.rotateXY = function() { //particles and box apex
 		const nn = g_nParticles;
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		for (let i=0; i<nn; i++) {
 			let xi, yi, zi;
 			[ xi, yi, zi ] = theModule.getPosition(i);
@@ -526,16 +519,16 @@ const js006 = (function(){ // ====================  js Module  =================
 			g3d.pzApex[i] =-sinAy*(g3d.xApex[i]-cx0)+cosAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cz0;
 		}
 	};
-	
+
 	g3d.rotateXYPos = function(xi,yi,zi) {
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		const y = g_yMax-yi-cy0;
 		const rotx = cosAy*(xi-cx0)+sinAy*(sinAx*y+cosAx*(zi-cz0)) + cx0;
 		const roty = cosAx*y-sinAx*(zi-cz0) + cy0;
 		//const rotz =-sinAy*(xi-cx0)+cosAy*(sinAx*y+cosAx*(zi-cz0)) + cz0;
 		return [ rotx, roty ];
 	};
-	
+
 	g3d.sortz = function() {
 		const nn=g_nParticles;
 		for (let i=0; i<nn; i++) {
@@ -543,7 +536,7 @@ const js006 = (function(){ // ====================  js Module  =================
 		}
 		g3d.qSort(0,nn-1);
 	};
-	
+
 	g3d.qSort = function(le,ri) {
 		let i,j, pv,w;
 		if (ri>le) {
@@ -565,7 +558,7 @@ const js006 = (function(){ // ====================  js Module  =================
 			g3d.qSort(i+1,ri);
 		}
 	};
-	
+
 	g3d.markFarEdge = function() {
 		//seek far apex --> iMin
 		let zMin = g3d.pzApex[0];
@@ -582,7 +575,7 @@ const js006 = (function(){ // ====================  js Module  =================
 			if (g3d.boxEdge[iEdge][0]==iMin || g3d.boxEdge[iEdge][1]==iMin) g3d.boxEdge[iEdge][2] = 1;
 		}
 	};
-	
+
 	g3d.plotNearEdge = function(ctx, sc,xp,yp,color) {
 		for (let iEdge=0; iEdge<12; iEdge++) {
 			if (g3d.boxEdge[iEdge][2]==0) { //far edge mark == 1
@@ -590,7 +583,7 @@ const js006 = (function(){ // ====================  js Module  =================
 			}
 		}
 	};
-	
+
 	g3d.plotFarEdge = function(ctx, sc,xp,yp,color) {
 		for (let iEdge=0; iEdge<12; iEdge++) {
 			if (g3d.boxEdge[iEdge][2]==1) { //far edge mark == 1
@@ -598,7 +591,7 @@ const js006 = (function(){ // ====================  js Module  =================
 			}
 		}
 	};
-	
+
 	g3d.plotEdge = function(ctx, iEdge,sc,xp,yp,color) {
 		let iApex = g3d.boxEdge[iEdge][0];
 		const x1 = g3d.pxApex[iApex]*sc+xp;
@@ -608,7 +601,7 @@ const js006 = (function(){ // ====================  js Module  =================
 		const y2 = g3d.pyApex[iApex]*sc+yp;
 		g3d.drawLine(ctx, x1, y1, x2, y2, color);
 	};
-	
+
 	g3d.drawLine = function(ctx, x1, y1, x2, y2, color) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -616,46 +609,46 @@ const js006 = (function(){ // ====================  js Module  =================
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	};
-	
+
 	g3d.drawDisc = function( ctx, x, y, r, color ) {
 		ctx.fillStyle = color;
 		ctx.beginPath();
 		ctx.arc(x, y, r, 0, 2*Math.PI, false);
 		ctx.fill();
 	};
-	
+
 	g3d.strokeCircle = function( ctx, x, y, r, color ) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
 		ctx.arc(x, y, r, 0, 2*Math.PI, false);
 		ctx.stroke();
 	}
-	
+
 	// --------------------  3D graphics (particles) module end  --------------------
-	
-	
+
+
 	// -------------------- dom control
-	
+
 	function pause() { // button [pause/go]
 		pauseFlag = ( pauseFlag===false );
 	}
-	
+
 	function viewHome() {
 		g3d.setRotateAngle(-10,-15); // in degree	
 		g3d.zoom = 1.0;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:			main,			// main()
-		
-		pause:			pause,			// pause();
-		
-		viewHome:		viewHome,		// viewHome()
+		main: main, // main()
+
+		pause: pause, // pause();
+
+		viewHome: viewHome, // viewHome()
 	};
-	
+
 })(); // =============  js006 module end  =========================================================================
 
 
@@ -683,8 +676,9 @@ body { text-align:left; color:#000000; background-color:#fff8dd; }
 
 <p id="text_caption" ></p>
 <hr width="400" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
+
 </body>
 </html>
 
