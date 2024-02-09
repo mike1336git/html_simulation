@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js010_mixLJMD2D
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2017.05.03 created, last updated on 2018.11.12
 //    ver 0.0.1  2019.01.11 v1, last updated on 2021.04.29
 //    ver 0.0.2  2021.10.28 v2, last updated on 2021.10.28
-//    ver 0.0.3  2023.02.22 v3, last updated on 2023.08.11
+//    ver 0.0.3  2023.02.22 v3, last updated on 2024.02.09
 //
 // --------------------  molecular dynamics 2D
 //
@@ -43,44 +43,44 @@
 */
 
 const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ====================
-	
-	const g_AMU = 1.66053904e-27;				// (kg) atomic mass unit
-	const g_kB = 1.380649e-23;					// (J/K) Boltzmann's constant
-	const g_nMax = 1000;						// array max
-	
-	let g_molecKind1 = 2;						// 2:Ar (kind: 0:He 1:Ne 2:Ar 3:Kr 4:Xe 5:Hg)
-	let g_molecKind2 = 4;						// 4:Xe
-	let g_nParticles = 200;						// number of particles
-	let g_sysTime = 0.0;						// (s) system time
-	let g_timeStep = 5.0*1.0e-15;				// (s) time step
-	let g_xMax = 6.0E-9;						// (m) x-Box size
-	let g_yMax = 6.0E-9;						// (m) y-Box size
-	let g_kineticEnergy = 0.0;					// (J) total kinetic energy
-	let g_potentialEnergy = 0.0;				// (J) total potential energy
-	let g_rCutoff = 1.0e-9;						// (m) force cutoff length
-	let g_hh = 1.0e-12;							// (m) forceTable r-division
-	
-	const g_xx = dim1( g_nMax );				// (m) x-component of i-th particle position
-	const g_yy = dim1( g_nMax );				// (m) y-component of i-th particle position
-	const g_vx = dim1( g_nMax );				// (m/s) x-component of i-th particle velocity
-	const g_vy = dim1( g_nMax );				// (m/s) y-component of i-th particle velocity
-	const g_ffx = dim1( g_nMax );				// (N) x-component of total force applied i-th particle
-	const g_ffy = dim1( g_nMax );				// (N) y-component of total force applied i-th particle
-	const g_mas = dim1( g_nMax );				// (kg) mass of i-th particle
-	const g_kind = dimInt1( g_nMax );			// kind of i-th particle 0:He 1:Ne 2:Ar 3:Kr 4:Xe 5:Hg
+
+	const g_AMU = 1.66053904e-27; // (kg) atomic mass unit
+	const g_kB = 1.380649e-23;    // (J/K) Boltzmann's constant
+	const g_nMax = 1000;          // array max
+
+	let g_molecKind1 = 2;         // 2:Ar (kind: 0:He 1:Ne 2:Ar 3:Kr 4:Xe 5:Hg)
+	let g_molecKind2 = 4;         // 4:Xe
+	let g_nParticles = 200;       // number of particles
+	let g_sysTime = 0.0;          // (s) system time
+	let g_timeStep = 5.0*1.0e-15; // (s) time step
+	let g_xMax = 6.0E-9;          // (m) x-Box size
+	let g_yMax = 6.0E-9;          // (m) y-Box size
+	let g_kineticEnergy = 0.0;    // (J) total kinetic energy
+	let g_potentialEnergy = 0.0;  // (J) total potential energy
+	let g_rCutoff = 1.0e-9;       // (m) force cutoff length
+	let g_hh = 1.0e-12;           // (m) forceTable r-division
+
+	const g_xx = dim1( g_nMax );  // (m) x-component of i-th particle position
+	const g_yy = dim1( g_nMax );  // (m) y-component of i-th particle position
+	const g_vx = dim1( g_nMax );  // (m/s) x-component of i-th particle velocity
+	const g_vy = dim1( g_nMax );  // (m/s) y-component of i-th particle velocity
+	const g_ffx = dim1( g_nMax ); // (N) x-component of total force applied i-th particle
+	const g_ffy = dim1( g_nMax ); // (N) y-component of total force applied i-th particle
+	const g_mas = dim1( g_nMax ); // (kg) mass of i-th particle
+	const g_kind = dimInt1( g_nMax );           // kind of i-th particle 0:He 1:Ne 2:Ar 3:Kr 4:Xe 5:Hg
 	const g_potentialTable = dim3( 6, 6, 1002 );// potential table [V[0], V[hh], V[2hh],..., V[rCutoff] ]
-	const g_forceTable = dim3( 6, 6, 1002 );	// force table [F[0], F[hh], F[2hh],..., F[rCutoff] ]
-	const g_reg = dimInt2( g_nMax, 100 );		// reg[i][0]:total number of particles near i-th particle
+	const g_forceTable = dim3( 6, 6, 1002 );    // force table [F[0], F[hh], F[2hh],..., F[rCutoff] ]
+	const g_reg = dimInt2( g_nMax, 100 );       // reg[i][0]:total number of particles near i-th particle
 												// reg[i][j]:particle number near i-th particle, (j>0)
-	
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
-	
+
 	function dimInt1( n ) {
 		return new Int32Array( n );
 	}
-	
+
 	function dim2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -88,7 +88,7 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 		}
 		return a;
 	}
-	
+
 	function dimInt2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -96,7 +96,7 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 		}
 		return a;
 	}
-	
+
 	function dim3( ni, nj, nk ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -107,10 +107,10 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 		}
 		return a;
 	}
-	
-	
+
+
 	// --------------------  Lennard-Jones potential data  --------------------
-	
+
 	const g_LJMolec = [
 	//    mass(kg)        E(J)         sigma(m)   string  color
 		[   4.003*g_AMU,  10.2*g_kB, 2.576e-10, "He",  "#ee4444" ], // 0 He
@@ -127,16 +127,15 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 		[  44.010*g_AMU, 190.0*g_kB, 3.996e-10, "CO2", "#6600ff" ], //11 CO2
 		[  28.011*g_AMU, 110.0*g_kB, 3.590e-10, "CO",  "#0000ff" ]  //12 CO
 	];
-	
+
 	const g_rCollision = [];
 	const g_rBond = [];
 	const g_massOf = [];
 	const g_strOf = [];
 	const g_colorOf = [];
-	
+
 	(function() {
 		const n=g_LJMolec.length;
-
 		for (let i=0; i<n; i++) {
 			g_rCollision[i] = 0.5*g_LJMolec[i][2];
 			g_rBond[i] = 1.12246*0.5*g_LJMolec[i][2];
@@ -145,12 +144,11 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 			g_colorOf[i] = g_LJMolec[i][4];
 		}
 	}());
-	
+
 	//--- set forceTable[kind1][kind2][ir] and potentialTable[kind1][kind2][ir]
-	
+
 	function setForceTable() {
 		const hh2=2.0*g_hh;
-		
 		for (let i=0; i<6; i++) {
 			for (let j=0; j<6; j++) {
 				const ep = Math.sqrt(g_LJMolec[i][1]*g_LJMolec[j][1]);
@@ -170,10 +168,9 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 			}
 		}
 	}
-	
+
 	function cutoff(r) {
 		let ret=0.0;
-
 		if (r>=0 && r<0.8*g_rCutoff) {
 			ret = 1.0;
 		} else if (r>=0.8*g_rCutoff && r<g_rCutoff ) {
@@ -181,14 +178,13 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 		}
 		return ret;
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( theme, nn, BoxSizeInNM, contTemp ) {
 		// theme  0:Ne 1:Ar 2:Kr 3:Xe 4:Hg 5:Ar-Xe 6:Ar-Hg 7:Ne-Kr 8:Ne-Ar
 		let knd1,knd2,nn1,nn2;
-		
 		if (theme==0) { // Ne (knd: 1:Ne,2:Ar,3:Kr,4:Xe,5:Hg)
 			knd1 = 1; nn1=nn; knd2 = 1; nn2 = 0;
 		} else if (theme==1) { // Ar
@@ -208,7 +204,7 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 		} else if (theme==8) { // Ne-Ar
 			knd1 = 1; nn1 = nn/2; knd2 = 2; nn2 = nn/2;
 		}
-		
+
 		g_sysTime = 0.0;
 		g_molecKind1 = knd1
 		g_molecKind2 = knd2
@@ -218,10 +214,9 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 		g_nParticles = setGas(knd1,nn1,knd2,nn2);
 		ajustVelocity(contTemp);
 	}
-	
-	function setGas(knd1,nn1,knd2,nn2) {
+
+	function setGas( knd1, nn1, knd2, nn2 ) {
 		const nn=nn1+nn2;
-		
 		let nParticles = nn;
 		for (let j=0; j<nn; j++) {
 			g_kind[j] = (j<nn1) ? knd1 : knd2;
@@ -248,8 +243,8 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 		}
 		return nParticles;
 	}
-	
-	function setParticle(i, knd, x, y) {
+
+	function setParticle( i, knd, x, y ) {
 		g_xx[i] = x;
 		g_yy[i] = y;
 		g_vx[i] = 200.0*normalRandom3();
@@ -259,15 +254,15 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 		g_kind[i] = knd;
 		g_mas[i] = g_massOf[g_kind[i]];
 	}
-	
+
 	// normal distributed random number: -3.0 <= normalRandom3() < 3.0
 	function normalRandom3() {
 		return (Math.random()+Math.random()+Math.random()+Math.random()+Math.random()+Math.random()-3.0);
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
+
 	function timeEvolution( nCalc, tempMode, contTemp ) {
 		for (let ii=0; ii<nCalc; ii++) {
 			if (tempMode==1) ajustVelocity(contTemp);
@@ -278,10 +273,9 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 			}
 		}
 	}
-	
+
 	function moveParticles(dt) {
 		const nn=g_nParticles;
-		
 		for (let i=0; i<nn; i++) {
 			const a = 0.5*dt/g_mas[i];
 			g_vx[i] += a*g_ffx[i];
@@ -300,14 +294,14 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 			g_kineticEnergy += 0.5*g_mas[i]*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
 		}
 	}
-	
+
 	function calcForce() {
 		const nn=g_nParticles, s05 = 0.5*3.418e-10; // Ar sigma=3.418e-10
 		g_potentialEnergy = 0.0;
 		for(let i=0; i<nn; i++) {
 			g_ffx[i]=0;g_ffy[i]=0;
 		}
-		
+
 		for (let i=0; i<nn-1; i++) {
 			for (let k=1; k<g_reg[i][0]; k++) {
 				const j = g_reg[i][k];
@@ -330,15 +324,15 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 			g_ffy[i] += boundaryForce(g_yy[i]+s05)+boundaryForce(g_yy[i]-g_yMax-s05);
 		}
 	}
-	
-	function force(r,ki,kj) { // forceTable - linear interporation
+
+	function force( r, ki, kj ) { // forceTable - linear interporation
 		const ir = Math.floor(r/g_hh);
 		const a = r - ir*g_hh;
 		g_potentialEnergy += ((g_hh-a)*g_potentialTable[ki][kj][ir] + a*g_potentialTable[ki][kj][ir+1])/g_hh;
 		return ((g_hh-a)*g_forceTable[ki][kj][ir] + a*g_forceTable[ki][kj][ir+1])/g_hh;
 	}
-	
-	function boundaryForce(r) {
+
+	function boundaryForce( r ) {
 		const ri = (3.418e-10/r);
 		const r6 = ri*ri*ri*ri*ri*ri;
 		g_potentialEnergy += 4.0*0.5*1.711e-21*r6*(r6-1.0);
@@ -349,7 +343,6 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 	
 	function registerNearParticles() {
 		const nn=g_nParticles;
-		
 		const rCut = g_rCutoff+20*2000*g_timeStep;
 		const rcut2 = rCut*rCut;
 		for (let i=0; i<nn-1; i++) {
@@ -364,7 +357,7 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 			g_reg[i][0] = k;
 		}
 	}
-	
+
 	function maxNearParticles() {
 		const nn=g_nParticles;
 		let mx=0;
@@ -373,21 +366,20 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 		}
 		return (mx-1);
 	}
-	
-	
+
+
 	// --------------------  utility  --------------------
-	
+
 	function systemTemperature() {
 		const nn=g_nParticles;
 		let ek= 0.0;       //kinetic energy (J)
-		
 		for (let i=0; i<nn; i++) {
 			ek = ek + 0.5*g_mas[i]*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
 		}
 		return ek/(nn*g_kB);
 	}
-	
-	function ajustVelocity(temp) {
+
+	function ajustVelocity( temp ) {
 		const nn=g_nParticles;
 		const a = Math.sqrt(temp/systemTemperature());
 		for (let i=0; i<nn; i++) {
@@ -395,60 +387,57 @@ const mixLJMD2D = (function(){ // ====================  mixLJMD2D Module  ======
 			g_vy[i] = a*g_vy[i];
 		}
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	// setInitialCondition( theme, nn, BoxSizeInNM, contTemp )
-		evolve:			timeEvolution,			// timeEvolution( ncalc, tempMode, contTemp)
-		
-		setTemp:		ajustVelocity,			// ajustVelocity( temp )
-		
-		getSysParam:	function() { return [ g_molecKind1, g_molecKind2, g_nParticles, g_timeStep, g_xMax, g_yMax ]; },
-		getNow:			function() { return [ g_sysTime, systemTemperature(), g_kineticEnergy, g_potentialEnergy ]; },
-		getMolecStr:	function() { return [ g_strOf[g_molecKind1], g_strOf[g_molecKind2] ]; },
-		getMolecData:	function(i) {
-							const kind = g_kind[i];
-							return [ kind, g_rCollision[kind] ];
-						},
-		getPosition:	function(i) { return [ g_xx[i], g_yy[i] ]; },
-		getVelocity:	function(i) { return [ g_vx[i], g_vy[i] ]; },
-		getForce:		function(i) { return [ g_ffx[i], g_ffy[i] ]; },
+		init:       setInitialCondition, // setInitialCondition( theme, nn, BoxSizeInNM, contTemp )
+		evolve:     timeEvolution, // timeEvolution( ncalc, tempMode, contTemp)
+
+		setTemp:    ajustVelocity, // ajustVelocity( temp )
+
+		getSysParam:function() { return [ g_molecKind1, g_molecKind2, g_nParticles, g_timeStep, g_xMax, g_yMax ]; },
+		getNow:     function() { return [ g_sysTime, systemTemperature(), g_kineticEnergy, g_potentialEnergy ]; },
+		getMolecStr:function() { return [ g_strOf[g_molecKind1], g_strOf[g_molecKind2] ]; },
+		getMolecData: function(i) { const kind = g_kind[i]; return [ kind, g_rCollision[kind] ]; },
+		getPosition:function(i) { return [ g_xx[i], g_yy[i] ]; },
+		getVelocity:function(i) { return [ g_vx[i], g_vy[i] ]; },
+		getForce:   function(i) { return [ g_ffx[i], g_ffy[i] ]; },
 	};
-	
+
 })(); // ====================  mixLJMD2D end  ====================
 
 
 const js010 = (function(){ // ====================  js Module  ====================
-	
+
 	const theModule = mixLJMD2D;
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel
+	const xCanvasSize = 480; // in pixel
+	const yCanvasSize = 480;
 	let canvas;
 	let ctx;
-	
-	let v_theme = 8;			// theme  0:Ne 1:Ar 2:Kr 3:Xe 4:Hg 5:Ar-Xe 6:Ar-Hg 7:Ne-Kr 8:Ne-Ar
-	let v_nn = 200;				// number of max. settable molecules
+
+	let v_theme = 8; // theme  0:Ne 1:Ar 2:Kr 3:Xe 4:Hg 5:Ar-Xe 6:Ar-Hg 7:Ne-Kr 8:Ne-Ar
+	let v_nn = 200; // number of max. settable molecules
 	let v_BoxSizeInNM = 12.0;
 	let v_nCalc = 2;
-	let v_tempMode = 0;			// 0: adiabatic, 1: temp.control
+	let v_tempMode = 0; // 0: adiabatic, 1: temp.control
 	let v_contTemp = 300.0;
-	
+
 	let p_kind1, p_kind2, p_nParticles, p_timeStep, p_xMax, p_yMax; // = theModule.getSysParam();
-	
+
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
-	
-	
+
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
-		
+
 		animate();
-		
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -460,47 +449,47 @@ const js010 = (function(){ // ====================  js Module  =================
 			ctx.lineWidth = 1;
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
+
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_theme, v_nn, v_BoxSizeInNM, v_contTemp );
 			[ p_kind1, p_kind2, p_nParticles, p_timeStep, p_xMax, p_yMax ] = theModule.getSysParam();
 		}
-		
+
 		if ( !pauseFlag ) {
 				theModule.evolve( v_nCalc, v_tempMode, v_contTemp );
 		} else if ( pauseFlag && stepFlag ) {
 			stepFlag = false;
 			theModule.evolve( 1, v_tempMode, v_contTemp );
 		}
-		
+
 		draw( ctx );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	const molecColor = [ /*0:He*/ '#ff5050', /*1:Ne*/ '#ffb400', /*2:Ar*/ '#b4ff00',
 						 /*3:Kr*/ '#50ff50', /*4:Xe*/ '#50b4ff', /*5:Hg*/ '#8000ff' ];
-	
+
 	function draw( ctx ) {
 		let sysTime, temperature, kineticEnergy, potentialEnergy;
 		[ sysTime, temperature, kineticEnergy, potentialEnergy ] = theModule.getNow();
 		let molecStr1, molecStr2;
 		[ molecStr1, molecStr2 ] = theModule.getMolecStr();
-		
-		let xp = 40, yp = 5, xSize = 400, ySize = 400, yTextPos= yCanvasSize - 45;
-		
+
+		let xp=40, yp=5, xSize=400, ySize=400, yTextPos=yCanvasSize-45;
+
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
+
 		ctx.strokeStyle = "#888800";
 		ctx.strokeRect( xp, yp, xSize, ySize );
-		
+
 		drawBalls(ctx, p_nParticles, p_yMax, xp, yp, xSize/p_xMax );
 		// caption
 		ctx.fillStyle = "#888888";
@@ -514,7 +503,7 @@ const js010 = (function(){ // ====================  js Module  =================
 		ctx.fillText(`Energy = ${(kineticEnergy+potentialEnergy).toExponential(4)} (J)`, xp+200, yTextPos+40);
 		//document.getElementById("text_caption").innerHTML = "minimum molecular dynamics code"
 	}
-	
+
 	function drawBalls( ctx, nn, yMax, xp, yp, scale ) {
 		const twoPi = 2.0*Math.PI;
 		for (let i=0; i<nn; i++) {
@@ -527,19 +516,18 @@ const js010 = (function(){ // ====================  js Module  =================
 			ctx.fill();
 		}
 	}
-	
-	
+
+
 	// --------------------  control  --------------------
-	
+
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-		
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
 		
@@ -549,56 +537,55 @@ const js010 = (function(){ // ====================  js Module  =================
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setTheme() {
 		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = true;
 	}
-	
+
 	function setnParticles() {
 		const n = 1 + document.getElementById("slct_nn").selectedIndex;
 		v_nn = n*100;
 		resetFlag = true;
 	}
-	
+
 	function setTempMode() {
 		v_tempMode = 0 + document.getElementById("slct_tempMode").selectedIndex;
 	}
-	
+
 	function setContTemp() {  // range mixing
 		v_contTemp = Number(document.getElementById("range_temp").value);
 		document.getElementById("text_temp").innerHTML = " " + v_contTemp.toFixed(0);
 	}
-	
+
 	function setDispMode() {
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
 	}
-	
+
 	function setNcalc() {
 		v_nCalc = 1 + document.getElementById("slct_nCalc").selectedIndex;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:			main,			// main()
-		
-		// dom control
-		reset:			reset,			// reset()
-		pause:			pause,			// pause()
-		step:			step,			// step()
-		
-		setTheme:		setTheme,		// setTheme()
-		setnParticles:	setnParticles,	// setnParticles()
-		setTempMode:	setTempMode,	// setTempMode()
-		setContTemp:	setContTemp,	// setContTemp()
-		setDispMode:	setDispMode,	// setDispMode()
-		setNcalc:		setNcalc,		// setNcalc()
+		main:  main, // main()
+
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step,  // step()
+
+		setTheme:    setTheme, // setTheme()
+		setnParticles: setnParticles, // setnParticles()
+		setTempMode: setTempMode, // setTempMode()
+		setContTemp: setContTemp, // setContTemp()
+		setDispMode: setDispMode, // setDispMode()
+		setNcalc:    setNcalc, // setNcalc()
 	};
-	
+
 })(); // ====================  js010 module end  ====================
 
 
@@ -660,8 +647,9 @@ style="width:360px" oninput="js.setContTemp()">
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
+
 </body>
 </html>
 
