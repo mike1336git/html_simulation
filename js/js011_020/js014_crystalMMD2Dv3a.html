@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js014_crystalMMD2D
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2017.05.07 created, last updated on 2018.11.14
 //    ver 0.0.1  2019.01.13 v1, last updated on 2021.05.02
 //    ver 0.0.2  2021.10.29 v2, last updated on 2021.10.29
-//    ver 0.0.3  2023.03.04 v3, last updated on 2023.08.16
+//    ver 0.0.3  2023.03.04 v3, last updated on 2024.02.13
 //
 // --------------------  molecular dynamics 2D
 //
@@ -39,41 +39,41 @@
 */
 
 const crystalMMD2D = (function(){ // ====================  crystalMMD2D Module  ====================
-	
-	const g_AMU = 1.66053904e-27;		// (kg) atomic mass unit
-	const g_kB = 1.380649e-23;			// (J/K) Boltzmann's constant
-	const g_EE = 1.602176634e-19;		// (C) electron charge, energy : 1(eV) = EE(J)
-	const g_nMax = 2000;				// array max
-	
-	let g_nParticles = 100;				// number of particles
-	let g_sysTime = 0.0;				// (s) system time
-	let g_timeStep =  5.0*1.0e-15;		// (s) time step
-	let g_xMax = 6.0E-9;				// (m) x-Box size
-	let g_yMax = 6.0E-9;				// (m) y-Box size
-	let g_kineticEnergy = 0.0;			// (J) total kinetic energy
-	let g_potentialEnergy = 0.0;		// (J) total potential energy
-	
-	const g_xx = dim1( g_nMax );		// (m) x-component of i-th particle position
-	const g_yy = dim1( g_nMax );		// (m) y-component of i-th particle position
-	const g_vx = dim1( g_nMax );		// (m/s) x-component of i-th particle velocity
-	const g_vy = dim1( g_nMax );		// (m/s) y-component of i-th particle velocity
-	const g_ffx = dim1( g_nMax );		// (N) x-component of total force applied i-th particle
-	const g_ffy = dim1( g_nMax );		// (N) y-component of total force applied i-th particle
-	
+
+	const g_AMU = 1.66053904e-27; // (kg) atomic mass unit
+	const g_kB = 1.380649e-23;    // (J/K) Boltzmann's constant
+	const g_EE = 1.602176634e-19; // (C) electron charge, energy : 1(eV) = EE(J)
+	const g_nMax = 2000;          // array max
+
+	let g_nParticles = 100;       // number of particles
+	let g_sysTime = 0.0;          // (s) system time
+	let g_timeStep =  5.0*1.0e-15;// (s) time step
+	let g_xMax = 6.0E-9;          // (m) x-Box size
+	let g_yMax = 6.0E-9;          // (m) y-Box size
+	let g_kineticEnergy = 0.0;    // (J) total kinetic energy
+	let g_potentialEnergy = 0.0;  // (J) total potential energy
+
+	const g_xx = dim1( g_nMax );  // (m) x-component of i-th particle position
+	const g_yy = dim1( g_nMax );  // (m) y-component of i-th particle position
+	const g_vx = dim1( g_nMax );  // (m/s) x-component of i-th particle velocity
+	const g_vy = dim1( g_nMax );  // (m/s) y-component of i-th particle velocity
+	const g_ffx = dim1( g_nMax ); // (N) x-component of total force applied i-th particle
+	const g_ffy = dim1( g_nMax ); // (N) y-component of total force applied i-th particle
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
-	
+
 	//--- material data
-	
-	let g_mass = 55.847*g_AMU;			// (kg) mass of Fe
-	let g_ddMorse = 0.4174*g_EE;		// (J) D of Morse potential : energy of dissociation
-	let g_aaMorse = 1.3885e10;			// (1/m) A of Morse potential : width parameter
-	let g_r0Morse = 2.845e-10;			// (m) r0 of Morse potential : bond length
-	
-	
+
+	let g_mass = 55.847*g_AMU;    // (kg) mass of Fe
+	let g_ddMorse = 0.4174*g_EE;  // (J) D of Morse potential : energy of dissociation
+	let g_aaMorse = 1.3885e10;    // (1/m) A of Morse potential : width parameter
+	let g_r0Morse = 2.845e-10;    // (m) r0 of Morse potential : bond length
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( boxSizeInNM, xtalSizeInNM, contTemp ) {
 		g_sysTime = 0.0;
 		g_xMax = boxSizeInNM*1.0e-9;
@@ -82,8 +82,8 @@ const crystalMMD2D = (function(){ // ====================  crystalMMD2D Module  
 		g_nParticles = setCrystalBlock(0, s, s, xtalSizeInNM*1.0e-9, xtalSizeInNM*1.0e-9, Math.PI/4.0);
 		ajustVelocity(contTemp);
 	}
-	
-	function setCrystalBlock(ii, x0, y0, xLen, yLen, theta) {
+
+	function setCrystalBlock( ii, x0, y0, xLen, yLen, theta ) {
 		let iip = ii;
 		const a = 0.98*g_r0Morse;
 		const b = 0.866025*a;
@@ -109,8 +109,8 @@ const crystalMMD2D = (function(){ // ====================  crystalMMD2D Module  
 		}
 		return iip;
 	}
-	
-	function setParticle(i, x, y) {
+
+	function setParticle( i, x, y ) {
 		g_xx[i] = x;
 		g_yy[i] = y;
 		g_vx[i] = 200.0*normalRandom3();
@@ -118,15 +118,15 @@ const crystalMMD2D = (function(){ // ====================  crystalMMD2D Module  
 		g_ffx[i] = 0.0;
 		g_ffy[i] = 0.0;
 	}
-	
+
 	// normal distributed random number: -3.0 <= normalRandom3() < 3.0
 	function normalRandom3() {
 		return (Math.random()+Math.random()+Math.random()+Math.random()+Math.random()+Math.random()-3.0);
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
+
 	function timeEvolution( tempMode, contTemp ) {
 		if (tempMode==1) ajustVelocity(contTemp);
 		for (let i=0; i<20; i++) {
@@ -134,8 +134,8 @@ const crystalMMD2D = (function(){ // ====================  crystalMMD2D Module  
 			moveParticles(g_timeStep);
 		}
 	}
-	
-	function moveParticles(dt) {
+
+	function moveParticles( dt ) {
 		const nn=g_nParticles;
 		const a = 0.5*dt/g_mass;
 		for (let i=0; i<nn; i++) {
@@ -154,9 +154,9 @@ const crystalMMD2D = (function(){ // ====================  crystalMMD2D Module  
 			g_kineticEnergy += 0.5*g_mass*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
 		}
 	}
-	
+
 	function calcForce() { // calc. force and potential energy
-		const nn=g_nParticles, s05 = 0.5*3.418e-10; // Ar sigma=3.418e-10
+		const nn=g_nParticles, s05=0.5*3.418e-10; // Ar sigma=3.418e-10
 		g_potentialEnergy = 0.0;
 		for (let i=0; i<nn; i++) {
 			g_ffx[i]=0;g_ffy[i]=0;
@@ -183,17 +183,17 @@ const crystalMMD2D = (function(){ // ====================  crystalMMD2D Module  
 			g_ffy[i] += boundaryForce(g_yy[i]+s05)+boundaryForce(g_yy[i]-g_yMax-s05);
 		}
 	}
-	
-	function boundaryForce(r) { // boundary:L-J type; epsilon = 0.5*epsilonOfAr, sigma = sigmaOfAr
+
+	function boundaryForce( r ) { // boundary:L-J type; epsilon = 0.5*epsilonOfAr, sigma = sigmaOfAr
 		const ri = (3.418e-10/r); // sigmaOfAr = 3.418e-10
 		const r6 =ri*ri*ri*ri*ri*ri;
 		g_potentialEnergy += 4.0*0.5*1.711e-21*r6*(r6-1.0); // epsilonOfAr = 1.711e-21
 		return (24.0*0.5*1.711e-21*r6*(2.0*r6-1.0)/r);
 	}
-	
-	
+
+
 	// --------------------  utility  --------------------
-	
+
 	function systemTemperature() {
 		const nn = g_nParticles;
 		let ek = 0.0;  // kinetic energy (J)
@@ -202,7 +202,7 @@ const crystalMMD2D = (function(){ // ====================  crystalMMD2D Module  
 		}
 		return ek/(nn*g_kB);
 	}
-	
+
 	function ajustVelocity(temp) {
 		const nn=g_nParticles, a = Math.sqrt(temp/systemTemperature());
 		for (let i=0; i<nn; i++) {
@@ -210,43 +210,43 @@ const crystalMMD2D = (function(){ // ====================  crystalMMD2D Module  
 			g_vy[i] = a*g_vy[i];
 		}
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	// setInitialCondition( boxSizeInNM, xtalSizeInNM, contTemp )
-		evolve:			timeEvolution,			// timeEvolution( tempMode, contTemp ) 
-		
-		setTemp:		ajustVelocity,			// ajustVelocity( temp )
-		
-		getSysParam:	function() { return [ g_nParticles, g_timeStep, g_xMax, g_yMax ]; },
-		getNow:			function() { return [ g_sysTime, systemTemperature(), g_kineticEnergy, g_potentialEnergy ]; },
-		getAtomData:	function() { return [ 3, 0.5*g_r0Morse/1.12246, g_r0Morse ]; }, // [kind, rCollision, bondLength ]
-		getPosition:	function(i) { return [ g_xx[i], g_yy[i] ]; },
-		getVelocity:	function(i) { return [ g_vx[i], g_vy[i] ]; },
-		getForce:		function(i) { return [ g_ffx[i], g_ffy[i] ]; },
+		init:       setInitialCondition, // setInitialCondition( boxSizeInNM, xtalSizeInNM, contTemp )
+		evolve:     timeEvolution, // timeEvolution( tempMode, contTemp ) 
+
+		setTemp:    ajustVelocity, // ajustVelocity( temp )
+
+		getSysParam:function() { return [ g_nParticles, g_timeStep, g_xMax, g_yMax ]; },
+		getNow:     function() { return [ g_sysTime, systemTemperature(), g_kineticEnergy, g_potentialEnergy ]; },
+		getAtomData:function() { return [ 3, 0.5*g_r0Morse/1.12246, g_r0Morse ]; }, // [kind, rCollision, bondLength ]
+		getPosition:function(i) { return [ g_xx[i], g_yy[i] ]; },
+		getVelocity:function(i) { return [ g_vx[i], g_vy[i] ]; },
+		getForce:   function(i) { return [ g_ffx[i], g_ffy[i] ]; },
 	};
-	
+
 })(); // ====================  crystalMMD2D end  ====================
 
 
 const js014 = (function(){ // ====================  js Module  ====================
 
 	const theModule = crystalMMD2D;
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel
+	const xCanvasSize = 480; // in pixel
+	const yCanvasSize = 480;
 	let canvas;
 	let ctx;
-	
+
 	let v_theme = 3; //  = kind  - Fe
 	let v_BoxSizeInNM = 4.0;
 	let v_xtalSizeInNM = 2.5;
 	let v_contTemp = 300.0;
-	let v_tempMode = 0;			// 0: adiabatic, 1: temp.control
-	
+	let v_tempMode = 0; // 0: adiabatic, 1: temp.control
+
 	let p_nParticles, p_timeStep, p_xMax, p_yMax; // = theModule.getSysParam();
-	
+
 	let nCalc = 1;
 	let dispMode = 1;
 	let resetFlag = true;
@@ -258,9 +258,9 @@ const js014 = (function(){ // ====================  js Module  =================
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
-		
+
 		animate();
-	
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -275,13 +275,13 @@ const js014 = (function(){ // ====================  js Module  =================
 
 
 	function animate() {
-		
+
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_BoxSizeInNM, v_xtalSizeInNM, v_contTemp );
 			[ p_nParticles, p_timeStep, p_xMax, p_yMax ] = theModule.getSysParam();
 		}
-		
+
 		if ( !pauseFlag ) {
 			for(let i=0; i<nCalc; i++ ) {
 				theModule.evolve( v_tempMode, v_contTemp );
@@ -290,32 +290,32 @@ const js014 = (function(){ // ====================  js Module  =================
 			stepFlag = false;
 			theModule.evolve( v_tempMode, v_contTemp );
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	const atomColor = { Fe:"#00c0ff" };
-	
+
 	function draw( ctx, dispMode ) {
-		const xp = 40, yp = 5, xSize = 400, ySize = 400, scale = xSize/p_xMax, yTextPos= 430;
-		
+		const xp=40, yp=5, xSize=400, ySize=400, scale=xSize/p_xMax, yTextPos=430;
+
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
+
 		ctx.strokeStyle = "#888800";
 		ctx.strokeRect( xp, yp, xSize, ySize );
-		
+
 		if ( dispMode==0 ) {
 			drawBalls( ctx, scale, xp, yp );
 		} else if ( dispMode==1 || dispMode==2 ) {
 			strokeBalls( ctx, scale, xp, yp );
 			drawBonds( ctx, dispMode+1, scale, xp, yp );
 		}
-		
+
 		// caption
 		let sysTime, temperature, kineticEnergy, potentialEnergy;
 		[ sysTime, temperature, kineticEnergy, potentialEnergy ] = theModule.getNow();
@@ -327,11 +327,10 @@ const js014 = (function(){ // ====================  js Module  =================
 		ctx.fillText(`Box = ${(p_xMax*1.0e9).toFixed(1)} x ${(p_yMax*1.0e9).toFixed(1)} (nm)`, xp, yTextPos+40);
 		ctx.fillText(`Energy = ${(kineticEnergy+potentialEnergy).toExponential(4)} (J)`, xp+200, yTextPos+40);
 		//document.getElementById("text_caption").innerHTML = "minimum molecular dynamics code"
-		
 	}
-	
+
 	function drawBalls( ctx, scale, xp, yp ) {
-		const nn = p_nParticles, yMax = p_yMax, twoPi = 2.0*Math.PI;
+		const nn=p_nParticles, yMax=p_yMax, twoPi=2.0*Math.PI;
 		const rCollision = theModule.getAtomData()[1];
 		for (let i=0; i<nn; i++) {
 			let x, y; [ x, y ] = theModule.getPosition(i);
@@ -341,7 +340,7 @@ const js014 = (function(){ // ====================  js Module  =================
 			ctx.fill();
 		}
 	}
-	
+
 	function strokeBalls( ctx, scale, xp, yp ) {
 		const nn = p_nParticles, yMax = p_yMax, twoPi = 2.0*Math.PI;
 		const d0 = theModule.getAtomData()[2]; // bond length
@@ -354,12 +353,12 @@ const js014 = (function(){ // ====================  js Module  =================
 			ctx.stroke();
 		}
 	}
-	
+
 	function drawBonds( ctx, bondMode, scale, xp, yp ) {
 		const nn = p_nParticles, yMax = p_yMax, pi = Math.PI;
 		const d0 = theModule.getAtomData()[2]; // bond length
 		const dc = d0*1.2;
-		
+
 		for (let i=0; i<nn-1; i++) {
 			let xi, yi; [ xi, yi ] = theModule.getPosition(i);
 			for (let j=i+1; j<nn; j++) {
@@ -382,7 +381,7 @@ const js014 = (function(){ // ====================  js Module  =================
 			}
 		}
 	}
-	
+
 	function drawLine( ctx, x1, y1, x2, y2, color ) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -390,72 +389,69 @@ const js014 = (function(){ // ====================  js Module  =================
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	}
-	
-	
+
+
 	// --------------------  control  --------------------
 
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
-		
 		if ( pauseFlag==true ) {
 			document.getElementById("step_button").style.visibility = "visible";
 		} else {
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setTheme() {
 		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = true;
 	}
-	
-	
+
+
 	function setTempMode() {
 		v_tempMode = 0 + document.getElementById("slct_tempMode").selectedIndex;
 	}
-	
+
 	function setContTemp() {  // range mixing
 		v_contTemp = Number(document.getElementById("range_temp").value);
 		document.getElementById("text_temp").innerHTML = " " + v_contTemp.toFixed(0);
 	}
-	
+
 	function setDispMode() {
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
 	}
-	
+
 	function setNcalc() {
 		nCalc = 1 + document.getElementById("slct_nCalc").selectedIndex;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:			main,			// main()
-		
-		// dom control
-		reset:			reset,			// reset()
-		pause:			pause,			// pause()
-		step:			step,			// step()
-		
-		setTheme:		setTheme,		// setTheme()
-		setTempMode:	setTempMode,	// setTempMode()
-		setContTemp:	setContTemp,	// setContTemp()
-		setDispMode:	setDispMode,	// setDispMode()
-		setNcalc:		setNcalc,		// setNcalc()
+		main:  main, // main()
+
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step, // step()
+
+		setTheme:    setTheme, // setTheme()
+		setTempMode: setTempMode, // setTempMode()
+		setContTemp: setContTemp, // setContTemp()
+		setDispMode: setDispMode, // setDispMode()
+		setNcalc:    setNcalc, // setNcalc()
 	};
-	
+
 })(); // ====================  js014 module end  ====================
 
 
@@ -495,7 +491,7 @@ window.addEventListener('load', js.main );
 <br>
 
 <label>cont.Temp:</label><label id="text_temp"> 300</label>
-<input type="range" id="range_temp" min="10" max="600" value="300" step="2" 
+<input type="range" id="range_temp" min="10" max="2000" value="300" step="2" 
 style="width:360px" oninput="js.setContTemp()">
 <br>
 
@@ -513,7 +509,7 @@ style="width:360px" oninput="js.setContTemp()">
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
 
 </body>
