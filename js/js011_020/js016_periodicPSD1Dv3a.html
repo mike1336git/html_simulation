@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js016_periodicPSD1D
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2017.05.12 created, last updated on 2018.11.14
 //    ver 0.0.1  2019.01.13 v1, last updated on 2021.05.05
 //    ver 0.0.2  2021.10.29 v2, last updated on 2021.10.29
-//    ver 0.0.3  2023.03.05 v3, last updated on 2023.08.16
+//    ver 0.0.3  2023.03.05 v3, last updated on 2024.02.15
 //
 // --------------------  steepest descent method 1D
 //
@@ -40,24 +40,24 @@
 */
 
 const periodicPSD1D = (function(){ // ====================  periodicPSD1D Module  ====================
-	
+
 	// au: atomic unit hBar=1,e=1,me=1,a0=1
-	const g_auLength = 5.29177211e-11;			// (m) 1(au) = auLength (m)
-	const g_auTime = 2.418884326e-17;			// (s) 1(au) = auTime (s)
-	const g_auEnergy = 4.35974465e-18;			// (J) 1(au) = auEnergy (J)
-	const g_au2eV = 27.211386;					// (eV) 1(au) = 27.211386 (eV)
-	const g_NNMax = 400;						// NNx max
-	
-	let g_iterCount = 0;						// sd iteration count
-	let g_NNx = 256;							// xMax = NNx*dx 
-	let g_dx = 1.0/16.0;						// (au) x-division
-	let g_dampingFactor = 0.003;				// steepest descent damping factor
-	
-	const g_sdEnergy = dim1( 20 );				// sdEnergy[20] electron state energy
-	const g_sdState = dim2( 20, g_NNMax );		// sdState[20][256] electron state 0...19
-	const g_wrk = dim1( g_NNMax );				// wrk[256] state work space in steepestDescent
-	const g_vv = dim1( g_NNMax );				// vv[256] external potential
-	
+	const g_auLength = 5.29177211e-11; // (m) 1(au) = auLength (m)
+	const g_auTime = 2.418884326e-17;  // (s) 1(au) = auTime (s)
+	const g_auEnergy = 4.35974465e-18; // (J) 1(au) = auEnergy (J)
+	const g_au2eV = 27.211386;         // (eV) 1(au) = 27.211386 (eV)
+	const g_NNMax = 400;               // NNx max
+
+	let g_iterCount = 0;           // sd iteration count
+	let g_NNx = 256;               // xMax = NNx*dx 
+	let g_dx = 1.0/16.0;           // (au) x-division
+	let g_dampingFactor = 0.003;   // steepest descent damping factor
+
+	const g_sdEnergy = dim1( 20 ); // sdEnergy[20] electron state energy
+	const g_sdState = dim2( 20, g_NNMax ); // sdState[20][256] electron state 0...19
+	const g_wrk = dim1( g_NNMax ); // wrk[256] state work space in steepestDescent
+	const g_vv = dim1( g_NNMax );  // vv[256] external potential
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
@@ -69,17 +69,17 @@ const periodicPSD1D = (function(){ // ====================  periodicPSD1D Module
 		}
 		return a;
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( stateMax, vIndex ) {
 		g_iterCount = 0;
 		setInitialState(stateMax);
 		setPotential(vIndex);
 	}
-	
-	function setInitialState(stateMax) {
+
+	function setInitialState( stateMax ) {
 		const nnx=g_NNx;
 		for (let ist=0; ist<stateMax; ist++) {
 			for (let i=0; i<nnx; i++) {
@@ -88,10 +88,9 @@ const periodicPSD1D = (function(){ // ====================  periodicPSD1D Module
 			normalizeState(ist);
 		}
 	}
-	
-	function setPotential(vIndex) {
-		const nn=4, nnx=g_NNx, el=g_NNx*g_dx;
 
+	function setPotential( vIndex ) {
+		const nn=4, nnx=g_NNx, el=g_NNx*g_dx;
 		if (vIndex==0) { // 0:free space
 			for (let i=0; i<nnx; i++) {
 				g_vv[i] = 0.0;
@@ -103,10 +102,10 @@ const periodicPSD1D = (function(){ // ====================  periodicPSD1D Module
 			}
 		}
 	}
-	
-	
+
+
 	// --------------------  steepest descent iteration  --------------------
-	
+
 	function SDiteration( stateMax, iterMax ) {
 		for (let i=0; i<iterMax; i++) {
 			for (let ist=0; ist<stateMax; ist++) {
@@ -117,9 +116,9 @@ const periodicPSD1D = (function(){ // ====================  periodicPSD1D Module
 			g_iterCount += 1;
 		}
 	}
-	
-	function steepestDescent(ist,damp) {
-		const nnx=g_NNx, h2 = 2*g_dx*g_dx, fai=g_sdState[ist];
+
+	function steepestDescent( ist, damp ) {
+		const nnx=g_NNx, h2=2*g_dx*g_dx, fai=g_sdState[ist];
 		const ei = energyOfState(ist);
 		for (let i=0; i<nnx; i++) {
 			const ip1=(i+1)%nnx, im1=(i-1+nnx)%nnx;
@@ -131,10 +130,9 @@ const periodicPSD1D = (function(){ // ====================  periodicPSD1D Module
 		normalizeState(ist);
 		return ei;
 	}
-	
-	function energyOfState(ist) {
-		const nnx=g_NNx, h2 = 2*g_dx*g_dx, fai=g_sdState[ist];
-		
+
+	function energyOfState( ist ) {
+		const nnx=g_NNx, h2=2*g_dx*g_dx, fai=g_sdState[ist];
 		let s = 0.0, sn = 0.0;
 		for (let i=0; i<nnx; i++) {
 			const ip1=(i+1)%nnx, im1=(i-1+nnx)%nnx;
@@ -143,10 +141,9 @@ const periodicPSD1D = (function(){ // ====================  periodicPSD1D Module
 		}
 		return s/sn;
 	}
-	
-	function GramSchmidt(stateMax) {
+
+	function GramSchmidt( stateMax ) {
 		const nnx=g_NNx;
-		
 		normalizeState(0);
 		for (let istate=1; istate<stateMax; istate++) {
 			for (let ist=0; ist<istate; ist++) {
@@ -158,8 +155,8 @@ const periodicPSD1D = (function(){ // ====================  periodicPSD1D Module
 			normalizeState(istate);
 		}
 	}
-	
-	function sortState(stateMax) {
+
+	function sortState( stateMax ) {
 		const nnx=g_NNx;
 		for (let ist=stateMax-2; ist>=0; ist--) {
 			if (g_sdEnergy[ist]>g_sdEnergy[ist+1]+0.00001) {
@@ -174,11 +171,11 @@ const periodicPSD1D = (function(){ // ====================  periodicPSD1D Module
 			}
 		}
 	}
-	
-	
+
+
 	// --------------------  utility  --------------------
-	
-	function innerProduct(ist,jst) {
+
+	function innerProduct( ist, jst ) {
 		const nnx=g_NNx;
 		let s = 0.0;
 		for (let i=0; i<nnx; i++) {
@@ -186,8 +183,8 @@ const periodicPSD1D = (function(){ // ====================  periodicPSD1D Module
 		}
 		return s*g_dx;
 	}
-	
-	function normalizeState(ist) {
+
+	function normalizeState( ist ) {
 		const nnx=g_NNx;
 		let s = 0.0;
 		for (let i=0; i<nnx; i++) {
@@ -198,51 +195,51 @@ const periodicPSD1D = (function(){ // ====================  periodicPSD1D Module
 			g_sdState[ist][i] = a*g_sdState[ist][i];
 		}
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	// setInitialCondition( stateMax, vIndex )
-		evolve:			SDiteration,			// SDiteration( stateMax, iterMax )
-		
-		getAUinSI:		function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
-		getSysParam:	function() { return [ g_NNx, g_dx ]; },
-		getNow:			function() { return g_iterCount; },
-		getStEnergy:	function(ist) { return g_sdEnergy[ist]; },
-		getStDensity:	function(ist,i) { return g_sdState[ist][i]*g_sdState[ist][i]; },
-		getState:		function(ist,i) { return g_sdState[ist][i]; },
-		getVext:		function(i) { return g_vv[i]; },
+		init:       setInitialCondition, // setInitialCondition( stateMax, vIndex )
+		evolve:     SDiteration, // SDiteration( stateMax, iterMax )
+
+		getAUinSI:  function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:function() { return [ g_NNx, g_dx ]; },
+		getNow:     function() { return g_iterCount; },
+		getStEnergy:function(ist) { return g_sdEnergy[ist]; },
+		getStDensity:function(ist,i) { return g_sdState[ist][i]*g_sdState[ist][i]; },
+		getState:   function(ist,i) { return g_sdState[ist][i]; },
+		getVext:    function(i) { return g_vv[i]; },
 	};
-	
+
 })(); // ====================  periodicPSD1D end  ====================
 
 
 const js016 = (function(){ // ====================  js Module  ====================
-	
+
 	const theModule = periodicPSD1D;
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel
-	let canvas;					// canvas2d
+	const xCanvasSize = 480;// in pixel
+	const yCanvasSize = 480;
+	let canvas;
 	let ctx;
-	
+
 	let v_stateMax = 10;
 	let v_vIndex = 1; // 0:free-space, 1:Kronig-Penney
 	let v_iterMax = 2;
-	
+
 	let p_NNx, p_dx; // = theModule.getSysParam();
-	
+
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
-	
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
-		
+
 		animate();
-		
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -254,49 +251,49 @@ const js016 = (function(){ // ====================  js Module  =================
 			ctx.lineWidth = 1;
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
+
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_stateMax, v_vIndex ); // ( nn, BoxSizeInNM, contTemp )
 			[ p_NNx, p_dx ] = theModule.getSysParam();
 		}
-		
+
 		if ( !pauseFlag ) {
 			theModule.evolve( v_stateMax, v_iterMax );
 		} else if ( pauseFlag && stepFlag ) {
 			stepFlag = false;
 			theModule.evolve( v_stateMax, v_iterMax );
 		}
-		
+
 		draw( ctx );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	function draw( ctx ) {
 		let auLength, auTime, auEnergy, au2eV;
 		[ auLength, auTime, auEnergy, au2eV ] = theModule.getAUinSI();
 		const iterCount = theModule.getNow();
-		const xBoxPos = 30, yBoxPos = 20, xBoxSize = p_NNx, yBoxSize = 440;
-		const xp = 30, yp = 300, xtabp = 320;
-		
+		const xBoxPos=30, yBoxPos=20, xBoxSize=p_NNx, yBoxSize=440;
+		const xp=30, yp=300, xtabp=320;
+
 		// clear
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
+
 		// box
 		ctx.strokeStyle = "#888800";
 		ctx.strokeRect( xBoxPos, yBoxPos, xBoxSize, yBoxSize );
-		
+
 		drawLine( ctx, xp-20, yp, xp+p_NNx-1+20, yp, "#444444" ); // base line
-		
+
 		drawV( ctx, p_NNx, xp, yp, "#008800"); // Vext(x)
-		
+
 		// state energy table
 		ctx.fillStyle = "#888888";
 		ctx.fillText("state   energy(au)", xtabp, yp-v_stateMax*20);
@@ -306,7 +303,7 @@ const js016 = (function(){ // ====================  js Module  =================
 			ctx.fillStyle = col;
 			ctx.fillText(`|${ist}>   ${(theModule.getStEnergy(ist)).toFixed(6)}`, xtabp, yp-ist*20); // energy
 		}
-		
+
 		// caption
 		ctx.fillStyle = "#008800";
 		ctx.fillText("external potential:", xtabp, yCanvasSize-100);
@@ -315,7 +312,7 @@ const js016 = (function(){ // ====================  js Module  =================
 		ctx.fillText(`box size : ${(p_NNx*p_dx)} (au)`, xtabp, yCanvasSize-40);
 		ctx.fillText(`iteration = ${iterCount}`, xtabp, yCanvasSize-20);
 	}
-	
+
 	function drawState( ctx, ist, nnx, xp, yp, color ) {
 		const pmag=100.0, emag=15.0;
 		ctx.strokeStyle = color;
@@ -325,7 +322,7 @@ const js016 = (function(){ // ====================  js Module  =================
 		}
 		ctx.stroke();
 	}
-	
+
 	function drawV( ctx, nnx, xp, yp, color ) {
 		const vmag = 15.0;
 		ctx.strokeStyle = color;
@@ -335,7 +332,7 @@ const js016 = (function(){ // ====================  js Module  =================
 		}
 		ctx.stroke();
 	}
-	
+
 	function drawLine( ctx, x1, y1, x2, y2, color ) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -343,19 +340,18 @@ const js016 = (function(){ // ====================  js Module  =================
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	}
-	
-	
+
+
 	// --------------------  control  --------------------
-	
+
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-		
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
 		
@@ -365,27 +361,27 @@ const js016 = (function(){ // ====================  js Module  =================
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setTheme() {  // select theme
 		v_vIndex = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = true;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:			main,			// main()
+		main:  main, // main()
 		
-		reset:			reset,			// reset()
-		pause:			pause,			// pause()
-		step:			step,			// step()
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step, // step()
 		
-		setTheme:		setTheme,		// setTheme()
+		setTheme: setTheme, // setTheme()
 	};
-	
+
 })(); // ====================  js016 module end  ====================
 
 
@@ -424,8 +420,9 @@ window.addEventListener('load', js.main );
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
+
 </body>
 </html>
 
