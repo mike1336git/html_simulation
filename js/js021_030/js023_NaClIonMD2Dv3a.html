@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js023_NaClIonMD2D
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2017.05.08 created, last updated on 2018.11.16
 //    ver 0.0.1  2019.01.14 v1, last updated on 2021.05.12
 //    ver 0.0.2  2021.10.30 v2, last updated on 2021.10.30
-//    ver 0.0.3  2023.03.09 v3, last updated on 2023.08.20
+//    ver 0.0.3  2023.03.09 v3, last updated on 2024.02.22
 //
 // --------------------  molecular dynamics 2D
 //
@@ -45,46 +45,46 @@
 */
 
 const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ====================
-	
-	const g_AMU = 1.66053904e-27;				// (kg) atomic mass unit
-	const g_kB = 1.380649e-23;					// (J/K) Boltzmann's constant
-	const g_EE = 1.602176634e-19;				// (C) electron charge, energy : 1(eV) = EE(J)
+
+	const g_AMU = 1.66053904e-27; // (kg) atomic mass unit
+	const g_kB = 1.380649e-23;    // (J/K) Boltzmann's constant
+	const g_EE = 1.602176634e-19; // (C) electron charge, energy : 1(eV) = EE(J)
 	const g_eForceConst = 1.0/(4.0*Math.PI*8.85418782e-12); // epsilon0=8.85418782e-12
-	const g_nMax = 2000;						// array max
-	
-	let g_ionKind1 = 3;							// 3:Na+
-	let g_ionKind2 = 7;							// 7:Cl-
-	let g_nParticles = 100;						// number of particles
-	let g_sysTime = 0.0;						// (s) system time
-	let g_timeStep =  2.0*1.0e-15;				// (s) time step dt
-	let g_xMax = 6.0E-9;						// (m) x-Box size
-	let g_yMax = 6.0E-9;						// (m) y-Box size
-	let g_rCutoff = 1.0e-9;						// force cutoff length
-	let g_hh = 1.0e-12;							// forceTable r-division
-	let g_kineticEnergy = 0.0;					// (J) total kinetic energy
-	let g_potentialEnergy = 0.0;				// (J) total potential energy
-	
-	const g_xx = dim1( g_nMax );				// (m) x-component of i-th particle position
-	const g_yy = dim1( g_nMax );				// (m) y-component of i-th particle position
-	const g_vx = dim1( g_nMax );				// (m/s) x-component of i-th particle velocity
-	const g_vy = dim1( g_nMax );				// (m/s) y-component of i-th particle velocity
-	const g_ffx = dim1( g_nMax );				// (N) x-component of total force applied i-th particle
-	const g_ffy = dim1( g_nMax );				// (N) y-component of total force applied i-th particle
-	const g_mas = dim1( g_nMax );				// (kg) mass of i-th particle
-	const g_kind = dimInt1( g_nMax );			// kind of i-th particle 0:He 1:Ne 2:Ar 3:Kr 4:Xe 5:Hg
-	const g_potentialTable = dim3( 18, 18, 1002 );	// potential table [V[0], V[hh], V[2hh],..., V[rCutoff] ]
-	const g_forceTable = dim3( 18, 18, 1002 );	// force table [F[0], F[hh], F[2hh],..., F[rCutoff] ]
-	const g_reg = dimInt2( g_nMax, 100 );		// reg[i][0]:total number of particles near i-th particle
+	const g_nMax = 2000;          // array max
+
+	let g_ionKind1 = 3;    // 3:Na+
+	let g_ionKind2 = 7;    // 7:Cl-
+	let g_nParticles = 100;// number of particles
+	let g_sysTime = 0.0;   // (s) system time
+	let g_timeStep =  2.0*1.0e-15; // (s) time step dt
+	let g_xMax = 6.0E-9;   // (m) x-Box size
+	let g_yMax = 6.0E-9;   // (m) y-Box size
+	let g_rCutoff = 1.0e-9;// force cutoff length
+	let g_hh = 1.0e-12;    // forceTable r-division
+	let g_kineticEnergy = 0.0; // (J) total kinetic energy
+	let g_potentialEnergy = 0.0; // (J) total potential energy
+
+	const g_xx = dim1( g_nMax );  // (m) x-component of i-th particle position
+	const g_yy = dim1( g_nMax );  // (m) y-component of i-th particle position
+	const g_vx = dim1( g_nMax );  // (m/s) x-component of i-th particle velocity
+	const g_vy = dim1( g_nMax );  // (m/s) y-component of i-th particle velocity
+	const g_ffx = dim1( g_nMax ); // (N) x-component of total force applied i-th particle
+	const g_ffy = dim1( g_nMax ); // (N) y-component of total force applied i-th particle
+	const g_mas = dim1( g_nMax ); // (kg) mass of i-th particle
+	const g_kind = dimInt1( g_nMax ); // kind of i-th particle 0:He 1:Ne 2:Ar 3:Kr 4:Xe 5:Hg
+	const g_potentialTable = dim3( 18, 18, 1002 ); // potential table [V[0], V[hh], V[2hh],..., V[rCutoff] ]
+	const g_forceTable = dim3( 18, 18, 1002 );  // force table [F[0], F[hh], F[2hh],..., F[rCutoff] ]
+	const g_reg = dimInt2( g_nMax, 100 );       // reg[i][0]:total number of particles near i-th particle
 												// reg[i][j]:particle number near i-th particle, (j>0)
-	
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
-	
+
 	function dimInt1( n ) {
 		return new Int32Array( n );
 	}
-	
+
 	function dimInt2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -92,7 +92,7 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 		}
 		return a;
 	}
-	
+
 	function dim3( ni, nj, nk ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -103,10 +103,10 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 		}
 		return a;
 	}
-	
-	
+
+
 	// --------------------  SXion potential data  --------------------
-	
+
 	//    0 mass,1 charge,     2  a ,     3  b , 4 c , 5  r-ion,  6  color,  7 str
 	const g_SXion = [
 		[ 10.81*g_AMU,  3.0*g_EE, 0.720e-10, 0.080e-10,  0.0, 0.23e-10, "#ff4060", "B+++"  ], //  0
@@ -127,13 +127,13 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 		[ 39.95*g_AMU,  0.0*g_EE, 1.878e-10, 0.117e-10,38.53, 1.70e-10, "#00ff00", "Ar"    ], // 15
 		[ 83.80*g_AMU,  0.0*g_EE, 2.041e-10, 0.130e-10,55.33, 1.83e-10, "#40ff00", "Kr"    ], // 16
 		[ 131.3*g_AMU,  0.0*g_EE, 2.258e-10, 0.145e-10,85.55, 1.99e-10, "#80ff00", "Xe"    ] ];//17
-	
+
 	const g_rCollision = [];		// (m) V(r) = 0 at r==g_rCollision[kind]
 	const g_rBond = [];			// (m) bpnd length == 2.0*g_rBond[kind]
 	const g_massOf = [];			// (kg) massOf[kind] : mass of kind
 	const g_ionStrOf = [];		// strOf[kind] : string of kind, such as "Na+"
 	const g_colorOf = [];			// colorOf[kind] : color of kind
-	
+
 	(function() {
 		const n=g_SXion.length;
 		for (let i=0; i<n; i++) {
@@ -148,13 +148,13 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 	//					0      1      2     3      4      5      6      7      8      9     
 	const g_strOf = [  "B",  "O",  "F", "Na", "Mg", "Al", "Si", "Cl",  "K", "Ca",
 						"Ti", "Sr", "Ba", "He", "Ne", "Ar", "Kr", "Xe" ];
-	
+
 	function colorStrOf(kind) {
 		return "<span style='color:"+g_colorOf[kind]+"'>"+g_strOf[kind]+"</span>";
 	}
-	
+
 	//--- set forceTable[kindi][kindj][ir] and potentialTable[kindi][kindj][ir]
-	
+
 	function setForceTable() {
 		const hh=g_hh;
 		for (let ki=0; ki<18; ki++) {
@@ -179,8 +179,8 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 			}
 		}
 	}
-	
-	function cutoff(r) {
+
+	function cutoff( r ) {
 		let ret;
 		if (r>0 && r<0.8*g_rCutoff) {
 			ret = 1.0;
@@ -191,10 +191,10 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 		}
 		return ret;
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( material, boxSizeInNM, contTemp ) {
 		const n=6;
 		let lattice;
@@ -235,8 +235,8 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 		g_nParticles = setNaClTypeBlock(0, g_ionKind1, g_ionKind2, n, n, lattice, s, s);
 		ajustVelocity(contTemp);
 	}
-	
-	function setNaClTypeBlock(ii, knd1, knd2, nx, ny, lattice, xPos, yPos) {
+
+	function setNaClTypeBlock( ii, knd1, knd2, nx, ny, lattice, xPos, yPos ) {
 		let ipp = ii;
 		const a = lattice/2.0;
 		for (let i=0; i<2*nx; i++) {
@@ -255,8 +255,8 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 		}
 		return ipp;
 	}
-	
-	function setParticle(i, knd, x, y) {
+
+	function setParticle( i, knd, x, y ) {
 		g_xx[i] = x;
 		g_yy[i] = y;
 		g_vx[i] = 200.0*normalRandom3();
@@ -266,15 +266,15 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 		g_kind[i] = knd;
 		g_mas[i] = g_massOf[knd];
 	}
-	
+
 	// normal distributed random number: -3.0 <= normalRandom3() < 3.0
 	function normalRandom3() {
 		return (Math.random()+Math.random()+Math.random()+Math.random()+Math.random()+Math.random()-3.0);
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
+
 	function timeEvolution( tempMode, contTemp ) {
 		if (tempMode==1) ajustVelocity(contTemp);
 		registerNearParticles();
@@ -283,8 +283,8 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 			moveParticles(g_timeStep);
 		}
 	}
-	
-	function moveParticles(dt) {
+
+	function moveParticles( dt ) {
 		const nn=g_nParticles;
 		for (let i=0; i<nn; i++) {
 			const a = 0.5*dt/g_mas[i];
@@ -304,14 +304,14 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 			g_kineticEnergy += 0.5*g_mas[i]*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
 		}
 	}
-	
+
 	function calcForce() {
 		const nn=g_nParticles, s05 = 0.5*3.418e-10;
 		g_potentialEnergy = 0.0;
 		for (let i=0; i<nn; i++) {
 			g_ffx[i]=0; g_ffy[i]=0;
 		}
-		
+
 		for (let i=0; i<nn-1; i++) {
 			for (let k=1; k<g_reg[i][0]; k++) {
 				const j = g_reg[i][k];
@@ -333,24 +333,24 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 			g_ffy[i] += boundaryForce(g_yy[i]+s05)+boundaryForce(g_yy[i]-g_yMax-s05);
 		}
 	}
-	
-	function force(r,kndi,kndj) { // forceTable - linear interporation
+
+	function force( r, kndi, kndj ) { // forceTable - linear interporation
 		const hh=g_hh;
 		const ir = Math.floor(r/hh);
 		const a = r - ir*hh;
 		g_potentialEnergy += ((hh-a)*g_potentialTable[kndi][kndj][ir] + a*g_potentialTable[kndi][kndj][ir+1])/hh;
 		return ((hh-a)*g_forceTable[kndi][kndj][ir] + a*g_forceTable[kndi][kndj][ir+1])/hh;
 	}
-	
-	function boundaryForce(r) {
+
+	function boundaryForce( r ) {
 		const ri = (3.418e-10/r);
 		const r6 = ri*ri*ri*ri*ri*ri;
 		g_potentialEnergy += 4.0*0.5*1.711e-21*r6*(r6-1.0); // epsilonOfAr = 1.711e-21
 		return (24.0*0.5*1.711e-21*r6*(2.0*r6-1.0)/r);
 	}
-	
+
 	//--- registeration
-	
+
 	function registerNearParticles() {
 		const nn=g_nParticles;
 		const rCut = g_rCutoff+20*2000*g_timeStep;
@@ -367,7 +367,7 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 			g_reg[i][0] = k;
 		}
 	}
-	
+
 	function maxNearParticles() {
 		const nn=g_nParticles;
 		let mx=0;
@@ -376,10 +376,10 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 		}
 		return (mx-1);
 	}
-	
-	
+
+
 	// --------------------  utility  --------------------
-	
+
 	function systemTemperature() {
 		const nn=g_nParticles;
 		let ek=0.0;  //kinetic energy (J)
@@ -388,7 +388,7 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 		}
 		return ek/(nn*g_kB);
 	}
-	
+
 	function ajustVelocity(temp) {
 		const nn=g_nParticles;
 		const a = Math.sqrt(temp/systemTemperature());
@@ -397,62 +397,62 @@ const NaClIonMD2D = (function(){ // ====================  NaClIonMD2D Module  ==
 			g_vy[i] = a*g_vy[i];
 		}
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	// setInitialCondition( material, boxSizeInNM, contTemp)
-		evolve:			timeEvolution,			// timeEvolution( tempMode, contTemp )
+		init:       setInitialCondition, // setInitialCondition( material, boxSizeInNM, contTemp)
+		evolve:     timeEvolution, // timeEvolution( tempMode, contTemp )
+
+		setTemp:    ajustVelocity, // ajustVelocity( temp )
 		
-		setTemp:		ajustVelocity,			// ajustVelocity( temp )
-		
-		getSysParam:	function() { return [ g_ionKind1, g_ionKind2, g_nParticles, g_timeStep, g_xMax, g_yMax ]; },
-		getNow:			function() { return [ g_sysTime, systemTemperature(), g_kineticEnergy, g_potentialEnergy ]; },
-		getKindStr:		function(kind) { return g_strOf[kind]; },
-		
-		getBondLength:	function(i,j) { return ( g_rBond[g_kind[i]] + g_rBond[g_kind[j]] ); },
+		getSysParam:function() { return [ g_ionKind1, g_ionKind2, g_nParticles, g_timeStep, g_xMax, g_yMax ]; },
+		getNow:     function() { return [ g_sysTime, systemTemperature(), g_kineticEnergy, g_potentialEnergy ]; },
+		getKindStr: function(kind) { return g_strOf[kind]; },
+
+		getBondLength: function(i,j) { return ( g_rBond[g_kind[i]] + g_rBond[g_kind[j]] ); },
 		getChargeProduct: function(i,j) { return g_SXion[g_kind[i]][1]*g_SXion[g_kind[j]][1]; },
-		getNearList:	function(i) { return g_reg[i]; },
-		getIonData:		function(i) { return [ g_kind[i], g_rCollision[g_kind[i]], g_rBond[g_kind[i]] ]; },
-		
-		getPosition:	function(i) { return [ g_xx[i], g_yy[i] ]; },
-		getVelocity:	function(i) { return [ g_vx[i], g_vy[i] ]; },
-		getForce:		function(i) { return [ g_ffx[i], g_ffy[i] ]; },
+		getNearList:function(i) { return g_reg[i]; },
+		getIonData: function(i) { return [ g_kind[i], g_rCollision[g_kind[i]], g_rBond[g_kind[i]] ]; },
+
+		getPosition:function(i) { return [ g_xx[i], g_yy[i] ]; },
+		getVelocity:function(i) { return [ g_vx[i], g_vy[i] ]; },
+		getForce:   function(i) { return [ g_ffx[i], g_ffy[i] ]; },
 	};
-	
+
 })(); // ====================  NaClIonMD2D end  ====================
 
 
 const js023 = (function(){ // ====================  js Module  ====================
-	
+
 	const theModule = NaClIonMD2D;
 	const xCanvasSize = 480;	// in pixel
 	const yCanvasSize = 480;	// in pixel
 	let canvas;
 	let ctx;
-	
+
 	let v_theme = 0;			// 0:NaCl  1:MgO  2:CaO  3:BaO  4:NaF  5:KF  6:KCl
 	let v_BoxSizeInNM = 5.0;
 	let v_contTemp = 300.0;
 	let v_tempMode = 0;			// 0: adiabatic, 1: temp.control
-	
+
 	let p_kind1, p_kind2, p_nParticles, p_timeStep, p_xMax, p_yMax; // = theModule.getSysParam();
-	
+
 	let nCalc = 1;
 	let dispMode = 0;
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
-	
-	
+
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
-		
+
 		animate();
-	
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -464,16 +464,16 @@ const js023 = (function(){ // ====================  js Module  =================
 			ctx.lineWidth = 1;
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
+
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_theme, v_BoxSizeInNM, v_contTemp );
 			[ p_kind1, p_kind2, p_nParticles, p_timeStep, p_xMax, p_yMax ] = theModule.getSysParam();
 		}
-		
+
 		if ( !pauseFlag ) {
 			for(let i=0; i<nCalc; i++ ) {
 				theModule.evolve( v_tempMode, v_contTemp );
@@ -482,29 +482,29 @@ const js023 = (function(){ // ====================  js Module  =================
 			stepFlag = false;
 			theModule.evolve( v_tempMode, v_contTemp );
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	const ballColor = [ 
 		/* 0:B3+  */ "#ff4060", /* 1:O--  */ "#8000ff", /* 2:F-   */ "#0080ff", /* 3:Na+  */ "#ff0000",
 		/* 4:Mg++ */ "#ff6000", /* 5:Al4+ */ "#ff4080", /* 6:Si4+ */ "#ff8040", /* 7:Cl-  */ "#4444ff",
 		/* 8:K+   */ "#ff4000", /* 9:Ca++ */ "#ff8000", /*10:Ti4+ */ "#ff8060", /*11:Sr++ */ "#ffaf00",
 		/*12:Ba++ */ "#ffbf00" ];
-	
+
 	function draw( ctx, dispMode ) {
-		const xp = 40, yp = 5, xSize = 400, ySize = 400, scale = xSize/p_xMax, yTextPos= 430;
-		
+		const xp=40, yp=5, xSize=400, ySize=400, scale=xSize/p_xMax, yTextPos=430;
+
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
+
 		ctx.strokeStyle = "#888800";
 		ctx.strokeRect( xp, yp, xSize, ySize );
-		
+
 		if ( dispMode==0 ) {
 			drawBalls( ctx, scale, xp, yp );
 		} else if ( dispMode==1 || dispMode==2 ) {
@@ -514,7 +514,7 @@ const js023 = (function(){ // ====================  js Module  =================
 			drawBonds( ctx, 2, scale, xp, yp );
 			drawBalls( ctx, scale, xp, yp, 0.4 );
 		}
-		
+
 		// caption
 		let sysTime, temperature, kineticEnergy, potentialEnergy;
 		[ sysTime, temperature, kineticEnergy, potentialEnergy ] = theModule.getNow();
@@ -534,9 +534,9 @@ const js023 = (function(){ // ====================  js Module  =================
 		ctx.fillText(`Energy = ${(kineticEnergy+potentialEnergy).toExponential(4)} (J)`, xp+200, yTextPos+40);
 		//document.getElementById("text_caption").innerHTML = "minimum molecular dynamics code"
 	}
-	
+
 	function drawBalls( ctx, scale, xp, yp, ballScale ) {
-		const nn = p_nParticles, yMax = p_yMax, twoPi = 2.0*Math.PI;
+		const nn=p_nParticles, yMax=p_yMax, twoPi=2.0*Math.PI;
 		const bScale = (ballScale==undefined) ? 1.0 : ballScale;
 		for (let i=0; i<nn; i++) {
 			let x, y; [ x, y ] = theModule.getPosition(i);
@@ -547,9 +547,9 @@ const js023 = (function(){ // ====================  js Module  =================
 			ctx.fill();
 		}
 	}
-	
+
 	function strokeBalls( ctx, scale, xp, yp ) {
-		const nn = p_nParticles, yMax = p_yMax, twoPi = 2.0*Math.PI;
+		const nn=p_nParticles, yMax=p_yMax, twoPi=2.0*Math.PI;
 		for (let i=0; i<nn; i++) {
 			let x, y; [ x, y ] = theModule.getPosition(i);
 			let kind, rCollision, rBond; [ kind, rCollision, rBond ] = theModule.getIonData(i);
@@ -559,9 +559,9 @@ const js023 = (function(){ // ====================  js Module  =================
 			ctx.stroke();
 		}
 	}
-	
+
 	function drawBonds( ctx, bondMode, scale, xp, yp ) { // single kind only - using nearList
-		const nn = p_nParticles, yMax = p_yMax, pi = Math.PI;
+		const nn=p_nParticles, yMax=p_yMax, pi=Math.PI;
 		for (let i=0; i<nn-1; i++) {
 			let xi, yi; [ xi, yi ] = theModule.getPosition(i);
 			const nearList = theModule.getNearList(i);
@@ -589,7 +589,7 @@ const js023 = (function(){ // ====================  js Module  =================
 			}
 		}
 	}
-	
+
 	function drawLine(ctx, x1, y1, x2, y2, color) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -597,19 +597,18 @@ const js023 = (function(){ // ====================  js Module  =================
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	}
-	
-	
+
+
 	// --------------------  control  --------------------
-	
+
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-		
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
 		
@@ -619,49 +618,48 @@ const js023 = (function(){ // ====================  js Module  =================
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setTheme() {
 		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = true;
 	}
-	
+
 	function setTempMode() {
 		v_tempMode = 0 + document.getElementById("slct_tempMode").selectedIndex;
 	}
-	
+
 	function setContTemp() {  // range mixing
 		v_contTemp = Number(document.getElementById("range_temp").value);
 		document.getElementById("text_temp").innerHTML = " " + v_contTemp.toFixed(0);
 	}
-	
+
 	function setDispMode() {
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
 	}
-	
+
 	function setNcalc() {
 		nCalc = 1 + document.getElementById("slct_nCalc").selectedIndex;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:			main,			// main()
-		
-		// dom control
-		reset:			reset,			// reset()
-		pause:			pause,			// pause()
-		step:			step,			// step()
-		
-		setTheme:		setTheme,		// setTheme()
-		setTempMode:	setTempMode,	// setTempMode()
-		setContTemp:	setContTemp,	// setContTemp()
-		setDispMode:	setDispMode,	// setDispMode()
-		setNcalc:		setNcalc,		// setNcalc()
+		main:  main,  // main()
+
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step,  // step()
+
+		setTheme:   setTheme,    // setTheme()
+		setTempMode:setTempMode, // setTempMode()
+		setContTemp:setContTemp, // setContTemp()
+		setDispMode:setDispMode, // setDispMode()
+		setNcalc:   setNcalc,    // setNcalc()
 	};
-	
+
 })(); // ====================  js023 module end  ====================
 
 
@@ -724,8 +722,9 @@ style="width:360px" oninput="js.setContTemp()">
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
+
 </body>
 </html>
 
