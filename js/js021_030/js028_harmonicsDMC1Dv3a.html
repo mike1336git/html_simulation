@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js028_harmonicsDMC1D
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT )
 //
 //    ver 0.0.0  2017.05.16 created, last updated on 2018.11.17
 //    ver 0.0.1  2019.01.15 v1, last updated on 2021.05.19
 //    ver 0.0.2  2021.10.30 v2, last updated on 2021.10.30
-//    ver 0.0.3  2023.03.14 v3, last updated on 2023.08.20
+//    ver 0.0.3  2023.03.14 v3, last updated on 2024.02.27
 //
 // --------------------  diffusion Monte-Carlo method 1D
 //
@@ -44,40 +44,40 @@
 */
 
 const harmonicsDMC1D = (function(){ // ====================  harmonicsDMC1D Module  ====================
-	
+
 	// au: atomic unit hBar=1,e=1,me=1,a0=1
-	const g_auLength = 5.29177211e-11;		// (m) 1(au) = auLength (m)
-	const g_auTime = 2.418884326e-17;		// (s) 1(au) = auTime (s)
-	const g_auEnergy = 4.35974465e-18;		// (J) 1(au) = auEnergy (J)
-	const g_au2eV = 27.211386;				// (eV) 1(au) = 27.211386 (eV)
-	const g_hbar = 1.0;						// hbar = 1 in au(atomic unit)
-	
-	let g_NNr = 2000;						// number of replica
-	let g_NNb = 100;						// max number of box division 0:x=-5.0 50:x=0.0 100:x=+5.0
+	const g_auLength = 5.29177211e-11; // (m) 1(au) = auLength (m)
+	const g_auTime = 2.418884326e-17;  // (s) 1(au) = auTime (s)
+	const g_auEnergy = 4.35974465e-18; // (J) 1(au) = auEnergy (J)
+	const g_au2eV = 27.211386;         // (eV) 1(au) = 27.211386 (eV)
+	const g_hbar = 1.0;                // hbar = 1 in au(atomic unit)
+
+	let g_NNr = 2000;     // number of replica
+	let g_NNb = 100;      // max number of box division 0:x=-5.0 50:x=0.0 100:x=+5.0
 	let g_dx = 0.1;
-	let g_sysTime = 0.0;					// (au) system time
-	let g_timeStep = 0.1;					// (au) time division dt
-	let g_referenceEnergy = 0.0;			// (au) reference energy of the system
-	let g_energy = g_referenceEnergy;		// (au) system energy
-	let g_NN0 = g_NNr/2;					// memory of NN1
-	let g_NN1 = g_NN0;						// number of alive replicas
-	let g_NN00 = 1000;						// initial number of alive replicas
-	let g_vIndex = 0;						// potential index 0:parabolic 1:well 2:well 2
-	
-	const g_repStatus = dimInt1( g_NNr );	// status of 1-th replica
-	const g_replica = dim2( g_NNr, 3 );		// replica[i][0] x-coordinate of 1-th replica
-	const g_box = dimInt1( g_NNb );			// box[ix] number of replica, ix = Math.floor(50.0+x*10+0.5);
-	const g_psi = dim1( g_NNb );			// wave function psi[ix]
-	const g_dens = dim1( g_NNb );			// density dens[ix] = a*psi[ix]*psi[ix], sum(dens[ix],ix)=1
-	
+	let g_sysTime = 0.0;  // (au) system time
+	let g_timeStep = 0.1; // (au) time division dt
+	let g_referenceEnergy = 0.0; // (au) reference energy of the system
+	let g_energy = g_referenceEnergy; // (au) system energy
+	let g_NN0 = g_NNr/2;  // memory of NN1
+	let g_NN1 = g_NN0;    // number of alive replicas
+	let g_NN00 = 1000;    // initial number of alive replicas
+	let g_vIndex = 0;     // potential index 0:parabolic 1:well 2:well 2
+
+	const g_repStatus = dimInt1( g_NNr ); // status of 1-th replica
+	const g_replica = dim2( g_NNr, 3 );   // replica[i][0] x-coordinate of 1-th replica
+	const g_box = dimInt1( g_NNb );       // box[ix] number of replica, ix = Math.floor(50.0+x*10+0.5);
+	const g_psi = dim1( g_NNb );          // wave function psi[ix]
+	const g_dens = dim1( g_NNb );         // density dens[ix] = a*psi[ix]*psi[ix], sum(dens[ix],ix)=1
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
-	
+
 	function dimInt1( n ) {
 		return new Int32Array( n );
 	}
-	
+
 	function dim2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -85,10 +85,10 @@ const harmonicsDMC1D = (function(){ // ====================  harmonicsDMC1D Modu
 		}
 		return a;
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( vIndex ) {
 		const nnr=g_NNr;
 		g_vIndex = vIndex;
@@ -105,21 +105,21 @@ const harmonicsDMC1D = (function(){ // ====================  harmonicsDMC1D Modu
 		g_NN0 = numberOfReplica();
 		g_NN00 = g_NN0;
 	}
-	
-	
+
+
 	// --------------------  evolve DMC  --------------------
-	
-	function evolveDMC(nCalc) {
+
+	function evolveDMC( nCalc ) {
 		for (let i=0; i<nCalc; i++) {
 			walkReplica();
 		}
 	}
-	
+
 	function walkReplica() {
 		const nnr=g_NNr;
 		g_sysTime = g_sysTime + g_timeStep;
 		const sqrtdt = Math.sqrt(g_timeStep);
-		
+
 		// (1) replica walk
 		for (let i=0; i<nnr; i++) {
 			if (g_repStatus[i]==1) {
@@ -147,12 +147,12 @@ const harmonicsDMC1D = (function(){ // ====================  harmonicsDMC1D Modu
 		setPsi(1);
 		setDensity();
 	}
-	
+
 	function GaussianRandom() {  //Box-Muller transform  
 		return Math.sqrt(-2*Math.log(1-Math.random()))*Math.sin(2*Math.PI*Math.random());
 	}
-	
-	function birthDeathProcess(i) {
+
+	function birthDeathProcess( i ) {
 		const xi = g_replica[i][0];
 		const mn = Math.floor(weightFunction(xi)+Math.random());
 		if (mn==0) {
@@ -164,12 +164,12 @@ const harmonicsDMC1D = (function(){ // ====================  harmonicsDMC1D Modu
 			birthReplica(i);
 		}
 	}
-	
-	function weightFunction(xn) {
+
+	function weightFunction( xn ) {
 		return Math.exp(-(potential(xn,g_vIndex)-g_referenceEnergy)*g_timeStep/g_hbar);
 	}
-	
-	function potential(x,vIndex) {
+
+	function potential( x, vIndex ) {
 		let ret=0.0;
 		if (vIndex==0) { // 0:parabolic V(x)= 0.5*x^2
 			ret = 0.5*x*x;
@@ -180,18 +180,17 @@ const harmonicsDMC1D = (function(){ // ====================  harmonicsDMC1D Modu
 		}
 		return ret;
 	}
-	
-	function birthReplica(i) {
+
+	function birthReplica( i ) {
 		const ip = seekSpace(i);
 		if (ip>=0) {
 			g_repStatus[ip] = 2;
 			g_replica[ip][0] = g_replica[i][0];
 		}
 	}
-	
-	function seekSpace(istart) {
-		const nnr=g_NNr;
 
+	function seekSpace( istart ) {
+		const nnr=g_NNr;
 		let ip = -1;
 		for (let i=1; i<nnr; i++) {
 			if (g_repStatus[(i+istart)%nnr]==0) {
@@ -201,7 +200,7 @@ const harmonicsDMC1D = (function(){ // ====================  harmonicsDMC1D Modu
 		}
 		return ip;
 	}
-	
+
 	function numberOfReplica() {
 		const nnr=g_NNr;
 		let n = 0;
@@ -210,10 +209,9 @@ const harmonicsDMC1D = (function(){ // ====================  harmonicsDMC1D Modu
 		}
 		return n;
 	}
-	
-	function setPsi(sw) {
+
+	function setPsi( sw ) {
 		const nnr=g_NNr, nnb=g_NNb;
-		
 		for (let ix=0; ix<nnb; ix++) {
 			g_box[ix] = 0;
 		}
@@ -233,7 +231,7 @@ const harmonicsDMC1D = (function(){ // ====================  harmonicsDMC1D Modu
 			}
 		}
 	}
-	
+
 	function setDensity() {
 		const nnb=g_NNb;
 		
@@ -242,55 +240,55 @@ const harmonicsDMC1D = (function(){ // ====================  harmonicsDMC1D Modu
 			g_dens[ix] = g_psi[ix]*g_psi[ix]*r;
 		}
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	// setInitialCondition( vIndex )
-		evolve:			evolveDMC,				// evolveDMC( nCalc )
-		
-		getAUinSI:		function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
-		getSysParam:	function() { return [ g_NNr, g_NNb, g_dx, g_timeStep ]; },
-		getNow:			function() { return [ g_sysTime, g_energy, g_NN1 ]; },
-		
-		getRepStatus:	function(ir) { return g_repStatus[ir]; },
-		getRepPos:		function(ir) { return g_replica[ir][0]; },
-		getPsi:			function(ix) { return g_psi[ix]; },
-		getVext:		function(ix) { return potential((ix-g_NNb/2)*g_dx,g_vIndex); },
+		init:       setInitialCondition, // setInitialCondition( vIndex )
+		evolve:     evolveDMC, // evolveDMC( nCalc )
+
+		getAUinSI:  function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:function() { return [ g_NNr, g_NNb, g_dx, g_timeStep ]; },
+		getNow:     function() { return [ g_sysTime, g_energy, g_NN1 ]; },
+
+		getRepStatus: function(ir) { return g_repStatus[ir]; },
+		getRepPos:  function(ir) { return g_replica[ir][0]; },
+		getPsi:     function(ix) { return g_psi[ix]; },
+		getVext:    function(ix) { return potential((ix-g_NNb/2)*g_dx,g_vIndex); },
 	};
-	
+
 })(); // ====================  harmonicsDMC1D end  ====================
 
 
 const js028 = (function(){ // ====================  js Module  ====================
-	
+
 	const theModule = harmonicsDMC1D;
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel
-	let canvas;					// canvas2d
+	const xCanvasSize = 480; // in pixel
+	const yCanvasSize = 480;
+	let canvas;
 	let ctx;
-	
+
 	// v_vIndex:	0: parabolic V(x)= 0.5*x^2
 	// 				1: well V(x)= 0.0(|x|<1.0) 10.0(else)
 	//				2: well V(x)= -1(|x|<1.0) 0.0(else)
 	let v_vIndex = 0;
 	let v_nCalc = 1;
-	
+
 	let p_NNrep, p_NNx, p_dx, p_timeStep; // = theModule.getSysParam();
-	
+
 	let dispMode = 0;
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
-	
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
-		
+
 		animate();
-		
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -302,57 +300,56 @@ const js028 = (function(){ // ====================  js Module  =================
 			ctx.lineWidth = 1;
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
+
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_vIndex ); // ( nn, BoxSizeInNM, contTemp )
 			[ p_NNrep, p_NNx, p_dx, p_timeStep ] = theModule.getSysParam();
 		}
-		
+
 		if ( !pauseFlag ) {
 			theModule.evolve( v_nCalc );
 		} else if ( pauseFlag && stepFlag ) {
 			stepFlag = false;
 			theModule.evolve( v_nCalc );
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	function draw( ctx, dispMode ) {
-		const NNrep = p_NNrep, NNx = p_NNx, dx = p_dx;
-		const xBoxPos = 40, yBoxPos = 20, xBoxSize = NNx*4, yBoxSize = 360;
-		const xp = 40, yp = 20;
-		const pmag = 4.0, emag = 25.0;
-		
+		const NNrep=p_NNrep, NNx=p_NNx, dx=p_dx;
+		const xBoxPos=40, yBoxPos=20, xBoxSize=NNx*4, yBoxSize=360;
+		const xp=40, yp=20, pmag=4.0, emag=25.0;
+
 		// clear
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
+
 		// box
 		ctx.strokeStyle = "#888800";
 		ctx.strokeRect( xBoxPos, yBoxPos, xBoxSize, yBoxSize );
-		
+
 		drawLine( ctx, xp-20, yp+300, xp+xBoxSize+20, yp+300, "#444444" ); // base line
-		
+
 		const Vext = function(i) { return emag*theModule.getVext(i); };
 		drawFunc( ctx, Vext, "#00aa00", xp, yp); // Vext(x)
-		
+
 		const phi = function(i) { return pmag*theModule.getPsi(i); };
 		drawFunc( ctx, phi, "#aaaa00", xp, yp); 
-		
+
 		ctx.fillStyle = "#00aa00";
 		ctx.fillText("V(x)", 340, 60);
 		ctx.fillStyle = "#aaaa00";
 		ctx.fillText("phi(x)", 340, 40);
-		
+
 		let sysTime, energy, NN1;
 		[ sysTime, energy, NN1 ] = theModule.getNow();
 		ctx.fillStyle = "#888888";
@@ -361,12 +358,12 @@ const js028 = (function(){ // ====================  js Module  =================
 		ctx.fillText(`energy = ${energy.toFixed(6)} (au)`, xp, yCanvasSize-30);
 		ctx.fillText(`alive replicas = ${NN1}`, xp, yCanvasSize-10);
 		ctx.fillText(`total replicas = ${NNrep}`, xp+220, yCanvasSize-10);
-		
+
 		document.getElementById("text_caption").innerHTML = 
 			`energy calculated from phi(x) shape = ${energyOfPhi().toFixed(6)} (au)` +
 			`<br> non-smoothed phi(x) shape causes somewhat higher energy`;
 	}
-	
+
 	function drawFunc( ctx, func, color, xp, yp ) {
 		const nnx = p_NNx, xScale= 4, yPos = 300+yp
 		ctx.strokeStyle = color;
@@ -376,7 +373,7 @@ const js028 = (function(){ // ====================  js Module  =================
 		}
 		ctx.stroke();
 	}
-	
+
 	function drawLine( ctx, x1, y1, x2, y2, color ) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -384,7 +381,7 @@ const js028 = (function(){ // ====================  js Module  =================
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	}
-	
+
 	function energyOfPhi() {
 		// E = <phi| -0.5*d^2/dx^2 + Vext |phi> / <phi | phi>
 		const Vext = function(i) { return theModule.getVext(i); };
@@ -399,19 +396,18 @@ const js028 = (function(){ // ====================  js Module  =================
 		}
 		return s/sn;
 	}
-	
-	
+
+
 	// --------------------  control  --------------------
-	
+
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
 		
@@ -421,32 +417,32 @@ const js028 = (function(){ // ====================  js Module  =================
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setTheme() {  // select theme
 		v_vIndex = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = true;
 	}
-	
+
 	function setDispMode() {
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;	
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
 		main:			main,			// main()
-		
+
 		reset:			reset,			// reset()
 		pause:			pause,			// pause()
 		step:			step,			// step()
-		
+
 		setTheme:		setTheme,		// setTheme()
 		setDispMode:	setDispMode,	// setDispMode()
 	};
-	
+
 })(); // ====================  js028 module end  ====================
 
 
@@ -484,17 +480,9 @@ window.addEventListener('load', js.main );
 <button id="step_button" onClick="js.step()">step</button>
 <br>
 
-<!--
-<label>disp. mode:</label>
-<select id="slct_dispMode" onChange="js.setDispMode()">
-<option>threejs</option><option>canvas2d</option>
-</select>
-<br>
--->
-
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
 
 </body>
