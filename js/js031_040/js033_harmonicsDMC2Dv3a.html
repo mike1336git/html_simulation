@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js033_harmonicsDMC2D
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2017.05.23 created, last updated on 2018.11.18
 //    ver 0.0.1  2019.01.16 v1, last updated on 2021.05.24
 //    ver 0.0.2  2021.10.31 v2, last updated on 2021.10.31
-//    ver 0.0.3  2023.03.20 v3, last updated on 2023.08.21
+//    ver 0.0.3  2023.03.20 v3, last updated on 2024.03.03
 //
 // -------------------- diffusion Monte-Carlo method 2D
 //
@@ -44,38 +44,38 @@
 */
 
 const harmonicsDMC2D = (function(){ // ====================  harmonicsDMC2D Module  ====================
-	
-	const g_auLength = 5.29177211e-11;		// (m) 1(au) = auLength (m), (au: atomic unit hBar=1,e=1,me=1,a0=1)
-	const g_auTime = 2.418884326e-17;		// (s) 1(au) = auTime (s)
-	const g_auEnergy = 4.35974465e-18;		// (J) 1(au) = auEnergy (J)
-	const g_au2eV = 27.211386;				// (eV) 1(au) = 27.211386 (eV)
-	const g_hbar = 1.0;						// hbar = 1 in au(atomic unit)
-	
-	let g_NNr = 2000;						// number of replica
-	let g_NNb = 100;						// max number of box division 0:x=-5.0 50:x=0.0 100:x=+5.0
-	let g_sysTime = 0.0;					// (au) system time
-	let g_dt = 0.1;							// (au) time division
-	let g_dx = 0.1;							// (au) x-division, boxSize = NNb*dx
-	let g_referenceEnergy = 0.0;			// (au) reference energy of the system
-	let g_energy = g_referenceEnergy;		// (au) system energy
-	let g_NN0 = g_NNr/2;					// memory of NN1
-	let g_NN1 = g_NN0;						// number of alive replicas
-	let g_NN00 = 1000;						// initial number of alive replicas
-	let g_vIndex = 0;						// potential index 0:parabolic 1:well 2:well 2
-	
-	const g_repStatus = dimInt1( g_NNr );	// status of i-th replica
-	const g_replica = dim2( g_NNr, 3 );		// replica[i][0] x-coordinate of i-th replica
-	const g_box = dimInt2( g_NNb, g_NNb );	// box[ix][iy] number of replica
-	const g_psi = dim2( g_NNb, g_NNb );		// wave function psi[ix][iy]
-	
+
+	const g_auLength = 5.29177211e-11; // (m) 1(au) = auLength (m), (au: atomic unit hBar=1,e=1,me=1,a0=1)
+	const g_auTime = 2.418884326e-17;  // (s) 1(au) = auTime (s)
+	const g_auEnergy = 4.35974465e-18; // (J) 1(au) = auEnergy (J)
+	const g_au2eV = 27.211386;         // (eV) 1(au) = 27.211386 (eV)
+	const g_hbar = 1.0;                // hbar = 1 in au(atomic unit)
+
+	let g_NNr = 2000; // number of replica
+	let g_NNb = 100;  // max number of box division 0:x=-5.0 50:x=0.0 100:x=+5.0
+	let g_sysTime = 0.0; // (au) system time
+	let g_dt = 0.1;   // (au) time division
+	let g_dx = 0.1;   // (au) x-division, boxSize = NNb*dx
+	let g_referenceEnergy = 0.0; // (au) reference energy of the system
+	let g_energy = g_referenceEnergy; // (au) system energy
+	let g_NN0 = g_NNr/2; // memory of NN1
+	let g_NN1 = g_NN0;// number of alive replicas
+	let g_NN00 = 1000;// initial number of alive replicas
+	let g_vIndex = 0; // potential index 0:parabolic 1:well 2:well 2
+
+	const g_repStatus = dimInt1( g_NNr ); // status of i-th replica
+	const g_replica = dim2( g_NNr, 3 );   // replica[i][0] x-coordinate of i-th replica
+	const g_box = dimInt2( g_NNb, g_NNb );// box[ix][iy] number of replica
+	const g_psi = dim2( g_NNb, g_NNb );   // wave function psi[ix][iy]
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
-	
+
 	function dimInt1( n ) {
 		return new Int32Array( n );
 	}
-	
+
 	function dim2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -83,7 +83,7 @@ const harmonicsDMC2D = (function(){ // ====================  harmonicsDMC2D Modu
 		}
 		return a;
 	}
-	
+
 	function dimInt2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -91,10 +91,10 @@ const harmonicsDMC2D = (function(){ // ====================  harmonicsDMC2D Modu
 		}
 		return a;
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( theme ) {
 		const nnr=g_NNr;
 		g_vIndex = theme;
@@ -113,7 +113,7 @@ const harmonicsDMC2D = (function(){ // ====================  harmonicsDMC2D Modu
 		g_NN00 = g_NN0;
 		g_referenceEnergy = averagedPotential();
 	}
-	
+
 	function averagedPotential() {
 		const nnr=g_NNr;
 		let s = 0.0, n = 0;
@@ -125,21 +125,21 @@ const harmonicsDMC2D = (function(){ // ====================  harmonicsDMC2D Modu
 		}
 		return s/n;
 	}
-	
-	
+
+
 	// --------------------  evolve DMC  --------------------
-	
+
 	function evolveDMC( nCalc ) {
 		for (let i=0; i<nCalc; i++) {
 			walkReplica();
 		}
 	}
-	
+
 	function walkReplica() {
 		const nnr=g_NNr;
 		g_sysTime = g_sysTime + g_dt
 		const sqrtdt = Math.sqrt(g_dt);
-		
+
 		// (1) replica walk
 		for (let i=0; i<nnr; i++) {
 			if (g_repStatus[i]==1) { // alive
@@ -147,7 +147,7 @@ const harmonicsDMC2D = (function(){ // ====================  harmonicsDMC2D Modu
 				g_replica[i][1] += sqrtdt*GaussianRandom();
 			}
 		}
-		
+
 		// (2) branch
 		for (let i=0; i<nnr; i++) {
 			if (g_repStatus[i]==1) { // alive
@@ -159,25 +159,25 @@ const harmonicsDMC2D = (function(){ // ====================  harmonicsDMC2D Modu
 				g_repStatus[i] = 1;
 			}
 		}
-		
+
 		// (3) count
 		g_NN1 = numberOfReplica();
-		
+
 		// (4) energy
 		const er = g_referenceEnergy + g_hbar/g_dt*(1.0-(g_NN1+1.0)/(g_NN0+1.0)*(g_NN1+10.0*nnr)/(g_NN00+10.0*nnr));
 		g_NN0 = g_NN1;
 		g_referenceEnergy = er;
 		g_energy = 0.99*g_energy+0.01*g_referenceEnergy;
-		
+
 		setPsi(1);
 	}
-	
+
 	function GaussianRandom() {
 		//Box-Muller transform  
 		return Math.sqrt(-2*Math.log(1-Math.random()))*Math.sin(2*Math.PI*Math.random());
 	}
-	
-	function birthDeathProcess(i) {
+
+	function birthDeathProcess( i ) {
 		const xi = g_replica[i][0], yi = g_replica[i][1];
 		const mn = Math.floor(weightFunction(xi,yi)+Math.random());
 		if (mn==0) {
@@ -189,12 +189,12 @@ const harmonicsDMC2D = (function(){ // ====================  harmonicsDMC2D Modu
 			birthReplica(i);
 		}
 	}
-	
-	function weightFunction(xn,yn) {
+
+	function weightFunction( xn, yn ) {
 		return Math.exp(-(potential(xn,yn,g_vIndex)-g_referenceEnergy)*g_dt/g_hbar);
 	}
-	
-	function potential(x,y,vIndex) {
+
+	function potential( x, y, vIndex ) {
 		let ret=0;
 		if (vIndex==0) { // parabolic
 			ret = 0.5*(x*x+y*y);
@@ -208,8 +208,8 @@ const harmonicsDMC2D = (function(){ // ====================  harmonicsDMC2D Modu
 		}
 		return ret;
 	}
-	
-	function birthReplica(i) {
+
+	function birthReplica( i ) {
 		const ip = seekSpace(i);
 		if (ip>=0) {
 			g_repStatus[ip] = 2;
@@ -217,8 +217,8 @@ const harmonicsDMC2D = (function(){ // ====================  harmonicsDMC2D Modu
 			g_replica[ip][1] = g_replica[i][1];
 		}
 	}
-	
-	function seekSpace(istart) {
+
+	function seekSpace( istart ) {
 		const nnr=g_NNr;
 		let ip = -1;
 		for (let i=1; i<nnr; i++) {
@@ -229,7 +229,7 @@ const harmonicsDMC2D = (function(){ // ====================  harmonicsDMC2D Modu
 		}
 		return ip;
 	}
-	
+
 	function numberOfReplica() {
 		const nnr=g_NNr;
 		let n = 0;
@@ -238,8 +238,8 @@ const harmonicsDMC2D = (function(){ // ====================  harmonicsDMC2D Modu
 		}
 		return n;
 	}
-	
-	function setPsi(sw) {
+
+	function setPsi( sw ) {
 		const nnr=g_NNr, nnb=g_NNb;
 		for (let ix=0; ix<nnb; ix++) {
 			for (let iy=0; iy<nnb; iy++) {
@@ -267,53 +267,53 @@ const harmonicsDMC2D = (function(){ // ====================  harmonicsDMC2D Modu
 			}
 		}
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	// setInitialCondition( vIndex )
-		evolve:			evolveDMC,				// evolveDMC( nCalc )
-		
-		getAUinSI:		function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
-		getSysParam:	function() { return [ g_NNr, g_NNb, g_dx, g_dt ]; },
-		getNow:			function() { return [ g_sysTime, g_energy, g_NN1 ]; },
-		getRepStatus:	function(ir) { return g_repStatus[ir]; },
-		getRepPos:		function(ir) { return [ g_replica[ir][0], g_replica[ir][1] ]; },
-		getPsi:			function(ix,iy) { return g_psi[ix][iy]; },
-		getVext:		function(ix,iy) { return potential((ix-g_NNb/2)*g_dx,(iy-g_NNb/2)*g_dx,g_vIndex); },
+		init:       setInitialCondition, // setInitialCondition( vIndex )
+		evolve:     evolveDMC, // evolveDMC( nCalc )
+
+		getAUinSI:  function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:function() { return [ g_NNr, g_NNb, g_dx, g_dt ]; },
+		getNow:     function() { return [ g_sysTime, g_energy, g_NN1 ]; },
+		getRepStatus: function(ir) { return g_repStatus[ir]; },
+		getRepPos:  function(ir) { return [ g_replica[ir][0], g_replica[ir][1] ]; },
+		getPsi:     function(ix,iy) { return g_psi[ix][iy]; },
+		getVext:    function(ix,iy) { return potential((ix-g_NNb/2)*g_dx,(iy-g_NNb/2)*g_dx,g_vIndex); },
 	};
-	
+
 })(); // ====================  harmonicsDMC2D end  ====================
 
 
 const js033 = (function(){ // ====================  js Module  ====================
-	
+
 	const theModule = harmonicsDMC2D;
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel
-	let canvas;					// canvas2d
+	const xCanvasSize = 480; // in pixel
+	const yCanvasSize = 480;
+	let canvas;
 	let ctx;
-	
+
 	let v_vIndex = 0; // 0:parabolic, 1:well 1, 2: well 2, 3:ring
 	let v_nCalc = 1;
-	
+
 	let p_NNr, p_NNb, p_dx, p_dt; // = theModule.getSysParam();
-	
+
 	let dispMode = 1;
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
 	let inStepFlag = false;
-	
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
 		viewHome();
-		
+
 		animate();
-		
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -326,10 +326,10 @@ const js033 = (function(){ // ====================  js Module  =================
 			g3d.setMouseOnCanvas( canvas ); // 3D graphics
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
+
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_vIndex );
@@ -337,7 +337,7 @@ const js033 = (function(){ // ====================  js Module  =================
 			// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
 			g3d.init( p_NNb, p_NNb, p_NNb, p_dx, xCanvasSize, yCanvasSize, 300, 20 );
 		}
-		
+
 		if ( !pauseFlag ) {
 			theModule.evolve( v_nCalc );
 		} else if ( pauseFlag && stepFlag ) {
@@ -345,27 +345,26 @@ const js033 = (function(){ // ====================  js Module  =================
 			theModule.evolve( v_nCalc );
 			inStepFlag = true;
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	function draw( ctx, dispMode ) {
-		const NNx = p_NNb, NNy = p_NNb, NNz = p_NNb, dx = p_dx;
-		const xp = 40, yp = 40, xtabp = 320;
-		
+		const NNx=p_NNb, NNy=p_NNb, NNz=p_NNb, dx=p_dx, xp=40, yp=40, xtabp=320;
+
 		let auLength, auTime, auEnergy, au2eV;
 		[ auLength, auTime, auEnergy, au2eV ] = theModule.getAUinSI();
 		let sysTime, totalEnergy, aliveReplicas;
 		[ sysTime, totalEnergy, aliveReplicas ] = theModule.getNow();
-		
+
 		// clear
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
+
 		if (dispMode==0) {
 			dispText( "psi(x,y)" );
 			drawPsi( ctx, xp, yp );
@@ -373,7 +372,7 @@ const js033 = (function(){ // ====================  js Module  =================
 		} else if (dispMode==1) {
 			dispText( "alive replicas" );
 			drawReplicas( ctx, xp, yp )
-			
+
 		} else if (dispMode==2) {
 			dispText( "grid2d psi(x,y)" );
 			const zFunc = function(i,j) { return 2.0*theModule.getPsi(i,j); };
@@ -389,25 +388,25 @@ const js033 = (function(){ // ====================  js Module  =================
 			// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc, scale, xPos, yPos [, showBox] )
 			g3d.drawGrid2D( ctx, 0.0, zFunc, "#00bb00", 1 );
 		}
-		
+
 		ctx.fillStyle = "#888888";
 		ctx.fillText(`box = ${ NNx*dx }x${ NNy*dx} (au)`, 20, yCanvasSize-30);
 		ctx.fillText(`alive replicas = ${ aliveReplicas }`, 260, yCanvasSize-30);
 		ctx.fillText(`time = ${ sysTime.toFixed(2) } (au)`, 20, yCanvasSize-10);
 		ctx.fillText(`energy = ${ totalEnergy.toFixed(6) } (au)`, 260, yCanvasSize-10);
-		
+
 		function dispText( str ) {
 			ctx.fillStyle = "#888888";
 			ctx.fillText( str, 20, yCanvasSize-50 );
 		}
 	}
-	
+
 	function drawPsi( ctx, xp, yp ) {
 		const nnx=p_NNb, nny=p_NNb, sc=3, vmag=5.0, pmag = 200.0;
-		
+
 		ctx.strokeStyle = "#888800";
 		ctx.strokeRect( xp, yp, 300, 300 );
-		
+
 		for (let i=0; i<nnx; i++) {
 			for (let j=0; j<nny; j++) {
 				const g = Math.min( Math.floor(theModule.getVext(i,j)*vmag), 255 );
@@ -417,13 +416,13 @@ const js033 = (function(){ // ====================  js Module  =================
 			}
 		}
 	}
-	
+
 	function drawReplicas( ctx, xp, yp ) {
 		const nnx=p_NNb, nny=p_NNb, sc=3, vmag=5.0;
 		const nn=p_NNr, dx=p_dx, cx0=p_NNb*p_dx/2, r=2, color="#00ffff", pi2=2*Math.PI;
 		ctx.strokeStyle = "#888800";
 		ctx.strokeRect( xp, yp, 300, 300 );
-		
+
 		for (let i=0; i<nnx; i++) {
 			for (let j=0; j<nny; j++) {
 				const g = Math.min( Math.floor(theModule.getVext(i,j)*vmag), 255 );
@@ -431,7 +430,7 @@ const js033 = (function(){ // ====================  js Module  =================
 				ctx.fillRect(i*sc+xp,(nny-j-1)*sc+yp,sc,sc);
 			}
 		}
-		
+
 		for (let i=0; i<nn; i++) {
 			if ( theModule.getRepStatus(i)==0 ) continue; // 0:dead, 1:alive
 			let x, y;
@@ -444,24 +443,24 @@ const js033 = (function(){ // ====================  js Module  =================
 		}
 		
 	}
-	
-	
+
+
 	// --------------------  graphics 3D (field) module  --------------------
 	//
 	// ver 0.0.1  2018.12.16  last updated on 2023.03.01
 	// ver 0.0.2  2023.03.03  last updated on 2023.06.01
-	
+
 	let g_NNx, g_NNy, g_NNz, g_dx, g_dy, g_dz, g_xCanvasSize, g_yCanvasSize, g_xBoxSize, g_yShift;
-	
+
 	const g3d = {};				// namespace of graphic 3D module
-	
+
 	g3d.mouseDownFlag = 0;		// 1:on mouse down, 0:else
 	g3d.x_mouse = 0;			// x-position of mouse
 	g3d.y_mouse = 0;			// y-position of mouse
 	g3d.x0_mouse = 0;			// drag-started x-position of mouse
 	g3d.y0_mouse = 0;			// drag-started y-position of mouse
 	g3d.zoom = 1.0;
-	
+
 	g3d.xMax = 0.0;				// x-length of box
 	g3d.yMax = 0.0;				// y-length of box
 	g3d.zMax = 0.0;				// z-length of box
@@ -475,7 +474,7 @@ const js033 = (function(){ // ====================  js Module  =================
 	g3d.sinAx = 0.0;			// sinAx=Math.sin(Ax)
 	g3d.cosAy = 0.0;			// cosAy=Math.cos(Ay)
 	g3d.sinAy = 0.0;			// sinAy=Math.sin(Ay)
-	
+
 	g3d.xApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
 	g3d.yApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
 	g3d.zApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
@@ -485,9 +484,9 @@ const js033 = (function(){ // ====================  js Module  =================
 	g3d.boxApex = [[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1], [1,0,1], [0,1,1], [1,1,1] ];
 	g3d.boxEdge = [[0,1,9], [0,2,9], [0,4,9], [1,3,9], [1,5,9], [2,3,9], 
 					[2,6,9], [3,7,9], [4,5,9], [4,6,9], [5,7,9], [6,7,9] ];
-	
+
 	//--- set mouse on canvas
-	
+
 	// g3d.setMouseOnCanvas( canvas );
 	g3d.setMouseOnCanvas = function( canvas ) {
 		canvas.addEventListener('mousemove', g3d.mouse_move);
@@ -495,10 +494,9 @@ const js033 = (function(){ // ====================  js Module  =================
 		canvas.addEventListener('mouseup', g3d.mouse_up);
 		canvas.addEventListener("mousewheel", g3d.mouseWheel);
 	};
-	
-	g3d.mouse_move = function(e) {
-		const pi = Math.PI;
 
+	g3d.mouse_move = function(e) {
+		const pi=Math.PI;
 		if (g3d.mouseDownFlag==1) {
 			g3d.x_mouse = e.clientX;
 			g3d.y_mouse = e.clientY;
@@ -513,7 +511,7 @@ const js033 = (function(){ // ====================  js Module  =================
 			g3d.y0_mouse = g3d.y_mouse;
 		}
 	};
-	
+
 	g3d.mouse_down = function(e) {
 		if (g3d.mouseDownFlag==0) {
 			g3d.x0_mouse = e.clientX;
@@ -523,13 +521,13 @@ const js033 = (function(){ // ====================  js Module  =================
 			g3d.mouseDownFlag = 1;
 		}
 	};
-	
+
 	g3d.mouse_up = function(e) {
 		if (g3d.mouseDownFlag==1) {
 			g3d.mouseDownFlag = 0;
 		}
 	};
-	
+
 	g3d.mouseWheel = function(e) {
 		g3d.deltaY = e.deltaY;
 		if ( g3d.deltaY > 0 ) g3d.zoom *= 0.95;
@@ -537,9 +535,9 @@ const js033 = (function(){ // ====================  js Module  =================
 		if ( g3d.zoom<0.5 ) g3d.zoom = 0.5;
 		if ( g3d.zoom>2.0 ) g3d.zoom = 2.0;
 	};
-	
+
 	//--- 3D graphics aid
-	
+
 	// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
 	g3d.init = function( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift ) {
 		g_NNx = NNx; g_NNy = NNy; g_NNz = NNz;
@@ -549,7 +547,7 @@ const js033 = (function(){ // ====================  js Module  =================
 		g_yShift = (yShift==undefined) ? 20 : yShift;
 		g3d.setSize();
 	}
-	
+
 	g3d.setSize = function() {
 		g3d.xMax = g_NNx*g_dx;		// x-length of box
 		g3d.yMax = g_NNy*g_dy;		// y-length of box
@@ -558,13 +556,13 @@ const js033 = (function(){ // ====================  js Module  =================
 		g3d.cy0 = 0.5*g3d.yMax;		// y-component of rotate center
 		g3d.cz0 = 0.5*g3d.zMax;		// z-component of rotate center
 	};
-	
+
 	// g3d.setRotateAngle( AxInDegree, AyInDegree );
 	g3d.setRotateAngle = function( AxInDegree, AyInDegree ) {
 		g3d.Ax = AxInDegree*Math.PI/180.0;
 		g3d.Ay = AyInDegree*Math.PI/180.0;
 	};
-	
+
 	// g3d.scxpypFunc();
 	g3d.scxpypFunc = function() {
 		const xBoxSize = g_xBoxSize;
@@ -573,7 +571,7 @@ const js033 = (function(){ // ====================  js Module  =================
 		const sc = xBoxSize/(g_NNx*g_dx)*g3d.zoom;
 		return [ sc, xp, yp ];
 	}
-	
+
 	g3d.set3DRotateXY = function(rotateRateOfAyInDegree) {
 		g3d.ddAy = rotateRateOfAyInDegree*Math.PI/180.0;
 		g3d.Ay= g3d.Ay + g3d.ddAy; // auto-rotate : if (ddAy==0.0), stop
@@ -584,7 +582,7 @@ const js033 = (function(){ // ====================  js Module  =================
 		g3d.rotateApexXY();     // box Apex rotate--> pxApex[i],pyApex[i],pzApex[i]
 		g3d.markFarEdge();      // boxEdge[iEdge][2]=1:far side edge or 0:near side edge
 	};
-	
+
 	g3d.setBox = function() {
 		for (let i=0; i<8; i++) {
 			g3d.xApex[i] = g3d.boxApex[i][0]*g3d.xMax;
@@ -592,7 +590,7 @@ const js033 = (function(){ // ====================  js Module  =================
 			g3d.zApex[i] = g3d.boxApex[i][2]*g3d.zMax;
 		}
 	};
-	
+
 	g3d.setRotateXY = function(angleX,angleY) {
 		g3d.cosAx = Math.cos(angleX);
 		g3d.sinAx = Math.sin(angleX);
@@ -602,17 +600,16 @@ const js033 = (function(){ // ====================  js Module  =================
 		g3d.cy0 = 0.5*g3d.yMax;
 		g3d.cz0 = 0.5*g3d.zMax;
 	};
-	
+
 	g3d.rotateApexXY = function() { // rotate box apex
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		for (let i=0; i<8; i++) {
 			g3d.pxApex[i] = cosAy*(g3d.xApex[i]-cx0)+sinAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cx0;
 			g3d.pyApex[i] = cosAx*(g3d.yApex[i]-cy0)-sinAx*(g3d.zApex[i]-cz0) + cy0;
 			g3d.pzApex[i] =-sinAy*(g3d.xApex[i]-cx0)+cosAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cz0;
 		}
 	};
-	
+
 	g3d.markFarEdge = function() {
 		//seek far apex --> iMin
 		let zMin = g3d.pzApex[0];
@@ -629,26 +626,24 @@ const js033 = (function(){ // ====================  js Module  =================
 			if (g3d.boxEdge[iEdge][0]==iMin || g3d.boxEdge[iEdge][1]==iMin) g3d.boxEdge[iEdge][2] = 1;
 		}
 	};
-	
+
 	g3d.drawRotatedDisc = function(ctx, x,y,z,r,color,sc,xp,yp) {
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		const x1 = cosAy*(x-cx0)+sinAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cx0
 		const y1 = cosAx*(y-cy0)-sinAx*(z-cz0) + cy0
 		//z1 =-sinAy*(x-cx0)+cosAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cz0
 		g3d.drawDisc(ctx, x1*sc+xp,y1*sc+yp,r,color);
 	};
-	
+
 	g3d.drawRotatedLine = function(ctx, x1,y1,z1,x2,y2,z2,color,sc,xp,yp) {
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		const x1p = cosAy*(x1-cx0)+sinAy*(sinAx*(y1-cy0)+cosAx*(z1-cz0)) + cx0
 		const y1p = cosAx*(y1-cy0)-sinAx*(z1-cz0) + cy0
 		const x2p = cosAy*(x2-cx0)+sinAy*(sinAx*(y2-cy0)+cosAx*(z2-cz0)) + cx0
 		const y2p = cosAx*(y2-cy0)-sinAx*(z2-cz0) + cy0
 		g3d.drawLine(ctx, x1p*sc+xp,y1p*sc+yp,x2p*sc+xp,y2p*sc+yp,color);
 	};
-	
+
 	g3d.plotNearEdge = function(ctx, sc,xp,yp,color) {
 		for (let iEdge=0; iEdge<12; iEdge++) {
 			if (g3d.boxEdge[iEdge][2]==0) { //far edge mark = 1
@@ -656,7 +651,7 @@ const js033 = (function(){ // ====================  js Module  =================
 			}
 		}
 	};
-	
+
 	g3d.plotFarEdge = function(ctx, sc,xp,yp,color) {
 		for (let iEdge=0; iEdge<12; iEdge++) {
 			if (g3d.boxEdge[iEdge][2]==1) { //far edge mark = 1
@@ -664,7 +659,7 @@ const js033 = (function(){ // ====================  js Module  =================
 			}
 		}
 	};
-	
+
 	g3d.plotEdge = function(ctx, iEdge,sc,xp,yp,color) {
 		let iApex = g3d.boxEdge[iEdge][0];
 		const x1=g3d.pxApex[iApex]*sc+xp, y1=g3d.pyApex[iApex]*sc+yp;
@@ -672,7 +667,7 @@ const js033 = (function(){ // ====================  js Module  =================
 		const x2=g3d.pxApex[iApex]*sc+xp, y2=g3d.pyApex[iApex]*sc+yp;
 		g3d.drawLine(ctx, x1, y1, x2, y2, color);
 	};
-	
+
 	g3d.drawLine = function(ctx, x1, y1, x2, y2, color) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -680,22 +675,22 @@ const js033 = (function(){ // ====================  js Module  =================
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	};
-	
+
 	g3d.drawDisc = function(ctx, x, y, r, color) {
 		ctx.fillStyle = color;
 		ctx.beginPath();
 		ctx.arc(x, y, r, 0, 2*Math.PI, false);
 		ctx.fill();
 	};
-	
+
 	// --------------------  end of graphics 3D (field) module  --------------------
-	
+
 	// g3d_extension grid2d  created 2023.06.01, last updated 2023.06.04
 	// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
 	g3d.drawGrid2D = function ( ctx, rotAngle, zFunc, colorFactor, inc, showBox ) {
 		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
-		const nnx = g_NNx, nny = g_NNy, threshold = g3d.drawGrid2D.threshold;
-		
+		const nnx=g_NNx, nny=g_NNy, threshold=g3d.drawGrid2D.threshold;
+
 		g3d.set3DRotateXY(rotAngle);
 		if ( (showBox & 1)>0 || showBox==undefined ) g3d.plotFarEdge(ctx, sc,xp,yp,"#444400"); // dark yellow
 		for (let jj=0; jj<nny; jj+=inc) {
@@ -743,26 +738,25 @@ const js033 = (function(){ // ====================  js Module  =================
 			}
 		}
 		if ( (showBox & 2)>0 || showBox==undefined ) g3d.plotNearEdge(ctx, sc,xp,yp,"#999900"); //yellow
-		
+
 		ctx.font = "12px 'sans-serif'";
 		ctx.fillStyle = "#888888";
 		ctx.fillText(`Ax=${(g3d.Ax*180/Math.PI).toFixed(1)}, Ay=${(g3d.Ay*180/Math.PI).toFixed(1)}`, 10, 15);
 		ctx.font = "16px 'sans-serif'";
 	};
 	g3d.drawGrid2D.threshold = 0.005;
-	
-	
+
+
 	// --------------------  control  --------------------
-	
+
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
 		
@@ -772,38 +766,38 @@ const js033 = (function(){ // ====================  js Module  =================
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setTheme() {  // select theme
 		v_vIndex = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = true;
 	}
-	
+
 	function setDispMode() {  // select dispMode
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
 	}
-	
+
 	function viewHome() {
 		g3d.setRotateAngle(65,-15);
 		g3d.zoom = 1.0;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:				main,				// main()
-		
-		reset:				reset,				// reset()
-		pause:				pause,				// pause()
-		step:				step,				// step()
-		
-		setTheme:			setTheme,			// setTheme()
-		setDispMode:		setDispMode,		// setDispMode()
-		viewHome:			viewHome,			// viewHome()
+		main:  main,  // main()
+
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step,  // step()
+
+		setTheme:    setTheme, // setTheme()
+		setDispMode: setDispMode, // setDispMode()
+		viewHome:    viewHome, // viewHome()
 	};
-	
+
 })(); // ====================  js033 end  ====================
 
 // event
@@ -854,7 +848,7 @@ window.addEventListener('load', js.main );
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
 
 </body>
