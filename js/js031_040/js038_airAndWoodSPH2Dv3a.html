@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js038_airAndWoodSPH2D
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2017.06.15 created, last updated on 2018.11.19
 //    ver 0.0.1  2019.01.16 v1, last updated on 2021.05.29
 //    ver 0.0.2  2021.10.31 v2, last updated on 2021.10.31
-//    ver 0.0.3  2023.03.22 v3, last updated on 2023.08.22
+//    ver 0.0.3  2023.03.22 v3, last updated on 2024.03.08
 //
 // --------------------  smoothed particle hydrodynamics 2D
 //
@@ -62,41 +62,41 @@
 */
 
 const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Module  ====================
-	
-	let g_NNp = 5000;						// number of smoothed particles
-	let g_Nsx = 40;							// number of division to x-lattice section
-	let g_Nsy = 20;							// number of division to y-lattice section
-	let g_xMax = 20.0;						// (m) x-Box size
-	let g_yMax = 10.0;						// (m) y-Box size
-	let g_sysTime = 0.0;					// (s) system time
-	let g_dt = 0.0001;						// (s) time step
-	let g_hh0 = 0.25;						// (m) diameter of smoothed particles
-	let g_rBond = g_hh0*1.2;				// (m) bonding upper limit
-	let g_cViscosity = 1.0;					// for air viscosity, alpha=1,beta=2 in this case
-	let g_thermalDiffusivity = 0.1;			// (m^2/s) thermal diffusivity eg. 3.4e-5
-	let g_gravity = -9.8;					// (m/s^2) gravity acceleration eg. 9.8;
-	
-	const g_kind = dimInt1( g_NNp );		// smooth particle kind 1:air 0:wood-fixed -1:wood-free
-	const g_bond = dimInt2( g_NNp, 8 );		// bonded particle No. with i-th particle
-	const g_xx = dim1( g_NNp );				// (m) smooth particle pos-x
-	const g_yy = dim1( g_NNp );				// (m) smooth particle pos-y
-	const g_vx = dim1( g_NNp );				// (m/s) smooth particle velocity-x
-	const g_vy = dim1( g_NNp );				// (m/s) smooth particle velocity-y
-	const g_ax = dim1( g_NNp );				// (m/s^2) smooth particle total accelaration-x
-	const g_ay = dim1( g_NNp );				// (m/s^2) smooth particle total accelaration-y
-	const g_hh = dim1( g_NNp );				// (m) smooth particle diameter
-	const g_mass = dim1( g_NNp );			// (kg) smooth particle mass
-	const g_cp = dim1( g_NNp );				// (J/(kg*K)) smooth particle specific heat
-	const g_density = dim1( g_NNp );		// (kg/m^3) smooth particle density
-	const g_pressure = dim1( g_NNp );		// (N/m^2) smooth particle pressure
-	const g_energy = dim1( g_NNp );			// (J) smooth particle energy = mass*cp*temp
-	const g_power = dim1( g_NNp );			// (W) smooth particle power : energy(t+dt) = energy(t)+power*dt
+
+	let g_NNp = 5000;  // number of smoothed particles
+	let g_Nsx = 40;    // number of division to x-lattice section
+	let g_Nsy = 20;    // number of division to y-lattice section
+	let g_xMax = 20.0; // (m) x-Box size
+	let g_yMax = 10.0; // (m) y-Box size
+	let g_sysTime = 0.0; // (s) system time
+	let g_dt = 0.0001; // (s) time step
+	let g_hh0 = 0.25;  // (m) diameter of smoothed particles
+	let g_rBond = g_hh0*1.2; // (m) bonding upper limit
+	let g_cViscosity = 1.0; // for air viscosity, alpha=1,beta=2 in this case
+	let g_thermalDiffusivity = 0.1; // (m^2/s) thermal diffusivity eg. 3.4e-5
+	let g_gravity = -9.8; // (m/s^2) gravity acceleration eg. 9.8;
+
+	const g_kind = dimInt1( g_NNp ); // smooth particle kind 1:air 0:wood-fixed -1:wood-free
+	const g_bond = dimInt2( g_NNp, 8 ); // bonded particle No. with i-th particle
+	const g_xx = dim1( g_NNp ); // (m) smooth particle pos-x
+	const g_yy = dim1( g_NNp ); // (m) smooth particle pos-y
+	const g_vx = dim1( g_NNp ); // (m/s) smooth particle velocity-x
+	const g_vy = dim1( g_NNp ); // (m/s) smooth particle velocity-y
+	const g_ax = dim1( g_NNp ); // (m/s^2) smooth particle total accelaration-x
+	const g_ay = dim1( g_NNp ); // (m/s^2) smooth particle total accelaration-y
+	const g_hh = dim1( g_NNp ); // (m) smooth particle diameter
+	const g_mass = dim1( g_NNp ); // (kg) smooth particle mass
+	const g_cp = dim1( g_NNp ); // (J/(kg*K)) smooth particle specific heat
+	const g_density = dim1( g_NNp ); // (kg/m^3) smooth particle density
+	const g_pressure = dim1( g_NNp ); // (N/m^2) smooth particle pressure
+	const g_energy = dim1( g_NNp ); // (J) smooth particle energy = mass*cp*temp
+	const g_power = dim1( g_NNp ); // (W) smooth particle power : energy(t+dt) = energy(t)+power*dt
 	const g_section = dimInt3( g_Nsx, g_Nsy, 50 ); // registration: particles in Nsx x Nsy sections
-	
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
-	
+
 	function dimInt1( n ) {
 		return new Int32Array( n );
 	}
@@ -108,7 +108,7 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 		}
 		return a;
 	}
-	
+
 	function dimInt3( ni, nj, nk ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -119,11 +119,11 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 		}
 		return a;
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
-	function setInitialCondition(canvasId) {
+
+	function setInitialCondition() {
 		g_sysTime = 0.0;
 		let i = 0;
 		// air clump density=(0.029/0.0224)/4.0 kg/m3, specific heat=1000 J/kgK
@@ -142,7 +142,7 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 				i += 1;
 			}
 		}
-		
+
 		// solid; density=300 kg/m3, specific heat=1500 J/kgK
 		for (let ix=0; ix<4; ix++) {
 			for (let iy=0; iy<16; iy++) {
@@ -159,7 +159,7 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 				i += 1;
 			}
 		}
-		
+
 		// solid; density=300 kg/m3, specific heat=1500 J/kgK
 		for (let ix=0; ix<4; ix++) {
 			for (let iy=0; iy<16; iy++) {
@@ -177,7 +177,7 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 			}
 		}
 		g_NNp = i;
-		
+
 		bonding();
 		setSection();
 		setDensity();
@@ -186,17 +186,17 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 			g_power[i] = 0.0;
 		}
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
-	function timeEvolution(nCalc) {
+
+	function timeEvolution( nCalc ) {
 		for (let i=0; i<nCalc; i++) {
 			timeStep();
 			g_sysTime += g_dt;
 		}
 	}
-	
+
 	function timeStep() {
 		const nnp=g_NNp, dtv2 = g_dt/2.0;
 		// (1) registration - set section[]
@@ -246,9 +246,9 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 			}
 		}
 	}
-	
+
 	// --- (1) registration
-	
+
 	function setSection() {
 		const nnp=g_NNp, nsx=g_Nsx, nsy=g_Nsy;
 		for (let i=0; i<nsx; i++) {
@@ -264,7 +264,7 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 			g_section[i][j][iq] = ip;
 		}
 	}
-	
+
 	function maxSection() {
 		const nsx=g_Nsx, nsy=g_Nsy
 		let m=0;
@@ -275,9 +275,9 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 		}
 		return m;
 	}
-	
+
 	// --- (2) set density
-	
+
 	function setDensity() {
 		const nnp=g_NNp, nsx=g_Nsx, nsy=g_Nsy;
 		const rcc = g_hh0*2.0;
@@ -306,9 +306,9 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 			g_density[i] = s;
 		}
 	}
-	
+
 	// --- (5) set acceleration ax[] ay[] and power[]
-	
+
 	function accCalc() {
 		const nnp=g_NNp, nsx=g_Nsx, nsy=g_Nsy;
 		const alpha=1.0, beta=2.0, cv=g_cViscosity; // for viscosity
@@ -360,7 +360,7 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 			}
 		}
 	}
-	
+
 	// called only if (ii or jj is not SPH particle)
 	function force(r, ii, jj) {
 		if (g_kind[ii]>=0 || g_kind[jj]>=0) {
@@ -410,7 +410,7 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 		}
 		return 0.0;
 	}
-	
+
 	function boundaryForce(i, rc, k) {
 		let r;
 		if (g_xx[i] < rc) {
@@ -430,9 +430,9 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 			g_ay[i] += -k*r*r; 
 		}
 	}
-	
+
 	// --- bonding manager
-	
+
 	function bonding() {
 		let nnp=g_NNp;
 		const rb = g_rBond*1.2;
@@ -451,7 +451,7 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 			}
 		}
 	}
-	
+
 	function bondInit() {
 		const nnp=g_NNp;
 		for (let i=0; i<nnp; i++) {
@@ -460,8 +460,8 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 			}
 		}
 	}
-	
-	function bondReg(ii, jj) {
+
+	function bondReg( ii, jj ) {
 		for (let j=0; j<8; j++) {
 			if (g_bond[ii][j]==-1) {
 				g_bond[ii][j] = jj;
@@ -469,8 +469,8 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 			}
 		}
 	}
-	
-	function bondUnreg(ii, jj) {
+
+	function bondUnreg( ii, jj ) {
 		for (let j=0; j<8; j++) {
 			if (g_bond[ii][j]==jj) {
 				g_bond[ii][j] = -1;
@@ -478,8 +478,8 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 			}
 		}
 	}
-	
-	function bondQ(ii, jj) {
+
+	function bondQ( ii, jj ) {
 		const rb = g_rBond*1.2;
 		const rb2=rb*rb;
 		let q = 0;
@@ -491,9 +491,9 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 		}
 		return q;
 	}
-	
+
 	// --- smoothed particle kernel
-	
+
 	function kernel(r, h) {
 		let ret = 0.0;
 		const q = r/h;
@@ -505,7 +505,7 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 		}
 		return ret;
 	}
-	
+
 	function dwwvdr(r, h) {
 		let ret = 0.0;
 		const q = r/h;
@@ -517,7 +517,7 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 		}
 		return ret;
 	}
-	
+
 	function d2wwvdr2(r, h) {
 		let ret = 0.0;
 		const q = r/h;
@@ -529,57 +529,57 @@ const airAndWoodSPH2D = (function(){ // ====================  airAndWoodSPH2D Mo
 		}
 		return ret;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	// setInitialCondition()
-		evolve:			timeEvolution,			// timeEvolution( nCalc )
-		
-		getSysParam:	function() { return [ g_xMax, g_yMax, g_dt, g_hh0, g_NNp ]; },
-		getNow:			function() { return [ g_sysTime, g_gravity ]; },
-		getSPKind:		function(i) { return g_kind[i]; },
-		getSPData:		function(i) { return [ g_hh[i], g_mass[i], g_cp[i] ]; },
-		getPosition:	function(i) { return [ g_xx[i], g_yy[i] ]; },
-		getVelocity:	function(i) { return [ g_vx[i], g_vy[i] ]; },
-		getAcc:			function(i) { return [ g_ax[i], g_ay[i] ]; },
-		getDensity:		function(i) { return g_density[i]; },
-		getPressure:	function(i) { return g_pressure[i]; },
-		getTemp:		function(i) { return (g_energy[i]/(g_mass[i]*g_cp[i])); },
-		getEnergy:		function(i) { return g_energy[i]; },
-		getPower:		function(i) { return g_power[i]; },
+		init:       setInitialCondition, // setInitialCondition()
+		evolve:     timeEvolution, // timeEvolution( nCalc )
+
+		getSysParam:function() { return [ g_xMax, g_yMax, g_dt, g_hh0, g_NNp ]; },
+		getNow:     function() { return [ g_sysTime, g_gravity ]; },
+		getSPKind:  function(i) { return g_kind[i]; },
+		getSPData:  function(i) { return [ g_hh[i], g_mass[i], g_cp[i] ]; },
+		getPosition:function(i) { return [ g_xx[i], g_yy[i] ]; },
+		getVelocity:function(i) { return [ g_vx[i], g_vy[i] ]; },
+		getAcc:     function(i) { return [ g_ax[i], g_ay[i] ]; },
+		getDensity: function(i) { return g_density[i]; },
+		getPressure:function(i) { return g_pressure[i]; },
+		getTemp:    function(i) { return (g_energy[i]/(g_mass[i]*g_cp[i])); },
+		getEnergy:  function(i) { return g_energy[i]; },
+		getPower:   function(i) { return g_power[i]; },
 	};
-	
+
 })(); // ====================  airAndWoodSPH2D end  ====================
 
 
 const js038 = (function(){ // ====================  js Module  ====================
-	
+
 	const theModule = airAndWoodSPH2D;
-	const xCanvasSize = 540;	// in pixel
-	const yCanvasSize = 360;	// in pixel
+	const xCanvasSize = 540; // in pixel
+	const yCanvasSize = 360;
 	let canvas;
 	let ctx;
-	
-	let v_theme = 0;  // no use
+
+	let v_theme = 0; // no use
 	let v_nCalc = 2;
-	
+
 	let p_xMax, p_yMax, p_dt, p_hh0, p_NNp; // = theModule.getSysParam();
-	
+
 	let dispMode = 2;
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
-	
-	
+
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
-		
+
 		animate();
-	
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -591,45 +591,45 @@ const js038 = (function(){ // ====================  js Module  =================
 			ctx.lineWidth = 1;
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
+
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( );
 			[ p_xMax, p_yMax, p_dt, p_hh0, p_NNp ] = theModule.getSysParam();
 		}
-		
+
 		if ( !pauseFlag ) {
 			theModule.evolve( v_nCalc );
 		} else if ( pauseFlag && stepFlag ) {
 			stepFlag = false;
 			theModule.evolve( 1 );
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	function draw( ctx, dispMode ) {
-		const xp = 20, yp = 20, xSize = 500, ySize = 250, scale = xSize/p_xMax;
-		
+		const xp=20, yp=20, xSize=500, ySize=250, scale=xSize/p_xMax;
+
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
+
 		ctx.strokeStyle = "#888800";
 		ctx.strokeRect( xp, yp, xSize, ySize );
-		
+
 		if ( dispMode<=3 ) {
 			drawField( ctx, dispMode, p_NNp, p_hh0, scale, xp, yp );
 		} else if ( dispMode==4 ) {
 			drawFlow( ctx, p_NNp, scale, xp, yp );
 		}
-		
+
 		// caption
 		ctx.fillStyle = "rgb(200,200,0)" ;
 		ctx.fillText("movable wood block", xp, yCanvasSize-50);
@@ -639,12 +639,12 @@ const js038 = (function(){ // ====================  js Module  =================
 		ctx.fillStyle = "#888888";
 		ctx.fillText(`Box = ${p_xMax.toFixed(1)}x${p_yMax.toFixed(1)} (m)`, xp, yCanvasSize-30);
 		ctx.fillText(`N = ${p_NNp}`, xp+260, yCanvasSize-30);
-		ctx.fillText(`time = ${sysTime.toFixed(3)} (s)`, xp, yCanvasSize-10);
+		ctx.fillText(`time = ${sysTime.toFixed(4)} (s)`, xp, yCanvasSize-10);
 		//document.getElementById("text_caption").innerHTML = msg;
 	}
 
 	function drawField( ctx, dispMode, nnp, hh0, sc, xp, yp ) {
-		const yMax = p_yMax, twoPi = 2.0*Math.PI, dmag=5.0, pmag=0.003, tmag=2.0;
+		const yMax=p_yMax, twoPi=2.0*Math.PI, dmag=5.0, pmag=0.003, tmag=2.0;
 
 		for (let i=0; i<nnp; i++) {
 			const kind = theModule.getSPKind(i);
@@ -676,7 +676,7 @@ const js038 = (function(){ // ====================  js Module  =================
 	}
 
 	function drawFlow( ctx, nnp, sc, xp, yp ) {
-		const yMax = p_yMax, vmag = 120.0*p_dt*sc, r = p_hh0*sc, twoPi = 2.0*Math.PI;
+		const yMax=p_yMax, vmag=120.0*p_dt*sc, r=p_hh0*sc, twoPi=2.0*Math.PI;
 
 		for (let i=0; i<nnp; i++) {
 			let xi, yi, vxi, vyi;
@@ -689,7 +689,7 @@ const js038 = (function(){ // ====================  js Module  =================
 			ctx.moveTo( x, y );
 			ctx.lineTo( x+vxi*vmag, y-vyi*vmag);
 			ctx.stroke();
-			
+
 			const kind = theModule.getSPKind(i);
 			if ( kind==0 || kind==-1 ) { // 0:wood-fixed, -1:wood-free
 				ctx.strokeStyle = (kind==0) ? "rgb(250,125,0)" : "rgb(200,200,0)"
@@ -699,60 +699,57 @@ const js038 = (function(){ // ====================  js Module  =================
 			}
 		}
 	}
-	
-	
+
+
 	// --------------------  control  --------------------
-	
+
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-		
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
-		
 		if ( pauseFlag==true ) {
 			document.getElementById("step_button").style.visibility = "visible";
 		} else {
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setTheme() {
 		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = true;
 	}
-	
+
 	function setDispMode() {
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
 	}
-	
+
 	function setNcalc() {
 		v_nCalc = 1 + document.getElementById("slct_nCalc").selectedIndex;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:			main,			// main()
-		
-		// dom control
-		reset:			reset,			// reset()
-		pause:			pause,			// pause()
-		step:			step,			// step()
-		
-		setTheme:		setTheme,		// setTheme()
-		setDispMode:	setDispMode,	// setDispMode()
-		setNcalc:		setNcalc,		// setNcalc()
+		main:  main,  // main()
+
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step,  // step()
+
+		setTheme:    setTheme, // setTheme()
+		setDispMode: setDispMode, // setDispMode()
+		setNcalc:    setNcalc, // setNcalc()
 	};
-	
+
 })(); // ====================  js038 module end  ====================
 
 
@@ -801,7 +798,7 @@ window.addEventListener('load', js.main );
 
 <p id="text_caption" ></p>
 <hr width="540" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
 
 </body>
