@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js039_waterSPH2D
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2017.06.16 created, last updated on 2018.11.19
 //    ver 0.0.1  2019.01.17 v1, last updated on 2021.05.30
 //    ver 0.0.2  2021.10.31 v2, last updated on 2021.10.31
-//    ver 0.0.3  2023.03.22 v3, last updated on 2023.08.23
+//    ver 0.0.3  2023.03.22 v3, last updated on 2024.03.09
 //
 // --------------------  smoothed particle hydrodynamics 2D
 //
@@ -62,39 +62,39 @@
 */
 
 const waterSPH2D = (function(){ // ====================  waterSPH2D Module  ====================
-	
-	let g_NNp = 5000;						// number of smoothed particles
-	let g_Nsx = 50;							// number of division to x-lattice section
-	let g_Nsy = 50;							// number of division to y-lattice section
-	let g_xMax = 1.0;						// (m) x-Box size
-	let g_yMax = 1.0;						// (m) y-Box size
-	let g_sysTime = 0.0;					// (s) system time
-	let g_dt = 0.00020;						// (s) time step
-	let g_hh0 = 0.01;						// (m) diameter of smoothed particles
-	let g_cViscosity = 0.10;				// for viscosity
-	let g_thermalDiffusivity = 1.5e-7;		// (m^2/s) thermal diffusivity
-	let g_dens0 = 1000.0;					// (kg/m3) density of water
-	let g_gravity = -9.8;					// (m/s^2) gravity acceleration eg. 9.8;
-	
-	const g_xx = dim1( g_NNp );				// (m) smooth particle pos-x
-	const g_yy = dim1( g_NNp );				// (m) smooth particle pos-y
-	const g_vx = dim1( g_NNp );				// (m/s) smooth particle velocity-x
-	const g_vy = dim1( g_NNp );				// (m/s) smooth particle velocity-y
-	const g_ax = dim1( g_NNp );				// (m/s^2) smooth particle total accelaration-x
-	const g_ay = dim1( g_NNp );				// (m/s^2) smooth particle total accelaration-y
-	const g_hh = dim1( g_NNp );				// (m) smooth particle diameter
-	const g_mass = dim1( g_NNp );			// (kg) smooth particle mass
-	const g_cp = dim1( g_NNp );				// (J/(kg*K)) smooth particle specific heat
-	const g_density = dim1( g_NNp );		// (kg/m^3) smooth particle density
-	const g_pressure = dim1( g_NNp );		// (N/m^2) smooth particle pressure
-	const g_energy = dim1( g_NNp );			// (J) smooth particle energy = mass*cp*temp
-	const g_power = dim1( g_NNp );			// (W) smooth particle power : energy(t+dt) = energy(t)+power*dt
+
+	let g_NNp = 5000; // number of smoothed particles
+	let g_Nsx = 50;   // number of division to x-lattice section
+	let g_Nsy = 50;   // number of division to y-lattice section
+	let g_xMax = 1.0; // (m) x-Box size
+	let g_yMax = 1.0; // (m) y-Box size
+	let g_sysTime = 0.0; // (s) system time
+	let g_dt = 0.00020; // (s) time step
+	let g_hh0 = 0.01; // (m) diameter of smoothed particles
+	let g_cViscosity = 0.10; // for viscosity
+	let g_thermalDiffusivity = 1.5e-7; // (m^2/s) thermal diffusivity
+	let g_dens0 = 1000.0; // (kg/m3) density of water
+	let g_gravity = -9.8; // (m/s^2) gravity acceleration eg. 9.8;
+
+	const g_xx = dim1( g_NNp ); // (m) smooth particle pos-x
+	const g_yy = dim1( g_NNp ); // (m) smooth particle pos-y
+	const g_vx = dim1( g_NNp ); // (m/s) smooth particle velocity-x
+	const g_vy = dim1( g_NNp ); // (m/s) smooth particle velocity-y
+	const g_ax = dim1( g_NNp ); // (m/s^2) smooth particle total accelaration-x
+	const g_ay = dim1( g_NNp ); // (m/s^2) smooth particle total accelaration-y
+	const g_hh = dim1( g_NNp ); // (m) smooth particle diameter
+	const g_mass = dim1( g_NNp ); // (kg) smooth particle mass
+	const g_cp = dim1( g_NNp ); // (J/(kg*K)) smooth particle specific heat
+	const g_density = dim1( g_NNp ); // (kg/m^3) smooth particle density
+	const g_pressure = dim1( g_NNp ); // (N/m^2) smooth particle pressure
+	const g_energy = dim1( g_NNp ); // (J) smooth particle energy = mass*cp*temp
+	const g_power = dim1( g_NNp ); // (W) smooth particle power : energy(t+dt) = energy(t)+power*dt
 	const g_section = dimInt3( g_Nsx, g_Nsy, 20 ); // registration: particles in Nsx x Nsy sections
-	
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
-	
+
 	function dimInt3( ni, nj, nk ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -105,10 +105,10 @@ const waterSPH2D = (function(){ // ====================  waterSPH2D Module  ====
 		}
 		return a;
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	// public
 	function setInitialCondition() {
 		g_sysTime = 0.0;
@@ -119,7 +119,7 @@ const waterSPH2D = (function(){ // ====================  waterSPH2D Module  ====
 			g_power[i] = 0.0;
 		}
 	}
-	
+
 	// water; density=1.0g/cc, specific heat=4200J/kgK
 	function setWater(ip, xPos, yPos, xLen, yLen) {
 		let i = ip;
@@ -143,20 +143,20 @@ const waterSPH2D = (function(){ // ====================  waterSPH2D Module  ====
 		}
 		return i;
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
+
 	// public
-	function timeEvolution(nCalc) {
+	function timeEvolution( nCalc ) {
 		for (let i=0; i<nCalc; i++) {
 			timeStep();
 			g_sysTime += g_dt;
 		}
 	}
-	
+
 	function timeStep() {
-		const nnp=g_NNp, dtv2 = g_dt/2.0;
+		const nnp=g_NNp, dtv2=g_dt/2.0;
 		// (1) registration - set section[][][]
 		setSection();
 		// (2) set density
@@ -197,9 +197,9 @@ const waterSPH2D = (function(){ // ====================  waterSPH2D Module  ====
 			}
 		}
 	}
-	
+
 	// --- (1) registration
-	
+
 	function setSection() {
 		const nnp=g_NNp, nsx=g_Nsx, nsy=g_Nsy;
 
@@ -208,7 +208,7 @@ const waterSPH2D = (function(){ // ====================  waterSPH2D Module  ====
 				g_section[i][j][0] = 0;
 			}
 		}
-		
+
 		for (let ip=0; ip<nnp; ip++) {
 			let i = Math.floor(nsx*g_xx[ip]/g_xMax); if (i>=nsx) i = nsx-1;
 			let j = Math.floor(nsy*g_yy[ip]/g_yMax); if (j>=nsy) j = nsy-1;
@@ -217,7 +217,7 @@ const waterSPH2D = (function(){ // ====================  waterSPH2D Module  ====
 			g_section[i][j][iq] = ip;
 		}
 	}
-	
+
 	function maxSection() {
 		const nsx=g_Nsx, nsy=g_Nsy;
 		let m=0;
@@ -228,9 +228,9 @@ const waterSPH2D = (function(){ // ====================  waterSPH2D Module  ====
 		}
 		return m;
 	}
-	
+
 	// --- (2) set density[]
-	
+
 	function setDensity() {
 		const nnp=g_NNp, nsx=g_Nsx, nsy=g_Nsy;
 		const rcc = g_hh0*2.0;
@@ -256,9 +256,9 @@ const waterSPH2D = (function(){ // ====================  waterSPH2D Module  ====
 			g_density[i] = s;
 		}
 	}
-	
+
 	// --- (5) set acceleration ax[] ay[] and power[] + viscosity
-	
+
 	function accCalc() {
 		const nnp=g_NNp, nsx=g_Nsx, nsy=g_Nsy;
 		const alpha=1.0, beta=0.002, cv=g_cViscosity ; // for viscosity
@@ -269,7 +269,7 @@ const waterSPH2D = (function(){ // ====================  waterSPH2D Module  ====
 			boundaryForce(i, g_hh0, 1000000.0);
 			g_power[i] = 0.0;
 			const ai = g_pressure[i]/(g_density[i]*g_density[i]);
-			
+
 			let i0 = Math.floor(nsx*(g_xx[i]-rcc)/g_xMax); if (i0<0) i0 = 0;
 			let i1 = Math.floor(nsx*(g_xx[i]+rcc)/g_xMax); if (i1>=nsx) i1 = nsx-1;
 			let j0 = Math.floor(nsy*(g_yy[i]-rcc)/g_yMax); if (j0<0) j0 = 0;
@@ -305,8 +305,8 @@ const waterSPH2D = (function(){ // ====================  waterSPH2D Module  ====
 			}
 		}
 	}
-	
-	function boundaryForce(i, rc, k) {
+
+	function boundaryForce( i, rc, k ) {
 		let r;
 		if (g_xx[i] < rc) {
 			r = rc-g_xx[i];
@@ -325,10 +325,10 @@ const waterSPH2D = (function(){ // ====================  waterSPH2D Module  ====
 			g_ay[i] += -k*r*r; 
 		}
 	}
-	
+
 	// --- smooth particle
-	
-	function kernel(r,h) {
+
+	function kernel( r, h ) {
 		let ret = 0.0;
 		const q = r/h;
 		const a = 10.0/(7.0*3.141592)/(h*h);
@@ -339,8 +339,8 @@ const waterSPH2D = (function(){ // ====================  waterSPH2D Module  ====
 		}
 		return ret;
 	}
-	
-	function dwwvdr(r,h) {
+
+	function dwwvdr( r, h ) {
 		let ret = 0.0;
 		const q = r/h;
 		const a = 10.0/(7.0*3.141592)/(h*h*h);
@@ -351,8 +351,8 @@ const waterSPH2D = (function(){ // ====================  waterSPH2D Module  ====
 		}
 		return ret;
 	}
-	
-	function d2wwvdr2(r, h) {
+
+	function d2wwvdr2( r, h ) {
 		let ret = 0.0;
 		const q = r/h;
 		const a = 10.0/(7.0*3.141592)/(h*h*h*h);
@@ -363,56 +363,56 @@ const waterSPH2D = (function(){ // ====================  waterSPH2D Module  ====
 		}
 		return ret;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
 	
 	return {
-		init:			setInitialCondition,	// setInitialCondition()
-		evolve:			timeEvolution,			// timeEvolution( nCalc )
-		
-		getSysParam:	function() { return [ g_xMax, g_yMax, g_dt, g_hh0, g_NNp ]; },
-		getNow:			function() { return [ g_sysTime, g_gravity ]; },
-		getSPData:		function(i) { return [ g_hh[i], g_mass[i], g_cp[i] ]; },
-		getPosition:	function(i) { return [ g_xx[i], g_yy[i] ]; },
-		getVelocity:	function(i) { return [ g_vx[i], g_vy[i] ]; },
-		getAcc:			function(i) { return [ g_ax[i], g_ay[i] ]; },
-		getDensity:		function(i) { return g_density[i]; },
-		getPressure:	function(i) { return g_pressure[i]; },
-		getTemp:		function(i) { return (g_energy[i]/(g_mass[i]*g_cp[i])); },
-		getEnergy:		function(i) { return g_energy[i]; },
-		getPower:		function(i) { return g_power[i]; },
+		init:       setInitialCondition, // setInitialCondition()
+		evolve:     timeEvolution, // timeEvolution( nCalc )
+
+		getSysParam:function() { return [ g_xMax, g_yMax, g_dt, g_hh0, g_NNp ]; },
+		getNow:     function() { return [ g_sysTime, g_gravity ]; },
+		getSPData:  function(i) { return [ g_hh[i], g_mass[i], g_cp[i] ]; },
+		getPosition:function(i) { return [ g_xx[i], g_yy[i] ]; },
+		getVelocity:function(i) { return [ g_vx[i], g_vy[i] ]; },
+		getAcc:     function(i) { return [ g_ax[i], g_ay[i] ]; },
+		getDensity: function(i) { return g_density[i]; },
+		getPressure:function(i) { return g_pressure[i]; },
+		getTemp:    function(i) { return (g_energy[i]/(g_mass[i]*g_cp[i])); },
+		getEnergy:  function(i) { return g_energy[i]; },
+		getPower:   function(i) { return g_power[i]; },
 	};
-	
+
 })(); // ====================  waterSPH2D end  ====================
 
 
 const js039 = (function(){ // ====================  js Module  ====================
-	
+
 	const theModule = waterSPH2D;
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel
+	const xCanvasSize = 480; // in pixel
+	const yCanvasSize = 480;
 	let canvas;
 	let ctx;
-	
-	let v_theme = 0;  // no use
+
+	let v_theme = 0; // no use
 	let v_nCalc = 2;
-	
+
 	let p_xMax, p_yMax, p_dt, p_hh0, p_NNp; // = theModule.getSysParam();
-	
+
 	let dispMode = 2;
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
-	
-	
+
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
-		
+
 		animate();
-	
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -424,57 +424,57 @@ const js039 = (function(){ // ====================  js Module  =================
 			ctx.lineWidth = 1;
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
+
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( );
 			[ p_xMax, p_yMax, p_dt, p_hh0, p_NNp ] = theModule.getSysParam();
 		}
-		
+
 		if ( !pauseFlag ) {
 			theModule.evolve( v_nCalc );
 		} else if ( pauseFlag && stepFlag ) {
 			stepFlag = false;
 			theModule.evolve( 1 );
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	function draw( ctx, dispMode ) {
-		const xp = 40, yp = 15, xSize = 400, ySize = 400, scale = xSize/p_xMax;
-		
+		const xp=40, yp=15, xSize=400, ySize=400, scale=xSize/p_xMax;
+
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
+
 		ctx.strokeStyle = "#888800";
 		ctx.strokeRect( xp, yp, xSize, ySize );
-		
+
 		if ( dispMode<=3 ) {
 			drawField( ctx, dispMode, p_NNp, p_hh0, scale, xp, yp );
 		} else if ( dispMode==4 ) {
 			drawFlow( ctx, p_NNp, scale, xp, yp );
 		}
-		
+
 		// caption
 		let sysTime, gravity; [ sysTime, gravity ] = theModule.getNow();
 		ctx.fillStyle = "#888888";
 		ctx.fillText(`Box = ${p_xMax.toFixed(1)}x${p_yMax.toFixed(1)} (m)`, xp, yCanvasSize-30);
 		ctx.fillText(`N = ${p_NNp}`, xp+260, yCanvasSize-30);
-		ctx.fillText(`time = ${sysTime.toFixed(3)} (s)`, xp, yCanvasSize-10);
+		ctx.fillText(`time = ${sysTime.toFixed(4)} (s)`, xp, yCanvasSize-10);
 		ctx.fillText(`gravity = ${gravity.toFixed(1)} (m/s^2)`, xp+260, yCanvasSize-10);
 		//document.getElementById("text_caption").innerHTML = msg;
 	}
 
 	function drawField( ctx, dispMode, nnp, hh0, sc, xp, yp ) {
-		const yMax = p_yMax, twoPi = 2.0*Math.PI, dmag=0.03, pmag=0.05, tmag=2.0;
+		const yMax=p_yMax, twoPi=2.0*Math.PI, dmag=0.03, pmag=0.05, tmag=2.0;
 
 		for (let i=0; i<nnp; i++) {
 			let xi, yi, hue;
@@ -514,60 +514,57 @@ const js039 = (function(){ // ====================  js Module  =================
 			ctx.stroke();
 		}
 	}
-	
-	
+
+
 	// --------------------  control  --------------------
-	
+
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-		
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
-		
 		if ( pauseFlag==true ) {
 			document.getElementById("step_button").style.visibility = "visible";
 		} else {
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setTheme() {
 		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = true;
 	}
-	
+
 	function setDispMode() {
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
 	}
-	
+
 	function setNcalc() {
 		v_nCalc = 1 + document.getElementById("slct_nCalc").selectedIndex;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:			main,			// main()
-		
-		// dom control
-		reset:			reset,			// reset()
-		pause:			pause,			// pause()
-		step:			step,			// step()
-		
-		setTheme:		setTheme,		// setTheme()
-		setDispMode:	setDispMode,	// setDispMode()
-		setNcalc:		setNcalc,		// setNcalc()
+		main:  main,  // main()
+
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step,  // step()
+
+		setTheme:   setTheme, // setTheme()
+		setDispMode:setDispMode, // setDispMode()
+		setNcalc:   setNcalc, // setNcalc()
 	};
-	
+
 })(); // ====================  js039 module end  ====================
 
 
@@ -616,7 +613,7 @@ window.addEventListener('load', js.main );
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
 
 </body>
