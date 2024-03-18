@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js048_windTunnelRLG2D
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2017.06.26 created, last updated on 2018.11.20
 //    ver 0.0.1  2019.01.18 v1, last updated on 2021.06.08
 //    ver 0.0.2  2021.11.01 v2, last updated on 2021.11.01
-//    ver 0.0.3  2023.03.29 v3, last updated on 2023.06.24
+//    ver 0.0.3  2023.03.29 v3, last updated on 2024.03.18
 //
 // --------------------  real-coded lattice gas model 2D 
 //
@@ -36,45 +36,45 @@
 */
 
 const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Module  ====================
-	
-	let g_NNmx = 96;								// x-max mean cell group 5x5 cells
-	let g_NNmy = 48;								// y-max mean cell group 5x5 cells
-	let g_Nsx = g_NNmx*5;							// x-max number of cell[Nsx][Nsy]
-	let g_Nsy = g_NNmy*5;							// y-max number of cell[Nsx][Nsy]
-	let g_NNs = 30;									// n-max number of section[Nsx][Nsy][NNs]
-	let g_NinCell = 4;								// number of particles in the cell
-	let g_NNp = g_Nsx*g_Nsy*g_NinCell;				// total number of particlesy
-	let g_sysTime = 0.0;							// system time : dimensionless time
-	let g_timeStep = 1.0;							// time step dt
-	let g_dx = 1.0;									// x-space step  : dimensionless length
-	let g_dy = 1.0;									// y-space step
-	let g_xMax = g_Nsx*g_dx;						// x- box size
-	let g_yMax = g_Nsy*g_dy;						// y- box size
-	let g_gravity = 0.0;							// gravitational force direction is -y direction
-	let g_vx0 = 0.3;								// fan - mean velocity
-	
-	const g_xx = dim1( g_NNp );						// x-component of particle position
-	const g_yy = dim1( g_NNp );						// y-component of particle position
-	const g_vx = dim1( g_NNp );						// x-component of particle velocity
-	const g_vy = dim1( g_NNp );						// y-component of particle velocity
-	const g_section = dimInt3( g_Nsx, g_Nsy, g_NNs );	//section[Nsx][Nsy][NNs]  particle number in cell[i][j]
-	const g_cellAttribute = dimInt2( g_Nsx, g_Nsy );	//attribute at cell[i][j]
-	const g_refTemp = [0,0,0,0];					// reference temp. refTemp[ca] : ca = cell attribute
-	const g_meanDens = dim2( g_NNmx, g_NNmy );		// mean density
-	const g_meanVx = dim2( g_NNmx, g_NNmy );		// mean flow vx
-	const g_meanVy = dim2( g_NNmx, g_NNmy );		// mean flow vy
-	const g_meanTemp = dim2( g_NNmx, g_NNmy );		// mean temperature
-	const g_meanPres = dim2( g_NNmx, g_NNmy );		// mean pressure
-	const g_mmDens = dim2( g_NNmx, g_NNmy );		// time averaged meanDens
-	const g_mmTemp = dim2( g_NNmx, g_NNmy );		// time averaged meanTemp
-	const g_mmPres = dim2( g_NNmx, g_NNmy );		// time averaged meanPres
-	const g_mmVx = dim2( g_NNmx, g_NNmy );			// time averaged meanVx
-	const g_mmVy = dim2( g_NNmx, g_NNmy );			// time averaged meanVy
-	
+
+	let g_NNmx = 96;      // x-max mean cell group 5x5 cells
+	let g_NNmy = 48;      // y-max mean cell group 5x5 cells
+	let g_Nsx = g_NNmx*5; // x-max number of cell[Nsx][Nsy]
+	let g_Nsy = g_NNmy*5; // y-max number of cell[Nsx][Nsy]
+	let g_NNs = 30;       // n-max number of section[Nsx][Nsy][NNs]
+	let g_NinCell = 4;    // number of particles in the cell
+	let g_NNp = g_Nsx*g_Nsy*g_NinCell; // total number of particlesy
+	let g_sysTime = 0.0;  // system time : dimensionless time
+	let g_timeStep = 1.0; // time step dt
+	let g_dx = 1.0;       // x-space step  : dimensionless length
+	let g_dy = 1.0;       // y-space step
+	let g_xMax = g_Nsx*g_dx; // x- box size
+	let g_yMax = g_Nsy*g_dy; // y- box size
+	let g_gravity = 0.0;  // gravitational force direction is -y direction
+	let g_vx0 = 0.3;      // fan - mean velocity
+
+	const g_xx = dim1( g_NNp ); // x-component of particle position
+	const g_yy = dim1( g_NNp ); // y-component of particle position
+	const g_vx = dim1( g_NNp ); // x-component of particle velocity
+	const g_vy = dim1( g_NNp ); // y-component of particle velocity
+	const g_section = dimInt3( g_Nsx, g_Nsy, g_NNs ); //section[Nsx][Nsy][NNs]  particle number in cell[i][j]
+	const g_cellAttribute = dimInt2( g_Nsx, g_Nsy ); //attribute at cell[i][j]
+	const g_refTemp = [0,0,0,0]; // reference temp. refTemp[ca] : ca = cell attribute
+	const g_meanDens = dim2( g_NNmx, g_NNmy ); // mean density
+	const g_meanVx = dim2( g_NNmx, g_NNmy );   // mean flow vx
+	const g_meanVy = dim2( g_NNmx, g_NNmy );   // mean flow vy
+	const g_meanTemp = dim2( g_NNmx, g_NNmy ); // mean temperature
+	const g_meanPres = dim2( g_NNmx, g_NNmy ); // mean pressure
+	const g_mmDens = dim2( g_NNmx, g_NNmy );   // time averaged meanDens
+	const g_mmTemp = dim2( g_NNmx, g_NNmy );   // time averaged meanTemp
+	const g_mmPres = dim2( g_NNmx, g_NNmy );   // time averaged meanPres
+	const g_mmVx = dim2( g_NNmx, g_NNmy );     // time averaged meanVx
+	const g_mmVy = dim2( g_NNmx, g_NNmy );     // time averaged meanVy
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
-	
+
 	function dim2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -82,7 +82,7 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 		}
 		return a;
 	}
-	
+
 	function dimInt2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -90,7 +90,7 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 		}
 		return a;
 	}
-	
+
 	function dimInt3( ni, nj, nk ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -101,17 +101,17 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 		}
 		return a;
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition() {
 		g_sysTime = 0.0;
 		setCellAttribute();
 		setRLGParticles(g_NNp);
 		clearMeanField();
 	}
-	
+
 	function setCellAttribute() {
 		const nsx=g_Nsx, nsy=g_Nsy;
 		for (let ic=0; ic<nsx; ic++) {
@@ -123,8 +123,8 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 			}
 		}
 	}
-	
-	function setRLGParticles(nn) {
+
+	function setRLGParticles( nn ) {
 		let i = 0;
 		while (i<nn) {
 			const x = g_xMax*Math.random();
@@ -138,7 +138,7 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 			}
 		}
 	}
-	
+
 	function clearMeanField() {
 		const nnmx=g_NNmx, nnmy=g_NNmy;
 		for (let i=0; i<nnmx; i++) {
@@ -157,11 +157,11 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 			}
 		}
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
-	function moveParticles(nCalc) {
+
+	function moveParticles( nCalc ) {
 		for (let i=0; i<nCalc; i++) {
 			movement(g_timeStep);
 			collision();
@@ -174,8 +174,8 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 			for (let i=0; i<10; i++) setTimeAverage();
 		}
 	}
-	
-	function movement(dt) {
+
+	function movement( dt ) {
 		const nnp=g_NNp;
 		for (let i=0; i<nnp; i++) {
 			g_vy[i] += g_gravity*dt;
@@ -196,7 +196,7 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 				g_vy[i] = -r*g_vy[i];
 			}
 		}
-		
+
 		for (let i=0; i<nnp; i++) { // x-periodic condition
 			if (g_xx[i] < 0.0) { 
 				g_xx[i] += g_xMax; 
@@ -212,15 +212,15 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 			}
 		}
 	}
-	
-	function cellAttributeAt(x, y) {
+
+	function cellAttributeAt( x, y ) {
 		let ix = Math.floor(x/g_dx); if (ix>=g_Nsx) ix = g_Nsx-1;
 		if (ix<0) ix = 0;
 		let iy = Math.floor(y/g_dy); if (iy>=g_Nsy) iy = g_Nsy-1;
 		if (iy<0) iy = 0;
 		return g_cellAttribute[ix][iy];
 	}
-	
+
 	function collision() {
 		const nsx=g_Nsx, nsy=g_Nsy;
 		setSection();
@@ -235,8 +235,8 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 			}
 		}
 	}
-	
-	function collisionInTheCell(ic,jc) {
+
+	function collisionInTheCell( ic, jc ) {
 		const cTh = 0.0;
 		const sTh = (Math.random()<0.5) ? -1.0 : 1.0;
 		const n = g_section[ic][jc][0];
@@ -254,7 +254,7 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 			g_vy[k] = vym -sTh*vxs +cTh*vys;
 		}
 	}
-	
+
 	function setSection() {
 		const nsx=g_Nsx, nsy=g_Nsy, nns=g_NNs, nnp=g_NNp;
 		for (let i=0; i<nsx; i++) {
@@ -272,7 +272,7 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 			}
 		}
 	}
-	
+
 	function maxSection() {
 		const nsx=g_Nsx, nsy=g_Nsy;
 		let m=0;
@@ -283,7 +283,7 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 		}
 		return m;
 	}
-	
+
 	function fan(vx0) {
 		const nsy=g_Nsy;
 		for (let ic=0; ic<5; ic++) {
@@ -297,9 +297,9 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 			}
 		}
 	}
-	
+
 	// --- statistics
-	
+
 	function totalKineticEnergy() {
 		const nnp=g_NNp;
 		let tke = 0.0;
@@ -308,21 +308,21 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 		}
 		return tke;
 	}
-	
+
 	function systemTemperature() {
 		return totalKineticEnergy()/g_NNp;
 	}
-	
-	function viscosityMin(temp) {
+
+	function viscosityMin( temp ) {
 		const rho = g_NNp/(1.0*g_Nsx*g_Nsy);
 		return (1.0/12.0+0.5*temp*(1-Math.exp(-rho)/(rho-1+Math.exp(-rho))));
 	}
-	
-	function vorticity(i, j) {
+
+	function vorticity( i, j ) {
 		if (i==0 || i==g_NNmx-1 || j==0 || j==g_NNmy-1) return 0.0;
 		return (g_mmVy[i+1][j]-g_mmVy[i-1][j])/(2*g_dx)-(g_mmVx[i][j+1]-g_mmVx[i][j-1])/(2*g_dy);
 	}
-	
+
 	function setMean() {
 		const nsx=g_Nsx, nsy=g_Nsy, nStep = 5;
 		for (let ic=0; ic<nsx; ic+=nStep) {
@@ -367,10 +367,9 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 			}
 		}
 	}
-	
+
 	function setTimeAverage() {
 		const nnmx=g_NNmx, nnmy=g_NNmy, a=0.2;
-
 		for (let i=0; i<nnmx; i++) {
 			for (let j=0; j<nnmy; j++) {
 				g_mmVx[i][j] = (1.0-a)*g_mmVx[i][j]+a*g_meanVx[i][j];
@@ -381,44 +380,44 @@ const windTunnelRLG2D = (function(){ // ====================  windTunnelRLG2D Mo
 			}
 		}
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:				setInitialCondition,	// setInitialCondition()
-		evolve:				moveParticles,			// moveParticles( nCalc )
-		
-		getSysParam:		function() { return [ g_NNmx, g_NNmy, g_Nsx, g_Nsy, g_xMax, g_NNp, g_timeStep ]; },
-		getNow:				function() { return [ g_sysTime, totalKineticEnergy(), maxSection() ]; },
-		getVx0:				function() { return g_vx0; },
-		getDensity:			function(i,j) { return g_meanDens[i][j]; },
-		getPressure:		function(i,j) { return g_meanPres[i][j]; },
-		getTemperature:		function(i,j) { return g_meanTemp[i][j]; },	
-		getVelocity:		function(i,j) { return [ g_meanVx[i][j], g_meanVy[i][j] ]; },	
-		getAveDensity:		function(i,j) { return g_mmDens[i][j]; },
-		getAvePressure:		function(i,j) { return g_mmPres[i][j]; },
-		getAveTemperature:	function(i,j) { return g_mmTemp[i][j]; },
-		getAveVelocity:		function(i,j) { return [ g_mmVx[i][j], g_mmVy[i][j] ]; },
-		getCellAttribute:	function(i,j) { return g_cellAttribute[i*5+2][j*5+2]; },
-		getRLGparticle:		function(i) { return [ g_xx[i], g_yy[i], g_vx[i], g_vy[i] ]; },
+		init:   setInitialCondition, // setInitialCondition()
+		evolve: moveParticles, // moveParticles( nCalc )
+
+		getSysParam:    function() { return [ g_NNmx, g_NNmy, g_Nsx, g_Nsy, g_xMax, g_NNp, g_timeStep ]; },
+		getNow:         function() { return [ g_sysTime, totalKineticEnergy(), maxSection() ]; },
+		getVx0:         function() { return g_vx0; },
+		getDensity:     function(i,j) { return g_meanDens[i][j]; },
+		getPressure:    function(i,j) { return g_meanPres[i][j]; },
+		getTemperature: function(i,j) { return g_meanTemp[i][j]; },	
+		getVelocity:    function(i,j) { return [ g_meanVx[i][j], g_meanVy[i][j] ]; },	
+		getAveDensity:  function(i,j) { return g_mmDens[i][j]; },
+		getAvePressure: function(i,j) { return g_mmPres[i][j]; },
+		getAveTemperature: function(i,j) { return g_mmTemp[i][j]; },
+		getAveVelocity: function(i,j) { return [ g_mmVx[i][j], g_mmVy[i][j] ]; },
+		getCellAttribute: function(i,j) { return g_cellAttribute[i*5+2][j*5+2]; },
+		getRLGparticle: function(i) { return [ g_xx[i], g_yy[i], g_vx[i], g_vy[i] ]; },
 	};
-	
+
 })(); // ====================  windTunnelRLG2D end  ====================
 
 
 const js048 = (function(){ // ====================  js Module  ====================
 
 	const theModule = windTunnelRLG2D;
-	const xCanvasSize = 560;	// in pixel
-	const yCanvasSize = 480;	// in pixel
+	const xCanvasSize = 560; // in pixel
+	const yCanvasSize = 480;
 	let canvas;
 	let ctx;
-	
+
 	let v_nCalc = 1;
-	
+
 	let p_NNmx, p_NNmy, p_Nsx, p_Nsy, p_xMax, p_NNp, p_timeStep; // <-- theModule.getSysParam();
-	
+
 	let dispMode =  10;
 	let resetFlag = true;
 	let pauseFlag = false;
@@ -430,9 +429,9 @@ const js048 = (function(){ // ====================  js Module  =================
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
 		viewHome();
-		
+
 		animate();
-	
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -448,7 +447,7 @@ const js048 = (function(){ // ====================  js Module  =================
 
 
 	function animate() {
-		
+
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init(  );
@@ -457,35 +456,35 @@ const js048 = (function(){ // ====================  js Module  =================
 			g3d.init( p_NNmx, p_NNmy, p_NNmx/2, p_xMax/p_NNmx, xCanvasSize, yCanvasSize, 500, 20 );
 			g3d.drawWallGrid2D.threshold = -1;
 		}
-		
+
 		if ( !pauseFlag ) {
 			theModule.evolve( v_nCalc );
 		} else if ( pauseFlag && stepFlag ) {
 			stepFlag = false;
 			theModule.evolve( v_nCalc );
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	//--------------------  draw  --------------------
 
 	function draw( ctx, dispMode ) {
 		const wallFunc = function(i,j) { return (theModule.getCellAttribute(i,j)==1); };
 		const densFunc = function(i,j) { return 50.0*theModule.getAveDensity(i,j)-50; };
 		
-		const NNmx = p_NNmx, NNmy = p_NNmy, xMax = p_xMax, NNp = p_NNp, timeStep = p_timeStep;
-		const xBoxSize = 500;
-		const xp = 30, yp=340, sc = xBoxSize/NNmx, yTextPos= 435;
+		const NNmx=p_NNmx, NNmy=p_NNmy, xMax=p_xMax, NNp=p_NNp, timeStep=p_timeStep;
+		const xBoxSize=500;
+		const xp=30, yp=340, sc=xBoxSize/NNmx, yTextPos=435;
 		const vx0 = theModule.getVx0();
-		
+
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
+
 		if ( dispMode<=8 ) drawBox( ctx, NNmx, NNmy, xp, yp, sc );
-		
+
 		if (dispMode<=2) { // 0:density(x,y), 1:temperature(x,y), 2:pressure(x,y)
 			drawField(ctx, NNmx, NNmy, xp, yp, sc, dispMode );
 			drawFlow(ctx, NNmx, NNmy, xp, yp, sc);
@@ -512,7 +511,7 @@ const js048 = (function(){ // ====================  js Module  =================
 			// g3d.drawWallVectorField2D(ctx, rotAngle, wallFunc, zFunc, vFunc, colorMode, inc [, showBox] )
 			g3d.drawWallVectorField2D( ctx, 0.0, wallFunc, densFunc, vFunc, 0, 1 );
 		}
-		
+
 		let sysTime, totalKineticEnergy, maxSection;
 		[ sysTime, totalKineticEnergy, maxSection ] = theModule.getNow();
 		ctx.fillStyle = "#888888";
@@ -522,8 +521,8 @@ const js048 = (function(){ // ====================  js Module  =================
 		ctx.fillText(`kinetic energy = ${totalKineticEnergy.toFixed(4)}`, xp+200, yTextPos+20);
 		ctx.fillText(`max section = ${maxSection}`, xp, yTextPos+40);
 	}
-	
-	function drawBox(ctx, nnmx, nnmy, xp,yp,sc) {
+
+	function drawBox( ctx, nnmx, nnmy, xp, yp, sc ) {
 		ctx.fillStyle = "#999999";
 		ctx.fillRect(xp-1, yp-nnmy*sc-1, nnmx*sc+2, nnmy*sc+2);
 		// draw wall
@@ -535,9 +534,8 @@ const js048 = (function(){ // ====================  js Module  =================
 			}
 		}
 	}
-	
-	function drawSample(ctx, scale, timeStep, n,xp,yp) {
 
+	function drawSample( ctx, scale, timeStep, n, xp, yp ) {
 		for (let i=0; i<n; i++) {
 			let xi, yi, vxi, vyi;
 			[ xi, yi, vxi, vyi ] = theModule.getRLGparticle(i);
@@ -554,9 +552,8 @@ const js048 = (function(){ // ====================  js Module  =================
 		}
 	}
 
-	function drawFlow(ctx, nnmx, nnmy, xp,yp,sc) {
+	function drawFlow( ctx, nnmx, nnmy, xp, yp, sc ) {
 		let mag = 80;
-
 		for (let i=0; i<nnmx; i++) {
 			for (let j=0; j<nnmy; j++) {
 				const densij = theModule.getDensity(i,j);
@@ -573,9 +570,8 @@ const js048 = (function(){ // ====================  js Module  =================
 		}
 	}
 
-	function drawTimeAveragedFlow(ctx, nnmx, nnmy, xp, yp, sc) {
+	function drawTimeAveragedFlow( ctx, nnmx, nnmy, xp, yp, sc ) {
 		let mag = 80;
-
 		for (let i=0; i<nnmx; i++) {
 			for (let j=0; j<nnmy; j++) {
 				const densij = theModule.getAveDensity(i,j);
@@ -593,9 +589,8 @@ const js048 = (function(){ // ====================  js Module  =================
 	}
 
 	function drawField( ctx, nnmx, nnmy, xp, yp, sc, dispMode ) {
-		const dmag =4.0
+		const dmag=4.0
 		let t, p, color;
-
 		for (let i=0; i<nnmx; i++) {
 			for (let j=0; j<nnmy; j++) {
 				const x = (i+0.5)*sc, y = (j+0.5)*sc;
@@ -619,9 +614,8 @@ const js048 = (function(){ // ====================  js Module  =================
 	}
 
 	function drawTimeAveragedField( ctx, nnmx, nnmy, xp, yp, sc, dispMode ) {
-		const dmag = 4.0
+		const dmag=4.0
 		let t, p, color;
-
 		for (let i=0; i<nnmx; i++) {
 			for (let j=0; j<nnmy; j++) {
 				const x = (i+0.5)*sc, y = (j+0.5)*sc;
@@ -643,43 +637,43 @@ const js048 = (function(){ // ====================  js Module  =================
 			}
 		}
 	}
-	
+
 	function drawRect(ctx, x, y, w, h, color) {
 		ctx.fillStyle = color;
 		ctx.fillRect(x, y, w, h);
 	}
-	
-	
+
+
 	// --------------------  graphics 3D (field) module  --------------------
 	//
 	// ver 0.0.1  2018.12.16  last updated on 2023.03.01
 	// ver 0.0.2  2023.03.03  last updated on 2023.06.01
-	
+
 	let g_NNx, g_NNy, g_NNz, g_dx, g_dy, g_dz, g_xCanvasSize, g_yCanvasSize, g_xBoxSize, g_yShift;
-	
-	const g3d = {};				// namespace of graphic 3D module
-	
-	g3d.mouseDownFlag = 0;		// 1:on mouse down, 0:else
-	g3d.x_mouse = 0;			// x-position of mouse
-	g3d.y_mouse = 0;			// y-position of mouse
-	g3d.x0_mouse = 0;			// drag-started x-position of mouse
-	g3d.y0_mouse = 0;			// drag-started y-position of mouse
+
+	const g3d = {};  // namespace of graphic 3D module
+
+	g3d.mouseDownFlag = 0; // 1:on mouse down, 0:else
+	g3d.x_mouse = 0; // x-position of mouse
+	g3d.y_mouse = 0; // y-position of mouse
+	g3d.x0_mouse = 0;// drag-started x-position of mouse
+	g3d.y0_mouse = 0;// drag-started y-position of mouse
 	g3d.zoom = 1.0;
-	
-	g3d.xMax = 0.0;				// x-length of box
-	g3d.yMax = 0.0;				// y-length of box
-	g3d.zMax = 0.0;				// z-length of box
-	g3d.cx0 = 0.0;				// x-component of rotate center
-	g3d.cy0 = 0.0;				// y-component of rotate center
-	g3d.cz0 = 0.0;				// z-component of rotate center
-	g3d.Ax = -Math.PI/15.0;		// rotate angle around x-axis
-	g3d.Ay = -Math.PI/15.0;		// rotate angle around y-axis
-	g3d.ddAy = 0.0;				// Ay change rate for auto-rotate: eg. dday=0.5*Math.PI/180
-	g3d.cosAx = 0.0;			// cosAx=Math.cos(Ax)
-	g3d.sinAx = 0.0;			// sinAx=Math.sin(Ax)
-	g3d.cosAy = 0.0;			// cosAy=Math.cos(Ay)
-	g3d.sinAy = 0.0;			// sinAy=Math.sin(Ay)
-	
+
+	g3d.xMax = 0.0;  // x-length of box
+	g3d.yMax = 0.0;  // y-length of box
+	g3d.zMax = 0.0;  // z-length of box
+	g3d.cx0 = 0.0;   // x-component of rotate center
+	g3d.cy0 = 0.0;   // y-component of rotate center
+	g3d.cz0 = 0.0;   // z-component of rotate center
+	g3d.Ax = -Math.PI/15.0; // rotate angle around x-axis
+	g3d.Ay = -Math.PI/15.0; // rotate angle around y-axis
+	g3d.ddAy = 0.0;   // Ay change rate for auto-rotate: eg. dday=0.5*Math.PI/180
+	g3d.cosAx = 0.0; // cosAx=Math.cos(Ax)
+	g3d.sinAx = 0.0; // sinAx=Math.sin(Ax)
+	g3d.cosAy = 0.0; // cosAy=Math.cos(Ay)
+	g3d.sinAy = 0.0; // sinAy=Math.sin(Ay)
+
 	g3d.xApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
 	g3d.yApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
 	g3d.zApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
@@ -689,9 +683,9 @@ const js048 = (function(){ // ====================  js Module  =================
 	g3d.boxApex = [[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1], [1,0,1], [0,1,1], [1,1,1] ];
 	g3d.boxEdge = [[0,1,9], [0,2,9], [0,4,9], [1,3,9], [1,5,9], [2,3,9], 
 					[2,6,9], [3,7,9], [4,5,9], [4,6,9], [5,7,9], [6,7,9] ];
-	
+
 	//--- set mouse on canvas
-	
+
 	// g3d.setMouseOnCanvas( canvas );
 	g3d.setMouseOnCanvas = function( canvas ) {
 		canvas.addEventListener('mousemove', g3d.mouse_move);
@@ -699,10 +693,9 @@ const js048 = (function(){ // ====================  js Module  =================
 		canvas.addEventListener('mouseup', g3d.mouse_up);
 		canvas.addEventListener("mousewheel", g3d.mouseWheel);
 	};
-	
-	g3d.mouse_move = function(e) {
-		const pi = Math.PI;
 
+	g3d.mouse_move = function(e) {
+		const pi=Math.PI;
 		if (g3d.mouseDownFlag==1) {
 			g3d.x_mouse = e.clientX;
 			g3d.y_mouse = e.clientY;
@@ -717,7 +710,7 @@ const js048 = (function(){ // ====================  js Module  =================
 			g3d.y0_mouse = g3d.y_mouse;
 		}
 	};
-	
+
 	g3d.mouse_down = function(e) {
 		if (g3d.mouseDownFlag==0) {
 			g3d.x0_mouse = e.clientX;
@@ -727,13 +720,13 @@ const js048 = (function(){ // ====================  js Module  =================
 			g3d.mouseDownFlag = 1;
 		}
 	};
-	
+
 	g3d.mouse_up = function(e) {
 		if (g3d.mouseDownFlag==1) {
 			g3d.mouseDownFlag = 0;
 		}
 	};
-	
+
 	g3d.mouseWheel = function(e) {
 		g3d.deltaY = e.deltaY;
 		if ( g3d.deltaY > 0 ) g3d.zoom *= 0.95;
@@ -741,9 +734,9 @@ const js048 = (function(){ // ====================  js Module  =================
 		if ( g3d.zoom<0.5 ) g3d.zoom = 0.5;
 		if ( g3d.zoom>2.0 ) g3d.zoom = 2.0;
 	};
-	
+
 	//--- 3D graphics aid
-	
+
 	// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
 	g3d.init = function( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift ) {
 		g_NNx = NNx; g_NNy = NNy; g_NNz = NNz;
@@ -753,7 +746,7 @@ const js048 = (function(){ // ====================  js Module  =================
 		g_yShift = (yShift==undefined) ? 20 : yShift;
 		g3d.setSize();
 	}
-	
+
 	g3d.setSize = function() {
 		g3d.xMax = g_NNx*g_dx;		// x-length of box
 		g3d.yMax = g_NNy*g_dy;		// y-length of box
@@ -762,13 +755,13 @@ const js048 = (function(){ // ====================  js Module  =================
 		g3d.cy0 = 0.5*g3d.yMax;		// y-component of rotate center
 		g3d.cz0 = 0.5*g3d.zMax;		// z-component of rotate center
 	};
-	
+
 	// g3d.setRotateAngle( AxInDegree, AyInDegree );
 	g3d.setRotateAngle = function( AxInDegree, AyInDegree ) {
 		g3d.Ax = AxInDegree*Math.PI/180.0;
 		g3d.Ay = AyInDegree*Math.PI/180.0;
 	};
-	
+
 	// g3d.scxpypFunc();
 	g3d.scxpypFunc = function() {
 		const xBoxSize = g_xBoxSize;
@@ -777,7 +770,7 @@ const js048 = (function(){ // ====================  js Module  =================
 		const sc = xBoxSize/(g_NNx*g_dx)*g3d.zoom;
 		return [ sc, xp, yp ];
 	}
-	
+
 	g3d.set3DRotateXY = function(rotateRateOfAyInDegree) {
 		g3d.ddAy = rotateRateOfAyInDegree*Math.PI/180.0;
 		g3d.Ay= g3d.Ay + g3d.ddAy; // auto-rotate : if (ddAy==0.0), stop
@@ -788,7 +781,7 @@ const js048 = (function(){ // ====================  js Module  =================
 		g3d.rotateApexXY();     // box Apex rotate--> pxApex[i],pyApex[i],pzApex[i]
 		g3d.markFarEdge();      // boxEdge[iEdge][2]=1:far side edge or 0:near side edge
 	};
-	
+
 	g3d.setBox = function() {
 		for (let i=0; i<8; i++) {
 			g3d.xApex[i] = g3d.boxApex[i][0]*g3d.xMax;
@@ -796,7 +789,7 @@ const js048 = (function(){ // ====================  js Module  =================
 			g3d.zApex[i] = g3d.boxApex[i][2]*g3d.zMax;
 		}
 	};
-	
+
 	g3d.setRotateXY = function(angleX,angleY) {
 		g3d.cosAx = Math.cos(angleX);
 		g3d.sinAx = Math.sin(angleX);
@@ -806,17 +799,16 @@ const js048 = (function(){ // ====================  js Module  =================
 		g3d.cy0 = 0.5*g3d.yMax;
 		g3d.cz0 = 0.5*g3d.zMax;
 	};
-	
+
 	g3d.rotateApexXY = function() { // rotate box apex
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		for (let i=0; i<8; i++) {
 			g3d.pxApex[i] = cosAy*(g3d.xApex[i]-cx0)+sinAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cx0;
 			g3d.pyApex[i] = cosAx*(g3d.yApex[i]-cy0)-sinAx*(g3d.zApex[i]-cz0) + cy0;
 			g3d.pzApex[i] =-sinAy*(g3d.xApex[i]-cx0)+cosAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cz0;
 		}
 	};
-	
+
 	g3d.markFarEdge = function() {
 		//seek far apex --> iMin
 		let zMin = g3d.pzApex[0];
@@ -833,26 +825,24 @@ const js048 = (function(){ // ====================  js Module  =================
 			if (g3d.boxEdge[iEdge][0]==iMin || g3d.boxEdge[iEdge][1]==iMin) g3d.boxEdge[iEdge][2] = 1;
 		}
 	};
-	
+
 	g3d.drawRotatedDisc = function(ctx, x,y,z,r,color,sc,xp,yp) {
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		const x1 = cosAy*(x-cx0)+sinAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cx0
 		const y1 = cosAx*(y-cy0)-sinAx*(z-cz0) + cy0
 		//z1 =-sinAy*(x-cx0)+cosAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cz0
 		g3d.drawDisc(ctx, x1*sc+xp,y1*sc+yp,r,color);
 	};
-	
+
 	g3d.drawRotatedLine = function(ctx, x1,y1,z1,x2,y2,z2,color,sc,xp,yp) {
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		const x1p = cosAy*(x1-cx0)+sinAy*(sinAx*(y1-cy0)+cosAx*(z1-cz0)) + cx0
 		const y1p = cosAx*(y1-cy0)-sinAx*(z1-cz0) + cy0
 		const x2p = cosAy*(x2-cx0)+sinAy*(sinAx*(y2-cy0)+cosAx*(z2-cz0)) + cx0
 		const y2p = cosAx*(y2-cy0)-sinAx*(z2-cz0) + cy0
 		g3d.drawLine(ctx, x1p*sc+xp,y1p*sc+yp,x2p*sc+xp,y2p*sc+yp,color);
 	};
-	
+
 	g3d.plotNearEdge = function(ctx, sc,xp,yp,color) {
 		for (let iEdge=0; iEdge<12; iEdge++) {
 			if (g3d.boxEdge[iEdge][2]==0) { //far edge mark = 1
@@ -860,7 +850,7 @@ const js048 = (function(){ // ====================  js Module  =================
 			}
 		}
 	};
-	
+
 	g3d.plotFarEdge = function(ctx, sc,xp,yp,color) {
 		for (let iEdge=0; iEdge<12; iEdge++) {
 			if (g3d.boxEdge[iEdge][2]==1) { //far edge mark = 1
@@ -868,7 +858,7 @@ const js048 = (function(){ // ====================  js Module  =================
 			}
 		}
 	};
-	
+
 	g3d.plotEdge = function(ctx, iEdge,sc,xp,yp,color) {
 		let iApex = g3d.boxEdge[iEdge][0];
 		const x1=g3d.pxApex[iApex]*sc+xp, y1=g3d.pyApex[iApex]*sc+yp;
@@ -876,7 +866,7 @@ const js048 = (function(){ // ====================  js Module  =================
 		const x2=g3d.pxApex[iApex]*sc+xp, y2=g3d.pyApex[iApex]*sc+yp;
 		g3d.drawLine(ctx, x1, y1, x2, y2, color);
 	};
-	
+
 	g3d.drawLine = function(ctx, x1, y1, x2, y2, color) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -884,22 +874,22 @@ const js048 = (function(){ // ====================  js Module  =================
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	};
-	
+
 	g3d.drawDisc = function(ctx, x, y, r, color) {
 		ctx.fillStyle = color;
 		ctx.beginPath();
 		ctx.arc(x, y, r, 0, 2*Math.PI, false);
 		ctx.fill();
 	};
-	
+
 	// --------------------  end of graphics 3D (field) module  --------------------
-	
+
 	// g3d_extension grid2d  created 2023.06.17, last updated 2023.06.17
 	// g3d.drawWallGrid2D( ctx, rotAngle, wallFunc, zFunc, colorFactor, inc [, showBox] )
 	g3d.drawWallGrid2D = function ( ctx, rotAngle, wallFunc, zFunc, colorFactor, inc, showBox ) {
 		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
-		const nnx = g_NNx, nny = g_NNy, threshold = g3d.drawWallGrid2D.threshold;
-		
+		const nnx=g_NNx, nny=g_NNy, threshold=g3d.drawWallGrid2D.threshold;
+
 		g3d.set3DRotateXY(rotAngle);
 		if ( (showBox & 1)>0 || showBox==undefined ) g3d.plotFarEdge(ctx, sc,xp,yp,"#444400"); // dark yellow
 		for (let jj=0; jj<nny; jj+=inc) {
@@ -907,13 +897,13 @@ const js048 = (function(){ // ====================  js Module  =================
 			for (let ii=0; ii<nnx; ii++) {
 				let i=ii;if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
 				if (i<0 || i+1>nnx-1) continue;
-							
+
 				if ( wallFunc(i,nny-j-1) ) {
 					const  x = i*g_dx, y = j*g_dx, z = 0, z1 = 2*g3d.cz0;
 					g3d.drawRotatedLine(ctx, x,y,z,x,y,z1,'#888888',sc,xp,yp);
 					continue;
 				}
-				
+
 				const f = zFunc(i,nny-j-1);
 				const x = i*g_dx, y = j*g_dy, z = f + g3d.cz0;
 				const f1 = zFunc(i+1,nny-j-1);
@@ -936,11 +926,11 @@ const js048 = (function(){ // ====================  js Module  =================
 			for (let jj=0; jj<nny; jj++) {
 				let j=jj;if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
 				if (j<0 || j+1>nny-1) continue;
-				
+
 				if ( wallFunc(i,nny-j-1) ) {
 					continue;
 				}
-				
+
 				const f = zFunc(i,nny-j-1);
 				const x = i*g_dx, y = j*g_dy, z = f + g3d.cz0;
 				const f1 = zFunc(i,nny-j-2);
@@ -959,33 +949,33 @@ const js048 = (function(){ // ====================  js Module  =================
 			}
 		}
 		if ( (showBox & 2)>0 || showBox==undefined ) g3d.plotNearEdge(ctx, sc,xp,yp,"#999900"); //yellow
-		
+
 		ctx.font = "12px 'sans-serif'";
 		ctx.fillStyle = "#888888";
 		ctx.fillText(`Ax=${(g3d.Ax*180/Math.PI).toFixed(1)}, Ay=${(g3d.Ay*180/Math.PI).toFixed(1)}`, 10, 15);
 		ctx.font = "16px 'sans-serif'";
 	};
 	g3d.drawWallGrid2D.threshold = 0.005;
-	
+
 	// g3d_extension gvextor field  created 2023.06.17, last updated 2023.06.17
 	// g3d.drawWallVectorField2D(ctx, rotAngle, wallFunc, zFunc, vFunc, colorMode, inc [, showBox] )
 	g3d.drawWallVectorField2D = function(ctx, rotAngle, wallFunc, zFunc, vFunc, colorMode, inc, showBox ) {
 		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, dx=g_dx, threshold = g3d.drawWallVectorField2D.threshold;
-	
+
 		g3d.set3DRotateXY(rotAngle);
 		if ( (showBox & 1)>0 || showBox==undefined ) g3d.plotFarEdge(ctx, sc,xp,yp,"#444400"); // dark yellow
 		for (let ii=0; ii<nnx; ii+=inc) {
 			let i=ii; if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
 			for (let jj=0; jj<nny; jj+=inc) {
 				let j=jj; if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
-				
+
 				if ( wallFunc(i,nny-j-1) ) {
 					const  x = i*dx, y = j*dx, z = 0, z1 = 2*g3d.cz0;
 					g3d.drawRotatedLine(ctx, x,y,z,x,y,z1,'#888888',sc,xp,yp);
 					continue;
 				}
-				
+
 				const f = zFunc(i,nny-j-1);
 				const x = i*dx, y = j*dx, z = f + g3d.cz0;
 				let vx, vy;
@@ -1010,63 +1000,60 @@ const js048 = (function(){ // ====================  js Module  =================
 		ctx.font = "16px 'sans-serif'";
 	};
 	g3d.drawWallVectorField2D.threshold = 0.5;
-	
-	
+
+
 	// --------------------  control  --------------------
 
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
-		
 		if ( pauseFlag==true ) {
 			document.getElementById("step_button").style.visibility = "visible";
 		} else {
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	/*
 	function setTheme() {
 		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = true;
 	}
 	*/
-	
+
 	function setDispMode() {
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
 	}
-	
+
 	function viewHome() { 	
 		g3d.setRotateAngle(15,-10);
 		g3d.zoom = 1.0;
 	}
-	
+
 
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:			main,			// main()
-		
-		// dom control
-		reset:			reset,			// reset()
-		pause:			pause,			// pause()
-		step:			step,			// step()
-		
-		//setTheme:		setTheme,		// setTheme()
-		setDispMode:	setDispMode,	// setDispMode()
-		viewHome:		viewHome,		// viewHome()
+		main:  main,  // main()
+
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step,  // step()
+
+		//setTheme: setTheme, // setTheme()
+		setDispMode: setDispMode, // setDispMode()
+		viewHome: viewHome, // viewHome()
 	};
-	
+
 })(); // ====================  jsc048 module end  ====================
 
 
@@ -1116,8 +1103,9 @@ theme: wind tunnel
 
 <p id="text_caption" ></p>
 <hr width="560" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
+
 </body>
 </html>
 
