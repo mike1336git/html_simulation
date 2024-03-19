@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js049_waveOpticsFDTD2D
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2017.06.29 created, last updated on 2018.11.20
 //    ver 0.0.1  2019.01.18 v1, last updated on 2021.06.09
 //    ver 0.0.2  2021.11.01 v2, last updated on 2021.11.01
-//    ver 0.0.3  2023.03.30 v3, last updated on 2023.08.26
+//    ver 0.0.3  2023.03.30 v3, last updated on 2024.03.18
 //
 // --------------------  FDTD2D: finite-difference time-domain method 2D
 //
@@ -58,25 +58,25 @@
 */
 
 const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D Module  ====================
-	
-	const g_nMax = 400;						// array max
-	
-	let g_NNx = 320;						// number of space division (NNx*dx = x-length)
-	let g_NNy = 320;						// number of space division (NNy*dx = y-length)
-	let g_sysTime = 0.0;					// system time
-	let g_dt = 1.0;							// time step
-	let g_dx = 1.0;							// space division dx
-	let g_dy = 1.0;							// space division dy (no use)
-	let g_omega = Math.PI/16.0;				// generator wave angular velocity: phase angle += omega*dt
-	let g_theta = 0.0;						// generator phase angle
-	
-	const g_Ez = dim2( g_nMax, g_nMax );	// z-component of electric field
-	const g_Hx = dim2( g_nMax, g_nMax );	// x-component of magnetic field
-	const g_Hy = dim2( g_nMax, g_nMax );	// y-component of magnetic field
-	const g_ep = dim2( g_nMax, g_nMax );	// dielectric constant
-	const g_mu = dim2( g_nMax, g_nMax );	// magnetic permeability
-	const g_sg = dim2( g_nMax, g_nMax );	// Electrical conductivity
-	
+
+	const g_nMax = 400; // array max
+
+	let g_NNx = 320;    // number of space division (NNx*dx = x-length)
+	let g_NNy = 320;    // number of space division (NNy*dx = y-length)
+	let g_sysTime = 0.0;// system time
+	let g_dt = 1.0;     // time step
+	let g_dx = 1.0;     // space division dx
+	let g_dy = 1.0;     // space division dy (no use)
+	let g_omega = Math.PI/16.0; // generator wave angular velocity: phase angle += omega*dt
+	let g_theta = 0.0;  // generator phase angle
+
+	const g_Ez = dim2( g_nMax, g_nMax ); // z-component of electric field
+	const g_Hx = dim2( g_nMax, g_nMax ); // x-component of magnetic field
+	const g_Hy = dim2( g_nMax, g_nMax ); // y-component of magnetic field
+	const g_ep = dim2( g_nMax, g_nMax ); // dielectric constant
+	const g_mu = dim2( g_nMax, g_nMax ); // magnetic permeability
+	const g_sg = dim2( g_nMax, g_nMax ); // Electrical conductivity
+
 	function dim2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -84,10 +84,10 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 		}
 		return a;
 	}
-	
-	
+
+
 	// -------------------- set initial condition --------------------
-	
+
 	function setInitialCondition( theme ) {
 		g_sysTime = 0.0;
 		g_theta = 0.0;
@@ -117,7 +117,7 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 			;
 		}
 	}
-	
+
 	function clearField() {
 		const nnx=g_NNx, nny=g_NNy;
 		for (let i=0; i<nnx+1; i++) {
@@ -131,7 +131,7 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 			}
 		}
 	}
-	
+
 	function setConcaveMirror() {
 		const i0=-20, j0=g_NNy/2, nnx=g_NNx, nny=g_NNy;
 		const r = nnx-20-i0;
@@ -145,7 +145,7 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 			}
 		}
 	}
-	
+
 	function setPrism() {
 		for (let i=20; i<120; i++) {
 			for (let j=10; j<200; j++) {
@@ -157,7 +157,7 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 			}
 		}
 	}
-	
+
 	function setLens() {
 		const i0=220, j0=g_NNy/2, nny=g_NNy, r=200;
 		for (let i=20; i<60; i++) {
@@ -170,7 +170,7 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 			}
 		}
 	}
-	
+
 	function setPrism2() {
 		const s=50;
 		for (let i=20+s; i<160+s; i++) {
@@ -183,7 +183,7 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 			}
 		}
 	}
-	
+
 	function setDoubleSlit() {
 		const nny=g_NNy, a=g_NNy/2-40, b=g_NNy/2+40;
 		for (let i=40; i<60; i++) {
@@ -196,7 +196,7 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 			}
 		}
 	}
-	
+
 	function setGrating() {
 		const nny=g_NNy;
 		for (let i=40; i<60; i++) {
@@ -209,7 +209,7 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 			}
 		}
 	}
-	
+
 	function setOpticalAmp() { // no use (dose not work :instable Laser?)
 		for (let i=80; i<160; i++) {
 			for (let j=110; j<130; j++) {
@@ -219,8 +219,8 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 			}
 		}
 	}
-	
-	function setBlock(eps,mue,sgm) {
+
+	function setBlock( eps, mue, sgm ) {
 		const nnx=g_NNx, nny=g_NNy;
 		for (let i=60; i<160; i++) {
 			for (let j=40; j<180; j++) {
@@ -230,11 +230,11 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 			}
 		}
 	}
-	
-	
+
+
 	// --------------------  evolve Field Ez,Hx,Hy  --------------------
-	
-	function evolveField(nTimes,nWaves) {
+
+	function evolveField( nTimes, nWaves ) {
 		const n=2*nTimes;
 		for (let i=0; i<n; i++) {
 			g_sysTime += g_dt;
@@ -243,8 +243,8 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 			evolveHxHy();
 		}
 	}
-	
-	function generateEz(nwave) {  // plane wave 
+
+	function generateEz( nwave ) {  // plane wave 
 		const nny=g_NNy, pi=Math.PI;
 		g_theta = g_theta + g_omega*0.5*g_dt
 		const Ezt = Math.sin(g_theta);
@@ -260,10 +260,9 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 			}
 		}
 	}
-	
+
 	function evolveEz() {  // dD/dt=rotH + J ,D=eps*E
 		const nnx=g_NNx, nny=g_NNy, dtv2=0.5*g_dt;
-
 		for (let i=0; i<nnx; i++) {
 			for (let j=0; j<nny; j++) {
 				if (g_ep[i][j]<1000.0) { // non-metal
@@ -273,10 +272,10 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 			}
 		}
 	}
-	
+
 	function evolveHxHy() {  // dB/dt=-rotE ,B=mue*H
 		const nnx=g_NNx, nny=g_NNy, dtv2=0.5*g_dt;
-		
+
 		// boundary : no-reflect (in vacuum) condition
 		// MUR Hx(n+1,i,0) = Hx(n,i,1)-(dx-dt)/(dx+dt){Hx(n+1,i,1)-Hx(n,i,0)}
 		const c = (g_dx-dtv2)/(g_dx+dtv2);
@@ -292,7 +291,7 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 		for (let j=0; j<nny; j++) {
 			g_Hy[nnx][j] = c*g_Hy[nnx][j] + g_Hy[nnx-1][j];
 		}
-		
+
 		// Hx(i,j) - dt(1/mue)(Ez(i,j)-Ez(i,j-1))/dy
 		for (let i=0; i<nnx; i++) {
 			for (let j=1; j<nny; j++) {
@@ -305,7 +304,7 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 				g_Hy[i][j] += dtv2/g_mu[i][j]*(g_Ez[i][j]-g_Ez[i-1][j]);
 			}
 		}
-		
+
 		// boundary : no-reflect (in vacuum) condition
 		for (let i=0; i<nnx; i++) {
 			g_Hx[i][0] -= c*g_Hx[i][1];
@@ -320,53 +319,53 @@ const waveOpticsFDTD2D = (function(){ // ====================  waveOpticsFDTD2D 
 			g_Hy[nnx][j] -= c*g_Hy[nnx-1][j];
 		}
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
 	
 	return {
-		init:			setInitialCondition,	// setInitialCondition( theme )
-		evolve:			evolveField,			// evolveField( nTimes,nWaves )
-		
-		getSysParam:	function() { return [ g_NNx, g_NNy, g_dx, g_dt ]; },
-		getSysTime:		function() { return g_sysTime; },
-		getEps:			function(i,j) { return g_ep[i][j]; },
-		getMue:			function(i,j) { return g_mu[i][j]; },
-		getSgm:			function(i,j) { return g_sg[i][j]; },
-		getEz:			function(i,j) { return g_Ez[i][j]; },
-		getHxy:			function(i,j) { return [ g_Hx[i][j], g_Hy[i][j] ]; },
+		init:   setInitialCondition, // setInitialCondition( theme )
+		evolve: evolveField, // evolveField( nTimes,nWaves )
+
+		getSysParam: function() { return [ g_NNx, g_NNy, g_dx, g_dt ]; },
+		getSysTime: function() { return g_sysTime; },
+		getEps: function(i,j) { return g_ep[i][j]; },
+		getMue: function(i,j) { return g_mu[i][j]; },
+		getSgm: function(i,j) { return g_sg[i][j]; },
+		getEz:  function(i,j) { return g_Ez[i][j]; },
+		getHxy: function(i,j) { return [ g_Hx[i][j], g_Hy[i][j] ]; },
 	};
-	
+
 })(); // ====================  waveOpticsFDTD2D end  ====================
 
 
 const js049 = (function(){ // ====================  js Module  ====================
 
 	const theModule = waveOpticsFDTD2D;
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel
-	let canvas;					// canvas2d
-	let ctx;					// = canvas.getContext('2d');
+	const xCanvasSize = 480; // in pixel
+	const yCanvasSize = 480;
+	let canvas;
+	let ctx;
 	let imageEz = null;
 	let imageEps = null;
-	
+
 	let v_theme = 0;
 	let v_nTimes = 1;
 	let v_nWaves = 2;
-	
+
 	let p_NNx, p_NNy, p_dx, p_dt; // = theModule.getSysParam();
-				
+
 	let dispMode = 0;
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
-	
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
 		viewHome();
-		
+
 		animate();
 
 		function setCanvas( canvasID, width, height ) {
@@ -381,10 +380,10 @@ const js049 = (function(){ // ====================  js Module  =================
 			g3d.setMouseOnCanvas( canvas ); // 3D graphics
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
+
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_theme ); // ( nn, BoxSizeInNM, contTemp )
@@ -395,29 +394,29 @@ const js049 = (function(){ // ====================  js Module  =================
 			g3d.init( p_NNx, p_NNy, p_NNy/2, p_dx, xCanvasSize, yCanvasSize, 320, 20 );
 			g3d.drawGrid2D.threshold = 0.01;
 		}
-		
+
 		if ( !pauseFlag ) {
 			theModule.evolve( v_nTimes, v_nWaves );
 		} else if ( pauseFlag && stepFlag ) {
 			stepFlag = false;
 			theModule.evolve( v_nTimes, v_nWaves );
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	function draw( ctx, dispMode ) {
 		const epsFunc = function(i,j) { return ( (theModule.getEps(i,j)==1.0) ? 0 : 10 ); };
-		
+
 		let sysTime = theModule.getSysTime();
-		
-		const xp = 80, yp = 60, xBoxSize = 320, yBoxSize = 320;
-		
+
+		const xp=80, yp=60, xBoxSize=320, yBoxSize=320;
+
 		if ( imageEps == null ) {
 			imageEz = ctx.getImageData(xp, yp, p_NNx, p_NNy);
 			imageEps = ctx.getImageData(xp, yp, p_NNx, p_NNy);
@@ -425,12 +424,12 @@ const js049 = (function(){ // ====================  js Module  =================
 		}
 
 		ctx.clearRect( 0, 0, xCanvasSize, yCanvasSize );
-		
+
 		if (dispMode<=1) {
 			ctx.strokeStyle = "#888800";
 			ctx.strokeRect( xp, yp, xBoxSize, yBoxSize );
 		}
-		
+
 		if ( dispMode==0 ) {
 			text("Ez field");
 			drawEzField( ctx, p_NNx, p_NNy, xp, yp );
@@ -462,20 +461,19 @@ const js049 = (function(){ // ====================  js Module  =================
 			}
 			// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
 			g3d.drawGrid2D( ctx, 0.0, zFunc, colorFunc, 5 );
-			
+
 		}
 
 		ctx.fillStyle = "#888888";
 		ctx.fillText(`time = ${sysTime}`, 40, yCanvasSize-20 );
-		
+
 		function text( msg ) {
 			ctx.fillStyle = "#888888";
 			ctx.fillText( msg, 40, yCanvasSize-40 );
 		}
 	}
-	
-	function setImageEps( nnx, nny ) {;
 
+	function setImageEps( nnx, nny ) {;
 		const data = imageEps.data;
 		for (let j=0; j<nny; j++) {
 			const jj = nny - j - 1;
@@ -493,7 +491,6 @@ const js049 = (function(){ // ====================  js Module  =================
 
 	function drawEzField( ctx, nnx, nny, xp, yp ) {
 		const mag = 250.0;
-
 		const data = imageEz.data;
 		for (let j=0; j<nny; j++) {
 			const jj = nny - j - 1;
@@ -520,7 +517,6 @@ const js049 = (function(){ // ====================  js Module  =================
 
 	function drawHxyField( ctx, nnx, nny, xp, yp ) {
 		const mag = 10.0;
-
 		ctx.putImageData(imageEps, xp, yp); // draw optical object
 		for (let i=2; i<nnx; i+=4) {
 			for (let j=2; j<nny; j+=4) {
@@ -536,38 +532,38 @@ const js049 = (function(){ // ====================  js Module  =================
 			}
 		}
 	}
-	
-	
+
+
 	// --------------------  graphics 3D (field) module  --------------------
 	//
 	// ver 0.0.1  2018.12.16  last updated on 2023.03.01
 	// ver 0.0.2  2023.03.03  last updated on 2023.06.01
-	
+
 	let g_NNx, g_NNy, g_NNz, g_dx, g_dy, g_dz, g_xCanvasSize, g_yCanvasSize, g_xBoxSize, g_yShift;
-	
-	const g3d = {};				// namespace of graphic 3D module
-	
-	g3d.mouseDownFlag = 0;		// 1:on mouse down, 0:else
-	g3d.x_mouse = 0;			// x-position of mouse
-	g3d.y_mouse = 0;			// y-position of mouse
-	g3d.x0_mouse = 0;			// drag-started x-position of mouse
-	g3d.y0_mouse = 0;			// drag-started y-position of mouse
+
+	const g3d = {};  // namespace of graphic 3D module
+
+	g3d.mouseDownFlag = 0; // 1:on mouse down, 0:else
+	g3d.x_mouse = 0; // x-position of mouse
+	g3d.y_mouse = 0; // y-position of mouse
+	g3d.x0_mouse = 0;// drag-started x-position of mouse
+	g3d.y0_mouse = 0;// drag-started y-position of mouse
 	g3d.zoom = 1.0;
-	
-	g3d.xMax = 0.0;				// x-length of box
-	g3d.yMax = 0.0;				// y-length of box
-	g3d.zMax = 0.0;				// z-length of box
-	g3d.cx0 = 0.0;				// x-component of rotate center
-	g3d.cy0 = 0.0;				// y-component of rotate center
-	g3d.cz0 = 0.0;				// z-component of rotate center
-	g3d.Ax = -Math.PI/15.0;		// rotate angle around x-axis
-	g3d.Ay = -Math.PI/15.0;		// rotate angle around y-axis
-	g3d.ddAy = 0.0;				// Ay change rate for auto-rotate: eg. dday=0.5*Math.PI/180
-	g3d.cosAx = 0.0;			// cosAx=Math.cos(Ax)
-	g3d.sinAx = 0.0;			// sinAx=Math.sin(Ax)
-	g3d.cosAy = 0.0;			// cosAy=Math.cos(Ay)
-	g3d.sinAy = 0.0;			// sinAy=Math.sin(Ay)
-	
+
+	g3d.xMax = 0.0;  // x-length of box
+	g3d.yMax = 0.0;  // y-length of box
+	g3d.zMax = 0.0;  // z-length of box
+	g3d.cx0 = 0.0;   // x-component of rotate center
+	g3d.cy0 = 0.0;   // y-component of rotate center
+	g3d.cz0 = 0.0;   // z-component of rotate center
+	g3d.Ax = -Math.PI/15.0; // rotate angle around x-axis
+	g3d.Ay = -Math.PI/15.0; // rotate angle around y-axis
+	g3d.ddAy = 0.0;  // Ay change rate for auto-rotate: eg. dday=0.5*Math.PI/180
+	g3d.cosAx = 0.0; // cosAx=Math.cos(Ax)
+	g3d.sinAx = 0.0; // sinAx=Math.sin(Ax)
+	g3d.cosAy = 0.0; // cosAy=Math.cos(Ay)
+	g3d.sinAy = 0.0; // sinAy=Math.sin(Ay)
+
 	g3d.xApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
 	g3d.yApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
 	g3d.zApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
@@ -577,9 +573,9 @@ const js049 = (function(){ // ====================  js Module  =================
 	g3d.boxApex = [[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1], [1,0,1], [0,1,1], [1,1,1] ];
 	g3d.boxEdge = [[0,1,9], [0,2,9], [0,4,9], [1,3,9], [1,5,9], [2,3,9], 
 					[2,6,9], [3,7,9], [4,5,9], [4,6,9], [5,7,9], [6,7,9] ];
-	
+
 	//--- set mouse on canvas
-	
+
 	// g3d.setMouseOnCanvas( canvas );
 	g3d.setMouseOnCanvas = function( canvas ) {
 		canvas.addEventListener('mousemove', g3d.mouse_move);
@@ -587,10 +583,9 @@ const js049 = (function(){ // ====================  js Module  =================
 		canvas.addEventListener('mouseup', g3d.mouse_up);
 		canvas.addEventListener("mousewheel", g3d.mouseWheel);
 	};
-	
-	g3d.mouse_move = function(e) {
-		const pi = Math.PI;
 
+	g3d.mouse_move = function(e) {
+		const pi=Math.PI;
 		if (g3d.mouseDownFlag==1) {
 			g3d.x_mouse = e.clientX;
 			g3d.y_mouse = e.clientY;
@@ -605,7 +600,7 @@ const js049 = (function(){ // ====================  js Module  =================
 			g3d.y0_mouse = g3d.y_mouse;
 		}
 	};
-	
+
 	g3d.mouse_down = function(e) {
 		if (g3d.mouseDownFlag==0) {
 			g3d.x0_mouse = e.clientX;
@@ -615,13 +610,13 @@ const js049 = (function(){ // ====================  js Module  =================
 			g3d.mouseDownFlag = 1;
 		}
 	};
-	
+
 	g3d.mouse_up = function(e) {
 		if (g3d.mouseDownFlag==1) {
 			g3d.mouseDownFlag = 0;
 		}
 	};
-	
+
 	g3d.mouseWheel = function(e) {
 		g3d.deltaY = e.deltaY;
 		if ( g3d.deltaY > 0 ) g3d.zoom *= 0.95;
@@ -629,9 +624,9 @@ const js049 = (function(){ // ====================  js Module  =================
 		if ( g3d.zoom<0.5 ) g3d.zoom = 0.5;
 		if ( g3d.zoom>2.0 ) g3d.zoom = 2.0;
 	};
-	
+
 	//--- 3D graphics aid
-	
+
 	// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
 	g3d.init = function( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift ) {
 		g_NNx = NNx; g_NNy = NNy; g_NNz = NNz;
@@ -641,7 +636,7 @@ const js049 = (function(){ // ====================  js Module  =================
 		g_yShift = (yShift==undefined) ? 20 : yShift;
 		g3d.setSize();
 	}
-	
+
 	g3d.setSize = function() {
 		g3d.xMax = g_NNx*g_dx;		// x-length of box
 		g3d.yMax = g_NNy*g_dy;		// y-length of box
@@ -650,13 +645,13 @@ const js049 = (function(){ // ====================  js Module  =================
 		g3d.cy0 = 0.5*g3d.yMax;		// y-component of rotate center
 		g3d.cz0 = 0.5*g3d.zMax;		// z-component of rotate center
 	};
-	
+
 	// g3d.setRotateAngle( AxInDegree, AyInDegree );
 	g3d.setRotateAngle = function( AxInDegree, AyInDegree ) {
 		g3d.Ax = AxInDegree*Math.PI/180.0;
 		g3d.Ay = AyInDegree*Math.PI/180.0;
 	};
-	
+
 	// g3d.scxpypFunc();
 	g3d.scxpypFunc = function() {
 		const xBoxSize = g_xBoxSize;
@@ -665,7 +660,7 @@ const js049 = (function(){ // ====================  js Module  =================
 		const sc = xBoxSize/(g_NNx*g_dx)*g3d.zoom;
 		return [ sc, xp, yp ];
 	}
-	
+
 	g3d.set3DRotateXY = function(rotateRateOfAyInDegree) {
 		g3d.ddAy = rotateRateOfAyInDegree*Math.PI/180.0;
 		g3d.Ay= g3d.Ay + g3d.ddAy; // auto-rotate : if (ddAy==0.0), stop
@@ -676,7 +671,7 @@ const js049 = (function(){ // ====================  js Module  =================
 		g3d.rotateApexXY();     // box Apex rotate--> pxApex[i],pyApex[i],pzApex[i]
 		g3d.markFarEdge();      // boxEdge[iEdge][2]=1:far side edge or 0:near side edge
 	};
-	
+
 	g3d.setBox = function() {
 		for (let i=0; i<8; i++) {
 			g3d.xApex[i] = g3d.boxApex[i][0]*g3d.xMax;
@@ -684,7 +679,7 @@ const js049 = (function(){ // ====================  js Module  =================
 			g3d.zApex[i] = g3d.boxApex[i][2]*g3d.zMax;
 		}
 	};
-	
+
 	g3d.setRotateXY = function(angleX,angleY) {
 		g3d.cosAx = Math.cos(angleX);
 		g3d.sinAx = Math.sin(angleX);
@@ -694,17 +689,16 @@ const js049 = (function(){ // ====================  js Module  =================
 		g3d.cy0 = 0.5*g3d.yMax;
 		g3d.cz0 = 0.5*g3d.zMax;
 	};
-	
+
 	g3d.rotateApexXY = function() { // rotate box apex
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		for (let i=0; i<8; i++) {
 			g3d.pxApex[i] = cosAy*(g3d.xApex[i]-cx0)+sinAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cx0;
 			g3d.pyApex[i] = cosAx*(g3d.yApex[i]-cy0)-sinAx*(g3d.zApex[i]-cz0) + cy0;
 			g3d.pzApex[i] =-sinAy*(g3d.xApex[i]-cx0)+cosAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cz0;
 		}
 	};
-	
+
 	g3d.markFarEdge = function() {
 		//seek far apex --> iMin
 		let zMin = g3d.pzApex[0];
@@ -721,10 +715,9 @@ const js049 = (function(){ // ====================  js Module  =================
 			if (g3d.boxEdge[iEdge][0]==iMin || g3d.boxEdge[iEdge][1]==iMin) g3d.boxEdge[iEdge][2] = 1;
 		}
 	};
-	
+
 	g3d.drawRotatedDisc = function(ctx, x,y,z,r,color,sc,xp,yp) {
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		const x1 = cosAy*(x-cx0)+sinAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cx0
 		const y1 = cosAx*(y-cy0)-sinAx*(z-cz0) + cy0
 		//z1 =-sinAy*(x-cx0)+cosAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cz0
@@ -732,15 +725,14 @@ const js049 = (function(){ // ====================  js Module  =================
 	};
 	
 	g3d.drawRotatedLine = function(ctx, x1,y1,z1,x2,y2,z2,color,sc,xp,yp) {
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		const x1p = cosAy*(x1-cx0)+sinAy*(sinAx*(y1-cy0)+cosAx*(z1-cz0)) + cx0
 		const y1p = cosAx*(y1-cy0)-sinAx*(z1-cz0) + cy0
 		const x2p = cosAy*(x2-cx0)+sinAy*(sinAx*(y2-cy0)+cosAx*(z2-cz0)) + cx0
 		const y2p = cosAx*(y2-cy0)-sinAx*(z2-cz0) + cy0
 		g3d.drawLine(ctx, x1p*sc+xp,y1p*sc+yp,x2p*sc+xp,y2p*sc+yp,color);
 	};
-	
+
 	g3d.plotNearEdge = function(ctx, sc,xp,yp,color) {
 		for (let iEdge=0; iEdge<12; iEdge++) {
 			if (g3d.boxEdge[iEdge][2]==0) { //far edge mark = 1
@@ -748,7 +740,7 @@ const js049 = (function(){ // ====================  js Module  =================
 			}
 		}
 	};
-	
+
 	g3d.plotFarEdge = function(ctx, sc,xp,yp,color) {
 		for (let iEdge=0; iEdge<12; iEdge++) {
 			if (g3d.boxEdge[iEdge][2]==1) { //far edge mark = 1
@@ -756,7 +748,7 @@ const js049 = (function(){ // ====================  js Module  =================
 			}
 		}
 	};
-	
+
 	g3d.plotEdge = function(ctx, iEdge,sc,xp,yp,color) {
 		let iApex = g3d.boxEdge[iEdge][0];
 		const x1=g3d.pxApex[iApex]*sc+xp, y1=g3d.pyApex[iApex]*sc+yp;
@@ -764,7 +756,7 @@ const js049 = (function(){ // ====================  js Module  =================
 		const x2=g3d.pxApex[iApex]*sc+xp, y2=g3d.pyApex[iApex]*sc+yp;
 		g3d.drawLine(ctx, x1, y1, x2, y2, color);
 	};
-	
+
 	g3d.drawLine = function(ctx, x1, y1, x2, y2, color) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -772,28 +764,28 @@ const js049 = (function(){ // ====================  js Module  =================
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	};
-	
+
 	g3d.drawDisc = function(ctx, x, y, r, color) {
 		ctx.fillStyle = color;
 		ctx.beginPath();
 		ctx.arc(x, y, r, 0, 2*Math.PI, false);
 		ctx.fill();
 	};
-	
+
 	// --------------------  end of graphics 3D (field) module  --------------------
-	
+
 	// g3d_extension grid2d  created 2023.06.01, last updated 2023.06.04
 	// g3d.drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
 	g3d.drawGrid2D = function ( ctx, rotAngle, zFunc, colorFactor, inc, showBox ) {
 		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
-		const nnx = g_NNx, nny = g_NNy, threshold = g3d.drawGrid2D.threshold;
-		
+		const nnx=g_NNx, nny=g_NNy, threshold=g3d.drawGrid2D.threshold;
+
 		g3d.set3DRotateXY(rotAngle);
 		if ( (showBox & 1)>0 || showBox==undefined ) g3d.plotFarEdge(ctx, sc,xp,yp,"#444400"); // dark yellow
 		for (let jj=0; jj<nny; jj+=inc) {
-			let j=jj;if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
+			let j=jj; if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
 			for (let ii=0; ii<nnx; ii++) {
-				let i=ii;if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
+				let i=ii; if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
 				if (i<0 || i+1>nnx-1) continue;
 				const f = zFunc(i,nny-j-1);
 				const x = i*g_dx, y = j*g_dy, z = f + g3d.cz0;
@@ -813,9 +805,9 @@ const js049 = (function(){ // ====================  js Module  =================
 			}
 		}
 		for (let ii=0; ii<nnx; ii+=inc) {
-			let i=ii;if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
+			let i=ii; if (g3d.pzApex[1]-g3d.pzApex[0]<0) i=nnx-ii-1;
 			for (let jj=0; jj<nny; jj++) {
-				let j=jj;if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
+				let j=jj; if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
 				if (j<0 || j+1>nny-1) continue;
 				const f = zFunc(i,nny-j-1);
 				const x = i*g_dx, y = j*g_dy, z = f + g3d.cz0;
@@ -835,38 +827,36 @@ const js049 = (function(){ // ====================  js Module  =================
 			}
 		}
 		if ( (showBox & 2)>0 || showBox==undefined ) g3d.plotNearEdge(ctx, sc,xp,yp,"#999900"); //yellow
-		
+
 		ctx.font = "12px 'sans-serif'";
 		ctx.fillStyle = "#888888";
 		ctx.fillText(`Ax=${(g3d.Ax*180/Math.PI).toFixed(1)}, Ay=${(g3d.Ay*180/Math.PI).toFixed(1)}`, 10, 15);
 		ctx.font = "16px 'sans-serif'";
 	};
 	g3d.drawGrid2D.threshold = 0.005;
-	
-	
+
+
 	// ----------  dom control
 
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
-		
 		if ( pauseFlag==true ) {
 			document.getElementById("step_button").style.visibility = "visible";
 		} else {
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setTheme() {  // select theme
 		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = true;
@@ -876,30 +866,29 @@ const js049 = (function(){ // ====================  js Module  =================
 		v_nWaves = 1 + document.getElementById("slct_cycle").selectedIndex;
 		resetFlag = true;
 	}
-	
+
 	function setDispMode() {
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
 	}
-	
+
 	function viewHome() {
 		g3d.setRotateAngle(30,-15);	
 		g3d.zoom = 1.0;
 	}
-	
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:			main,			// main()
-		
-		// dom control
-		reset:			reset,			// reset()
-		pause:			pause,			// pause()
-		step:			step,			// step()
-		
-		setTheme:		setTheme,		// setTheme()
-		setnWaves:		setnWaves,		// setnWaves()
-		setDispMode:	setDispMode,	// setDispMode()
-		viewHome:		viewHome,		// viewHome()
+		main:  main,  // main()
+
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step, // step()
+
+		setTheme:   setTheme, // setTheme()
+		setnWaves:  setnWaves, // setnWaves()
+		setDispMode:setDispMode, // setDispMode()
+		viewHome:   viewHome, // viewHome()
 	};
 
 })(); // ====================  js049 module end  ====================
@@ -968,7 +957,7 @@ waves<br>
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
 
 </body>
