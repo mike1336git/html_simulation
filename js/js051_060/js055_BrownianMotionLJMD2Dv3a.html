@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js055_BrownianMotionLJMD2D
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2017.05.03 created, last updated on 2018.11.12
 //    ver 0.0.1  2019.01.11 v1, last updated on 2021.04.29
 //    ver 0.0.2  2021.10.28 v2, last updated on 2021.10.28
-//    ver 0.0.3  2023.04.03 v3, last updated on 2023.08.27
+//    ver 0.0.3  2023.04.03 v3, last updated on 2024.03.25
 //
 // --------------------  molecular dynamics 2D
 //
@@ -36,41 +36,41 @@
 */
 
 const BrownianMotionLJMD2D = (function(){ // ====================  BrownianMotionLJMD2D Module  ====================
-	
-	const g_AMU = 1.66053904e-27;		// (kg) atomic mass unit
-	const g_kB = 1.380649e-23;			// (J/K) Boltzmann's constant
-	const g_nMax = 1000;				// array max
-	
-	let g_molecKind1 = 5;				// 5:pollen
-	let g_molecKind2 = 2;				// 2:Ar
-	let g_nn1 = 1;						// number of pollen
-	let g_nn2 = 200;					// numner of molecules
-	let g_nParticles = g_nn1+g_nn2;		// number of particles
-	let g_sysTime = 0.0;				// (s) system time
-	let g_timeStep = 10.0*1.0e-15;		// (s) time step dt
-	let g_xMax = 10.0E-9;				// (m) x-Box size
-	let g_yMax = 10.0E-9;				// (m) y-Box size
-	
-	const g_xx = dim1( g_nMax );		// (m) x-component of i-th particle position
-	const g_yy = dim1( g_nMax );		// (m) y-component of i-th particle position
-	const g_vx = dim1( g_nMax );		// (m/s) x-component of i-th particle velocity
-	const g_vy = dim1( g_nMax );		// (m/s) y-component of i-th particle velocity
-	const g_ffx = dim1( g_nMax );		// (N) x-component of total force applied i-th particle
-	const g_ffy = dim1( g_nMax );		// (N) y-component of total force applied i-th particle
-	const g_mas = dim1( g_nMax );		// (kg) mass of i-th particle
-	const g_kind = dimInt1( g_nMax );	// kind of i-th particle
-	
+
+	const g_AMU = 1.66053904e-27; // (kg) atomic mass unit
+	const g_kB = 1.380649e-23;    // (J/K) Boltzmann's constant
+	const g_nMax = 1000;          // array max
+
+	let g_molecKind1 = 5; // 5:pollen
+	let g_molecKind2 = 2; // 2:Ar
+	let g_nn1 = 1;        // number of pollen
+	let g_nn2 = 200;      // numner of molecules
+	let g_nParticles = g_nn1+g_nn2; // number of particles
+	let g_sysTime = 0.0;  // (s) system time
+	let g_timeStep = 10.0*1.0e-15; // (s) time step dt
+	let g_xMax = 10.0E-9; // (m) x-Box size
+	let g_yMax = 10.0E-9; // (m) y-Box size
+
+	const g_xx = dim1( g_nMax );  // (m) x-component of i-th particle position
+	const g_yy = dim1( g_nMax );  // (m) y-component of i-th particle position
+	const g_vx = dim1( g_nMax );  // (m/s) x-component of i-th particle velocity
+	const g_vy = dim1( g_nMax );  // (m/s) y-component of i-th particle velocity
+	const g_ffx = dim1( g_nMax ); // (N) x-component of total force applied i-th particle
+	const g_ffy = dim1( g_nMax ); // (N) y-component of total force applied i-th particle
+	const g_mas = dim1( g_nMax ); // (kg) mass of i-th particle
+	const g_kind = dimInt1( g_nMax ); // kind of i-th particle
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
-	
+
 	function dimInt1( n ) {
 		return new Int32Array( n );
 	}
-	
-	
+
+
 	// --------------------  Lennard-Jones potential data  --------------------
-	
+
 	const g_LJMolec = [
 		//    mass(kg)      E(J)       sigma(m)   string    color
 		[   4.003*g_AMU,  10.2*g_kB, 2.576e-10, "He",  "#ee4444" ], // 0 He
@@ -80,13 +80,13 @@ const BrownianMotionLJMD2D = (function(){ // ====================  BrownianMotio
 		[ 131.300*g_AMU, 229.0*g_kB, 4.055e-10, "Xe",  "#0088ee" ], // 4 Xe
 		[1000.00 *g_AMU, 124.0*g_kB,20.000e-10, "pollen", "#ffff00" ]  // 5 pollen
 	];
-	
+
 	const g_rCollision = [];		// (m) = sigma, V(sigma)==0.0
 	const g_rBond = [];			// (m) bond length == 2.0*g_rBond[kind], == sigma*2^(1/6)
 	const g_massOf = [];			// (kg) g_massOf[kind] : mass of kind
 	const g_strOf = [];			// g_strOf[kind] : string of kind, such as "Ar"
 	const g_colorOf = [];			// g_colorOf[kind] : color of kind
-	
+
 	(function() {
 		const n=g_LJMolec.length;
 		for (let i=0; i<n; i++) {
@@ -97,10 +97,10 @@ const BrownianMotionLJMD2D = (function(){ // ====================  BrownianMotio
 			g_colorOf[i] = g_LJMolec[i][4];
 		}
 	}());
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( theme, nn, contTemp ) {
 		g_molecKind1 = 5; // 5:pollen
 		g_molecKind2 = theme; // 2:Ar
@@ -110,8 +110,8 @@ const BrownianMotionLJMD2D = (function(){ // ====================  BrownianMotio
 		setInitialPollenPos();
 		
 	}
-	
-	function setPollenAndParticles(knd2,nn) {
+
+	function setPollenAndParticles( knd2, nn ) {
 		let nParticles = nn;
 		let j = 0;
 		g_xx[j] = g_xMax/2.0; g_yy[j] = g_yMax/2.0; g_kind[j] = g_molecKind1; // pollen
@@ -145,15 +145,15 @@ const BrownianMotionLJMD2D = (function(){ // ====================  BrownianMotio
 		}
 		return nParticles;
 	}
-	
+
 	// normal distributed random number: -3.0 <= normalRandom3() < 3.0
 	function normalRandom3() {
 		return (Math.random()+Math.random()+Math.random()+Math.random()+Math.random()+Math.random()-3.0);
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
+
 	function timeEvolution( nCalc, tempMode, contTemp ) {
 		for (let ii=0; ii<nCalc; ii++) {
 			if (tempMode==1) ajustVelocity(contTemp);
@@ -164,10 +164,9 @@ const BrownianMotionLJMD2D = (function(){ // ====================  BrownianMotio
 		}
 		setPollenPos();
 	}
-	
-	function moveParticles(dt) {
-		const nn=g_nParticles;
 
+	function moveParticles( dt ) {
+		const nn=g_nParticles;
 		for (let i=0; i<nn; i++) {
 			const a = 0.5*dt/g_mas[i];
 			g_vx[i] += a*g_ffx[i];
@@ -182,7 +181,7 @@ const BrownianMotionLJMD2D = (function(){ // ====================  BrownianMotio
 			g_vy[i] += a*g_ffy[i];
 		}
 	}
-	
+
 	function calcForce() {
 		const nn=g_nParticles, s05 = 0.5*3.418e-10; // Ar sigma=3.418e-10
 		const sp05 = 0.5*20.000e-10; // 0.5*pollen sigma
@@ -210,29 +209,29 @@ const BrownianMotionLJMD2D = (function(){ // ====================  BrownianMotio
 			g_ffy[i] += boundaryForce(g_yy[i]+s05)+boundaryForce(g_yy[i]-g_yMax-s05);
 		}
 	}
-	
-	function force(r,ki,kj) {
+
+	function force( r, ki, kj ) {
 		const ep = Math.sqrt(g_LJMolec[ki][1]*g_LJMolec[kj][1]);
 		const sg = 0.5*(g_LJMolec[ki][2]+g_LJMolec[kj][2]);
 		const ri = (sg/r);
 		const r6 =ri*ri*ri*ri*ri*ri;
 		return 24.0*ep*r6*(2.0*r6-1.0)/r;
 	}
-	
-	function pollenBoundaryForce(r) {
+
+	function pollenBoundaryForce( r ) {
 		const ri = (g_LJMolec[5][2]/r);
 		const r6 =ri*ri*ri*ri*ri*ri;
 		return (24.0*0.5*1.711e-21*r6*(2.0*r6-1.0)/r);
 	}
-	
-	function boundaryForce(r) {
+
+	function boundaryForce( r ) {
 		const ri = (3.418e-10/r);
 		const r6 = ri*ri*ri*ri*ri*ri;
 		return (24.0*0.5*1.711e-21*r6*(2.0*r6-1.0)/r);
 	}
-	
+
 	//--- utility
-	
+
 	function systemTemperature() {
 		const nn=g_nParticles;
 		let ek = 0.0;
@@ -241,8 +240,8 @@ const BrownianMotionLJMD2D = (function(){ // ====================  BrownianMotio
 		}
 		return ek/(nn*g_kB);
 	}
-	
-	function ajustVelocity(temp) {
+
+	function ajustVelocity( temp ) {
 		const nn=g_nParticles;
 		const a = Math.sqrt(temp/systemTemperature());
 		for (let i=0; i<nn; i++) {
@@ -250,65 +249,65 @@ const BrownianMotionLJMD2D = (function(){ // ====================  BrownianMotio
 			g_vy[i] = a*g_vy[i];
 		}
 	}
-	
-	
+
+
 	// --------------------  pollen  --------------------
-	
+
 	const pollenPos = [];
 	pollenPos.pointer = 0;
 	pollenPos.pointerMax =3000;
-	
+
 	function setInitialPollenPos() {
 		for (let i=0; i<pollenPos.pointerMax; i++) {
 			pollenPos[i] = [ g_xx[0], g_yy[0] ];
 		}
 	}
-	
+
 	function setPollenPos() {
 		pollenPos[pollenPos.pointer] = [ g_xx[0], g_yy[0] ];
 		pollenPos.pointer = (pollenPos.pointer+1)%pollenPos.pointerMax;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	// setInitialCondition( theme, nn, contTemp )
-		evolve:			timeEvolution,			// timeEvolution( ncalc, tempMode, contTemp)
-		
-		setTemp:		ajustVelocity,			// ajustVelocity( temp )
-		
-		getSysParam:	function() { return [ g_molecKind1, g_molecKind2, g_nParticles, g_timeStep, g_xMax, g_yMax ]; },
-		getPollenPos:	function() { return pollenPos; },
-		getNow:			function() { return [ g_sysTime, systemTemperature() ]; },
-		getStrOf:		function(kind) { return g_strOf[kind]; },				
-		getColorOf:		function(kind) { return g_colorOf[kind]; },
-		getMolecData:	function(i) { const kind = g_kind[i]; return [ g_rCollision[kind], g_colorOf[kind] ]; },
-		getPosition:	function(i) { return [ g_xx[i], g_yy[i] ]; },
-		getVelocity:	function(i) { return [ g_vx[i], g_vy[i] ]; },
-		getForce:		function(i) { return [ g_ffx[i], g_ffy[i] ]; },
+		init:   setInitialCondition, // setInitialCondition( theme, nn, contTemp )
+		evolve: timeEvolution, // timeEvolution( ncalc, tempMode, contTemp)
+
+		setTemp:ajustVelocity, // ajustVelocity( temp )
+
+		getSysParam:function() { return [ g_molecKind1, g_molecKind2, g_nParticles, g_timeStep, g_xMax, g_yMax ]; },
+		getPollenPos: function() { return pollenPos; },
+		getNow:     function() { return [ g_sysTime, systemTemperature() ]; },
+		getStrOf:   function(kind) { return g_strOf[kind]; },				
+		getColorOf: function(kind) { return g_colorOf[kind]; },
+		getMolecData: function(i) { const kind = g_kind[i]; return [ g_rCollision[kind], g_colorOf[kind] ]; },
+		getPosition:function(i) { return [ g_xx[i], g_yy[i] ]; },
+		getVelocity:function(i) { return [ g_vx[i], g_vy[i] ]; },
+		getForce:   function(i) { return [ g_ffx[i], g_ffy[i] ]; },
 	};
-	
+
 })(); // ====================  BrownianMotionLJMD2D end  ====================
 
 
 const js055 = (function(){ // ====================  js Module  ====================
 
 	const theModule = BrownianMotionLJMD2D;
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel
+	const xCanvasSize = 480; // in pixel
+	const yCanvasSize = 480;
 	let canvas;
 	let ctx;
-	
-	let v_theme = 2;			// theme  1:Ne 2:Ar 3:Kr 4:Xe 5:Hg ... 13:pollen
-	let v_nn = 200;				// number of max. settable molecules
+
+	let v_theme = 2; // theme  1:Ne 2:Ar 3:Kr 4:Xe 5:Hg ... 13:pollen
+	let v_nn = 200;  // number of max. settable molecules
 	let v_BoxSizeInNM = 12.0;
 	let v_nCalc = 1;
-	let v_tempMode = 0;			// 0: adiabatic, 1: temp.control
+	let v_tempMode = 0; // 0: adiabatic, 1: temp.control
 	let v_contTemp = 300.0;
-	
+
 	let  p_kind1, p_kind2, p_nParticles, p_timeStep, p_xMax, p_yMax // = theModule.getSysParam();
-	
+
 	let dispMode = 0;
 	let resetFlag = true;
 	let pauseFlag = false;
@@ -319,9 +318,9 @@ const js055 = (function(){ // ====================  js Module  =================
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
-		
+
 		animate();
-	
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -336,39 +335,39 @@ const js055 = (function(){ // ====================  js Module  =================
 
 
 	function animate() {
-		
+
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_theme, v_nn, v_contTemp ); // ( kind2, nn, contTemp )
 			[ p_kind1, p_kind2, p_nParticles, p_timeStep, p_xMax, p_yMax ] = theModule.getSysParam();
 		}
-		
+
 		if ( !pauseFlag ) {
 				theModule.evolve( v_nCalc, v_tempMode, v_contTemp );
 		} else if ( pauseFlag && stepFlag ) {
 			stepFlag = false;
 			theModule.evolve( 1, v_tempMode, v_contTemp );
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	function draw( ctx, dispMode ) {
-		const xp = 40, yp = 5, xSize = 400, ySize = 400, yTextPos= 430;
+		const xp=40, yp=5, xSize=400, ySize=400, yTextPos=430;
 		const scale = xSize/p_xMax
-		
+
 		// clear
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
+
 		// box
 		ctx.strokeStyle = "#888800";
 		ctx.strokeRect( xp, yp, xSize, ySize );
-		
+
 		if (dispMode==0) {
 			drawBalls(ctx, p_nParticles, p_yMax, xp, yp, scale );
 		} else if (dispMode==1) {
@@ -377,7 +376,7 @@ const js055 = (function(){ // ====================  js Module  =================
 			drawBalls(ctx, 1, p_yMax, xp, yp, scale );
 			drawPollenTrace( ctx, p_yMax, xp, yp, scale );
 		}
-		
+
 		// caption
 		let sysTime, temperature;
 		[ sysTime, temperature ] = theModule.getNow();
@@ -390,7 +389,7 @@ const js055 = (function(){ // ====================  js Module  =================
 		ctx.fillText(`Box = ${(p_xMax*1.0e9).toFixed(1)}x${(p_yMax*1.0e9).toFixed(1)} (nm)`, xp, yTextPos+40);
 		//document.getElementById("text_caption").innerHTML = "minimum molecular dynamics code"
 	}
-	
+
 	function drawBalls( ctx, nn, yMax, xp, yp, scale ) {
 		const th = 2.0*Math.PI;
 		for (let i=0; i<nn; i++) {
@@ -403,7 +402,7 @@ const js055 = (function(){ // ====================  js Module  =================
 			ctx.fill();
 		}
 	}
-	
+
 	function drawPollenTrace( ctx, yMax, xp, yp, scale ) {
 		const pollenPos = theModule.getPollenPos();
 		const nn = pollenPos.pointerMax, pp = pollenPos.pointer;
@@ -418,66 +417,63 @@ const js055 = (function(){ // ====================  js Module  =================
 		}
 		ctx.stroke();
 	}
-	
-	
+
+
 	// --------------------  control  --------------------
 
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
-		
 		if ( pauseFlag==true ) {
 			document.getElementById("step_button").style.visibility = "visible";
 		} else {
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setTheme() {
 		v_theme = 1 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = true;
 	}
-	
+
 	function setTempMode() {
 		v_tempMode = 0 + document.getElementById("slct_tempMode").selectedIndex;
 	}
-	
+
 	function setContTemp() {  // range mixing
 		v_contTemp = Number(document.getElementById("range_temp").value);
 		document.getElementById("text_temp").innerHTML = " " + v_contTemp.toFixed(0);
 	}
-	
+
 	function setDispMode() {
 		dispMode = 0 + document.getElementById("slct_disp").selectedIndex;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:			main,			// main()
-		
-		// dom control
-		reset:			reset,			// reset()
-		pause:			pause,			// pause()
-		step:			step,			// step()
-		
-		setTheme:		setTheme,		// setTheme()
-		setTempMode:	setTempMode,	// setTempMode()
-		setContTemp:	setContTemp,	// setContTemp()
-		setDispMode:	setDispMode,	// setDispMode()
+		main:  main, // main()
+
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step,  // step()
+
+		setTheme:   setTheme,    // setTheme()
+		setTempMode:setTempMode, // setTempMode()
+		setContTemp:setContTemp, // setContTemp()
+		setDispMode:setDispMode, // setDispMode()
 	};
-	
+
 })(); // ====================  js055 module end  ====================
 
 
@@ -534,8 +530,9 @@ style="width:360px" oninput="js.setContTemp()">
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
+
 </body>
 </html>
 
