@@ -1272,15 +1272,15 @@ const js064 = (function(){ // ====================  js Module  =================
 		if ( kind1==kind2 ) {
 			pfg.drawTable(ctx,xp,yp,y0,tableFunc(kind1,kind1),mag,col.cyan);
 		} else {
-			pfg.drawTable(ctx,xp,yp,y0,tableFunc(kind1,kind1),mag,col.cyan);
+			pfg.drawTable(ctx,xp,yp,y0,tableFunc(kind1,kind1),mag,col.red);
 			pfg.drawTable(ctx,xp,yp,y0,tableFunc(kind1,kind2),mag,col.green);
-			pfg.drawTable(ctx,xp,yp,y0,tableFunc(kind2,kind2),mag,col.red);
+			pfg.drawTable(ctx,xp,yp,y0,tableFunc(kind2,kind2),mag,col.cyan);
 		}
 		//caption
 		if ( kind1!=kind2 ) {
-			pfg.drawText(ctx," "+str1+" - "+str1, xp+160, yp+20,col.cyan);
+			pfg.drawText(ctx," "+str1+" - "+str1, xp+160, yp+20,col.red);
 			pfg.drawText(ctx," "+str1+" - "+str2, xp+160, yp+40,col.green);
-			pfg.drawText(ctx," "+str2+" - "+str2, xp+160, yp+60,col.red);
+			pfg.drawText(ctx," "+str2+" - "+str2, xp+160, yp+60,col.cyan);
 		}
 		pfg.drawText(ctx,str, xp+50, yBottom+45, col.gray);
 	};
