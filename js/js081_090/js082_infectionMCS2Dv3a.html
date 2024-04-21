@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js082_infectionMCS2D
-//    Copyright(C) 2017-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2017-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2018.01.13 created, last updated on 2018.11.29
 //    ver 0.0.1  2019.01.23 v1, last updated on 2021.08.11
 //    ver 0.0.2  2021.11.05 v2, last updated on 2021.11.05
-//    ver 0.0.3  2023.04.25 v3, last updated on 2023.09.04
+//    ver 0.0.3  2023.04.25 v3, last updated on 2024.04.21
 //
 // -------------------- infection Monte-Carlo simulation MCS2D  -- infection model
 //
@@ -41,30 +41,30 @@
 */
 
 const infectionMCS2D = (function(){ // ====================  infectionMCS2D Module  ====================
-	
-	const g_nMax = 50000;					// array max
-	
-	let g_NNp = 30000;						// number of walker
-	let g_NNx = 360;						// x-division of the field
-	let g_NNy = 360;						// y-division of the field
-	let g_sysTime = 0;						// system time
-	let g_infectionPeriod = 30;				// infection period
-	let g_immunePeriod = 150;				// immune period
-	let g_infectionProbability = 0.5;		// infection probability at a contact with another walker
-	let g_numberOfNonInfected = 0;			// number of non-infected walker
-	let g_numberOfInfected = 0;				// number of infected walker
-	let g_numberOfImmune = 0;				// number of immune walker
-	
-	const g_field = dimInt2( g_NNx, g_NNy );// field[i][j]  1...NNp:walker number,  0:free space, -1:wall
-	const g_status = dimInt1( g_nMax );		// status[i] 0:non-infected 1:infected, 2:immune
-	const g_ix = dimInt1( g_nMax );			// ix[i] x-position of i-th walker
-	const g_iy = dimInt1( g_nMax );			// iy[i] y-position of i-th walker
-	const g_period = dimInt1( g_nMax );		// infected/immune period of i-th walker
-	
+
+	const g_nMax = 50000; // array max
+
+	let g_NNp = 30000;    // number of walker
+	let g_NNx = 360;      // x-division of the field
+	let g_NNy = 360;      // y-division of the field
+	let g_sysTime = 0;    // system time
+	let g_infectionPeriod = 30; // infection period
+	let g_immunePeriod = 150; // immune period
+	let g_infectionProbability = 0.5; // infection probability at a contact with another walker
+	let g_numberOfNonInfected = 0; // number of non-infected walker
+	let g_numberOfInfected = 0; // number of infected walker
+	let g_numberOfImmune = 0; // number of immune walker
+
+	const g_field = dimInt2( g_NNx, g_NNy ); // field[i][j]  1...NNp:walker number,  0:free space, -1:wall
+	const g_status = dimInt1( g_nMax ); // status[i] 0:non-infected 1:infected, 2:immune
+	const g_ix = dimInt1( g_nMax );     // ix[i] x-position of i-th walker
+	const g_iy = dimInt1( g_nMax );     // iy[i] y-position of i-th walker
+	const g_period = dimInt1( g_nMax ); // infected/immune period of i-th walker
+
 	function dimInt1( n ) {
 		return new Int32Array( n );
 	}
-	
+
 	function dimInt2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -72,10 +72,10 @@ const infectionMCS2D = (function(){ // ====================  infectionMCS2D Modu
 		}
 		return a;
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( nnp ) {
 		g_NNp = nnp;
 		g_sysTime = 0;
@@ -83,7 +83,7 @@ const infectionMCS2D = (function(){ // ====================  infectionMCS2D Modu
 		setParticles( nnp );
 		infect();
 	}
-	
+
 	function clearField() {
 		const nnx=g_NNx, nny=g_NNy;
 		for (let i=0; i<nnx; i++) {
@@ -92,7 +92,7 @@ const infectionMCS2D = (function(){ // ====================  infectionMCS2D Modu
 			}
 		}
 	}
-	
+
 	function setParticles( nnp ) {
 		const nnx=g_NNx, nny=g_NNy;
 		for (let ipp=1; ipp<=nnp; ipp++) {
@@ -108,7 +108,7 @@ const infectionMCS2D = (function(){ // ====================  infectionMCS2D Modu
 			g_period[ipp] = 0; 
 		}
 	}
-	
+
 	function infect() {
 		const nnp=g_NNp, nnx0=g_NNx/2, nny0=g_NNy/2;
 		for (let ipp=1; ipp<=nnp; ipp++) {
@@ -120,10 +120,10 @@ const infectionMCS2D = (function(){ // ====================  infectionMCS2D Modu
 			}
 		}
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
+
 	function timeEvolution( nCalc, infectionPeriod, immunePeriod ) {
 		g_infectionPeriod = infectionPeriod;
 		g_immunePeriod = immunePeriod;
@@ -132,7 +132,7 @@ const infectionMCS2D = (function(){ // ====================  infectionMCS2D Modu
 		}
 		stat();
 	}
-	
+
 	function timeStep() {
 		const nnp=g_NNp;
 		g_sysTime += 1;
@@ -151,8 +151,8 @@ const infectionMCS2D = (function(){ // ====================  infectionMCS2D Modu
 			moveWarker(ipp);
 		}
 	}
-	
-	function moveWarker(ipp) {
+
+	function moveWarker( ipp ) {
 		const dir = Math.floor(Math.random()*4);
 		let ixx, iyy;
 		if (dir==0) { // E
@@ -180,10 +180,9 @@ const infectionMCS2D = (function(){ // ====================  infectionMCS2D Modu
 			// nop
 		}
 	}
-	
+
 	function stat() {
 		const nnp=g_NNp;
-
 		g_numberOfNonInfected = 0;
 		g_numberOfInfected = 0;
 		g_numberOfImmune = 0;
@@ -194,53 +193,53 @@ const infectionMCS2D = (function(){ // ====================  infectionMCS2D Modu
 			if (st==2) g_numberOfImmune++;
 		}
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	// setInitialCondition( nnp )
-		evolve:			timeEvolution,			// timeEvolution( nCalc, infectionPeriod, immunePeriod )
-		
-		getSysParam:	function() { return [ g_NNp, g_NNx, g_NNy ]; },
-		getNow:			function() { return [ g_sysTime, g_numberOfNonInfected, g_numberOfInfected, g_numberOfImmune ]; },
-		getWalker:		function(i) { return [ g_status[i], g_ix[i], g_iy[i], g_period[i] ]; },
-		getStatus:		function(i) { return g_status[i]; },
-		getField:		function(ix,iy) { return g_field[ix][iy]; },
+		init:       setInitialCondition, // setInitialCondition( nnp )
+		evolve:     timeEvolution, // timeEvolution( nCalc, infectionPeriod, immunePeriod )
+
+		getSysParam:function() { return [ g_NNp, g_NNx, g_NNy ]; },
+		getNow:     function() { return [ g_sysTime, g_numberOfNonInfected, g_numberOfInfected, g_numberOfImmune ]; },
+		getWalker:  function(i) { return [ g_status[i], g_ix[i], g_iy[i], g_period[i] ]; },
+		getStatus:  function(i) { return g_status[i]; },
+		getField:   function(ix,iy) { return g_field[ix][iy]; },
 	};
-	
+
 })(); // ====================  infectionMCS2D end  ====================
 
 
 const js082 = (function(){ // ====================  js Module  ====================
-	
+
 	const theModule = infectionMCS2D;
-	const xCanvasSize = 500;	// in pixel
-	const yCanvasSize = 480;	// in pixel
-	let imageData = null;		// image data
-	let canvas;					// canvas2d
-	let ctx;					// = canvas.getContext('2d');
-	
-	let v_nnp = 30000;			// number of particles
-	let v_nCalc = 1;			// 1 (calc/frame)
+	const xCanvasSize = 500; // in pixel
+	const yCanvasSize = 480;
+	let imageData = null;
+	let canvas;
+	let ctx;
+
+	let v_nnp = 30000; // number of particles
+	let v_nCalc = 1; // 1 (calc/frame)
 	let v_infectionPeriod = 30;
 	let v_immunePeriod = 150;
-	
+
 	let p_NNp, p_NNx, p_NNy; // <-- theModule.getSysParam()
-	
+
 	let dispMode = 0; // no use
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
 	//let inStepFlag = false;
-	
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
-		
+
 		animate();
-		
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -252,18 +251,16 @@ const js082 = (function(){ // ====================  js Module  =================
 			ctx.lineWidth = 1;
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_nnp );
 			imageData = null;
 			[ p_NNp, p_NNx, p_NNy ] = theModule.getSysParam();
-
 		}
-		
+
 		if ( !pauseFlag ) {
 			theModule.evolve( v_nCalc, v_infectionPeriod, v_immunePeriod );
 		} else if ( pauseFlag && stepFlag ) {
@@ -271,22 +268,22 @@ const js082 = (function(){ // ====================  js Module  =================
 			theModule.evolve( v_nCalc, v_infectionPeriod, v_immunePeriod );
 			//inStepFlag = true;
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	const walkerColorData = [ [ 0x00, 0xff, 0x00 ], [ 0xff, 0x00, 0x00 ], [ 0x40, 0x80, 0xff ] ];
-	
+
 	function draw( ctx, dispMode ) {
 		const xp = 60, yp = 40, xBoxSize = 360, yBoxSize = Math.floor(xBoxSize/p_NNx*p_NNy);
 		let sysTime, numberOfNonInfected, numberOfInfected, numberOfImmune;
 		[ sysTime, numberOfNonInfected, numberOfInfected, numberOfImmune ] = theModule.getNow();
-		
+
 		// init. imageData
 		if ( imageData==null ) {
 			imageData = ctx.getImageData(xp, yp, xBoxSize, yBoxSize);
@@ -295,11 +292,11 @@ const js082 = (function(){ // ====================  js Module  =================
 
 		// clear
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
+
 		// box
 		ctx.strokeStyle = "#888888";
 		ctx.strokeRect( xp-1, yp-1, xBoxSize+2, yBoxSize+2 );
-		
+
 		if ( dispMode==0 ) {
 			drawField( ctx, xp, yp );
 		} else if ( dispMode>0 ) {
@@ -317,15 +314,14 @@ const js082 = (function(){ // ====================  js Module  =================
 		ctx.fillText(`number of walkers N = ${p_NNp}`, 240, yCanvasSize-30);
 		ctx.fillText(`time = ${sysTime}`, 50, yCanvasSize-10);
 	}
-	
+
 	function walkerColor( status ) { // status 0:normal, 1:infected, 2:immune
 		const cd = walkerColorData[status];
 		return `rgb(${cd[0]},${cd[1]},${cd[2]})`;
 	}
-	
+
 	function setImageData() {
 		const xSize=p_NNx, ySize=p_NNy, data=imageData.data;
-		
 		for (let j=0; j<ySize; j++) {
 			for (let i = 0; i<xSize; i++) {
 				let idx = (j*xSize+i)*4;
@@ -339,7 +335,6 @@ const js082 = (function(){ // ====================  js Module  =================
 
 	function drawField( ctx, xp, yp ) {
 		const nnx=p_NNx, nny=p_NNy, data=imageData.data;
-		
 		for (let j=0; j<nny; j++) {
 			const jj = nny - j - 1;
 			for (let i = 0; i<nnx; i++) {
@@ -357,12 +352,11 @@ const js082 = (function(){ // ====================  js Module  =================
 		}
 		ctx.putImageData( imageData, xp, yp );
 	}
-	
+
 	function drawZoomedField(ctx, sc, xp, yp) {
 		// sc: 2,3,4,5
 		const nnx=p_NNx, nny=p_NNy, ic=nnx/2, jc=nny/2, ispan=Math.floor(ic/sc), jspan=Math.floor(jc/sc)
 		const i0 = ic-ispan, i1 = ic+ispan, j0 =jc-jspan, j1 = jc+jspan;
-		
 		for (let j=j0; j<j1; j++) {
 			for (let i = i0; i<i1; i++) {
 				const f = theModule.getField(i,j);
@@ -373,79 +367,77 @@ const js082 = (function(){ // ====================  js Module  =================
 			}
 		}
 	}
-	
+
 	function drawDisc( ctx, x, y, r, color ) {
 		ctx.fillStyle = color;
 		ctx.beginPath();
 		ctx.arc(x, y, r, 0, 2*Math.PI, false);
 		ctx.fill();
 	}
-	
-	
+
+
 	// --------------------  control  --------------------
-	
+
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
-		
 		if ( pauseFlag==true ) {
 			document.getElementById("step_button").style.visibility = "visible";
 		} else {
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setTheme() {  // select nnp
 		const n = 1 + document.getElementById("slct_theme").selectedIndex;
 		v_nnp = n*10000;
 		resetFlag = true;
 	}
-	
+
 	function setInfectionPeriod() {
 		v_infectionPeriod = Number(document.getElementById("range_infp").value);
 		document.getElementById("text_infp").innerHTML = " " + v_infectionPeriod;
 	}
-	
+
 	function setImmunePeriod() {
 		v_immunePeriod = Number(document.getElementById("range_immp").value);
 		document.getElementById("text_immp").innerHTML = " " + v_immunePeriod;
 	}
-	
+
 	function setDispMode() {  // select dispMode
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
 	}
-	
+
 	function setSpeed() {
 		v_nCalc = 1 + document.getElementById("slct_speed").selectedIndex;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:			main,			// main()
-		
-		reset:			reset,			// reset()
-		pause:			pause,			// pause()
-		step:			step,			// step()
-		
-		setTheme:		setTheme,		// setTheme()
+		main:  main,  // main()
+
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step,  // step()
+
+		setTheme: setTheme, // setTheme()
 		setInfectionPeriod: setInfectionPeriod, // setInfectionPeriod()
 		setImmunePeriod: setImmunePeriod, // setImmunePeriod()
-		setDispMode:	setDispMode,	// setDispMode()
-		setSpeed:		setSpeed,		// setSpeed()
+		setDispMode: setDispMode, // setDispMode()
+		setSpeed: setSpeed, // setSpeed()
 	};
-	
+
 })(); // ====================  js082 module end  ====================
 
 
@@ -513,7 +505,7 @@ style="width:300px" list="tick_immp" oninput="js.setImmunePeriod()">
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
 
 </body>
