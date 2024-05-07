@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js098_electronsTDKS1D
-//    Copyright(C) 2018-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2018-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2018.03.25 created, last updated on 2018.12.04
 //    ver 0.0.1  2019.01.26 v1, last updated on 2021.09.13
 //    ver 0.0.2  2021.11.06 v2, last updated on 2021.11.06
-//    ver 0.0.3  2023.05.08 v3, last updated on 2023.09.09
+//    ver 0.0.3  2023.05.08 v3, last updated on 2024.05.07
 //
 // -------------------- time dependent Kohn-Sham 1D : LDA + spin
 //
@@ -96,62 +96,62 @@
 */
 
 const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Module  ====================
-	
+
 	// au: atomic unit hBar=1,e=1,me=1,a0=1
-	const g_auLength = 5.29177211e-11;			// (m) 1(au) = g_auLength (m)
-	const g_auTime = 2.418884326e-17;			// (s) 1(au) = g_auTime (s)
-	const g_auEnergy = 4.35974465e-18;			// (J) 1(au) = g_auEnergy (J)
-	const g_au2eV = 27.211386;					// (eV) 1(au) = 27.211386 (eV)
-	const g_nOrbitMax = 10;						// maximum number of orbit
-	const g_nStateMax = g_nOrbitMax*2;			// maximum number of state |orbit>,spin
-	const g_nxMax = 640;						// maximum number of g_NNx
-	
-	let g_iterCount = 0;						// iteration count
-	let g_sysTime = 0.0;						// (au) system time
-	let g_dx = 1.0/4.0;							// (au) x-division
-	let g_timeStep = 0.5*g_dx*g_dx;				// (au) time step dt
-	let g_lylz = 16.0*16.0;						// imaginary spreading in the y,z direction
-	let g_NNx = 320;							// number of space x-division
-	let g_numberOfOrbit = 6;					// number of orbit
-	let g_numberOfState = g_numberOfOrbit*2;	// number of state |orbit>,spin
-	let g_numberOfElectron = 2.0;				// number of electron
-	
-	let g_qmdSW = 0;							// 0-OFF 1-qmd ON (move nuclear)
-	let g_lossSW = 0;							// 0-lossOFF 1-lossON 2-loss+trans 3-loss+trans,t-stop
-	let g_dampingFactor = 0.01;					// damping factor in setLoss()
-	
-	const g_psis = dimInt2( g_nOrbitMax, 2 );	// 0-orbit index(0..g_numberOfOrbit-1), 1-spin(1,-1)
-	const g_occ = dim1( g_nStateMax );			// occupation of state 0.0 ... 1.0
-	const g_energy = dim1( g_nStateMax );		// state energy g_energy[istate]
+	const g_auLength = 5.29177211e-11; // (m) 1(au) = g_auLength (m)
+	const g_auTime = 2.418884326e-17;  // (s) 1(au) = g_auTime (s)
+	const g_auEnergy = 4.35974465e-18; // (J) 1(au) = g_auEnergy (J)
+	const g_au2eV = 27.211386; // (eV) 1(au) = 27.211386 (eV)
+	const g_nOrbitMax = 10;    // maximum number of orbit
+	const g_nStateMax = g_nOrbitMax*2; // maximum number of state |orbit>,spin
+	const g_nxMax = 640;       // maximum number of g_NNx
+
+	let g_iterCount = 0; // iteration count
+	let g_sysTime = 0.0; // (au) system time
+	let g_dx = 1.0/4.0;  // (au) x-division
+	let g_timeStep = 0.5*g_dx*g_dx; // (au) time step dt
+	let g_lylz = 16.0*16.0; // imaginary spreading in the y,z direction
+	let g_NNx = 320;     // number of space x-division
+	let g_numberOfOrbit = 6; // number of orbit
+	let g_numberOfState = g_numberOfOrbit*2; // number of state |orbit>,spin
+	let g_numberOfElectron = 2.0; // number of electron
+
+	let g_qmdSW = 0;     // 0-OFF 1-qmd ON (move nuclear)
+	let g_lossSW = 0;    // 0-lossOFF 1-lossON 2-loss+trans 3-loss+trans,t-stop
+	let g_dampingFactor = 0.01; // damping factor in setLoss()
+
+	const g_psis = dimInt2( g_nOrbitMax, 2 ); // 0-orbit index(0..g_numberOfOrbit-1), 1-spin(1,-1)
+	const g_occ = dim1( g_nStateMax ); // occupation of state 0.0 ... 1.0
+	const g_energy = dim1( g_nStateMax ); // state energy g_energy[istate]
 	const g_psi = dim3( g_nOrbitMax, g_nxMax, 2 ); // wave function g_psi[orbit][ix][0 or 1] 0:Re, 1:Im
-	const g_wrk = dim2( g_nxMax, 2 );			// work orbit in teepestDescent() g_wrk[ix][0 or 1]
-	const g_vv = dim1( g_nxMax );				// effective potential g_vv[ix]
-	const g_vvext = dim1( g_nxMax );			// external potential g_vvext[ix]
-	const g_vvh = dim1( g_nxMax );				// Hartree (electro-static) potential caused by g_rho g_vvh[ix]
-	const g_vvx = dim1( g_nxMax );				// exchange potenial g_vvx[ix]
-	const g_vvc = dim1( g_nxMax );				// correlation potential g_vvc[ix]
-	const g_rho = dim1( g_nxMax );				// electron charge density g_rho[ix]
-	
-	const g_bRe = dim1( g_nxMax );				// work b vector in kxStep()
-	const g_bIm = dim1( g_nxMax );				// work b vector in kxStep()
-	const g_uRe = dim1( g_nxMax );				// work u vector in kxStep()
-	const g_uIm = dim1( g_nxMax );				// work u vector in kxStep()
-	
+	const g_wrk = dim2( g_nxMax, 2 ); // work orbit in teepestDescent() g_wrk[ix][0 or 1]
+	const g_vv = dim1( g_nxMax );  // effective potential g_vv[ix]
+	const g_vvext = dim1( g_nxMax ); // external potential g_vvext[ix]
+	const g_vvh = dim1( g_nxMax ); // Hartree (electro-static) potential caused by g_rho g_vvh[ix]
+	const g_vvx = dim1( g_nxMax ); // exchange potenial g_vvx[ix]
+	const g_vvc = dim1( g_nxMax ); // correlation potential g_vvc[ix]
+	const g_rho = dim1( g_nxMax ); // electron charge density g_rho[ix]
+
+	const g_bRe = dim1( g_nxMax ); // work b vector in kxStep()
+	const g_bIm = dim1( g_nxMax ); // work b vector in kxStep()
+	const g_uRe = dim1( g_nxMax ); // work u vector in kxStep()
+	const g_uIm = dim1( g_nxMax ); // work u vector in kxStep()
+
 	// for QMD
-	const g_NNN = 8;							// nuc array max
-	const g_jelliumRadius = 1.0;				// nuc potential jellium radius
-	
-	let g_nucMax = 2;							// maximum number of nucleus
-	const g_nucMass = dim1( g_NNN );				// mass of nucleus
-	const g_nucCharge = dim1( g_NNN );			// charge of nucleus
-	const g_nucxx = dim1( g_NNN );				// (au) nuclear x-position
-	const g_nucvx = dim1( g_NNN );				// (m/s) nuclear x-velocity
-	const g_nucfx = dim1( g_NNN );				// (N) nuclear x-force
-	
+	const g_NNN = 8;  // nuc array max
+	const g_jelliumRadius = 1.0; // nuc potential jellium radius
+
+	let g_nucMax = 2; // maximum number of nucleus
+	const g_nucMass = dim1( g_NNN ); // mass of nucleus
+	const g_nucCharge = dim1( g_NNN ); // charge of nucleus
+	const g_nucxx = dim1( g_NNN ); // (au) nuclear x-position
+	const g_nucvx = dim1( g_NNN ); // (m/s) nuclear x-velocity
+	const g_nucfx = dim1( g_NNN ); // (N) nuclear x-force
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
-	
+
 	function dim2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -159,7 +159,7 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 		}
 		return a;
 	}
-	
+
 	function dimInt2( ni, nj ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -167,7 +167,7 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 		}
 		return a;
 	}
-	
+
 	function dim3( ni, nj, nk ) {
 		let a=[];
 		for (let i=0; i<ni; i++) {
@@ -178,22 +178,20 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 		}
 		return a;
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( theme ) {
 		const vIndex = 0;
-		
 		g_iterCount = 0;
 		g_sysTime = 0.0;
 		setInitialState(theme);
 		setExternalPotential(vIndex);
 	}
-	
-	function setInitialState(phIndex) {
+
+	function setInitialState( phIndex ) {
 		const xMax=g_NNx*g_dx;
-		
 		if (phIndex==0) { // 2-electron up,up
 			g_numberOfOrbit = 2;
 			g_numberOfState = g_numberOfOrbit*2;
@@ -224,24 +222,22 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 			setGaussianWaveAndSpin(3, xMax*0.5,  1.6, 2.0,  1); // 1:up
 		}
 	}
-	
-	function setExternalPotential(vIndex) {
+
+	function setExternalPotential( vIndex ) {
 		const xMax=g_NNx*g_dx;
-		
 		if (vIndex==0) {
 			const xPos = 0.5*xMax;
 			const vvextAtXMax = 8.0;
 			setHarmonicPotential(xPos, vvextAtXMax)
 		}
 	}
-	
-	function setGaussianWaveAndSpin(iOrbit, xPos, width, momentum, spin) {
+
+	function setGaussianWaveAndSpin( iOrbit, xPos, width, momentum, spin ) {
 		setGaussianWave(g_psi[iOrbit], xPos, width, momentum);
 		setElectronStatesAndOccupation(iOrbit, spin);
 	}
-	
+
 	function setElectronStatesAndOccupation(iOrbit, spin) {
-		
 		// set electron state: orbit -> g_psis[state][0], spin -> g_psis[state][1], and g_occ[]
 		const iState = iOrbit*2;
 		g_psis[iState][0] = iOrbit; g_psis[iState][1] = 1;
@@ -258,9 +254,8 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 		}
 	}
 
-	function setGaussianWave(ph, xPos, width, momentum) { // ph[][]
+	function setGaussianWave( ph, xPos, width, momentum ) { // ph[][]
 		const nnx=g_NNx;
-		
 		const a = Math.pow(2.0*Math.PI*width*width,-0.25);
 		for (let i=1; i<nnx-1; i++) {
 			const x = i*g_dx;
@@ -273,46 +268,43 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 		ph[nnx-1][0] = 0.0; ph[nnx-1][1] = 0.0;
 		normalize(ph);
 	}
-	
-	function setHarmonicPotential(xPos, vvextAtXMax) {
+
+	function setHarmonicPotential( xPos, vvextAtXMax ) {
 		const nnx=g_NNx;
-		
 		const k0 = vvextAtXMax/(nnx*g_dx*nnx*g_dx/4.0);
 		for (let i=0; i<nnx; i++) {
 			const x = i*g_dx;
 			g_vvext[i] = k0*(x-xPos)*(x-xPos);
 		}
 	}
-	
-	function setJelliumPotential(xPos, r0, charge) { // r0:jellium radius
+
+	function setJelliumPotential( xPos, r0, charge ) { // r0:jellium radius
 		const nnx=g_NNx;
-		
 		for (let i=0; i<nnx; i++) {
 			const x = i*g_dx;
 			const r = Math.sqrt((x-xPos)*(x-xPos));
 			g_vvext[i]= (r>a) ? -charge/r : -(charge/r0)*(1.5-0.5*(r*r/(r0*r0)));
 		}
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
+
 	function timeEvolution( nCalc, lossSW, qmdSW ) {
 		// lossSW 0-lossOFF 1-lossON 2-loss+trans 3-loss+trans,t-stop
-		
 		g_iterCount += 1;
 		if (lossSW<3) {
 			for (let i=0; i<nCalc; i++) {
 				evolveTimeStep(qmdSW,g_timeStep);
 			}
 		}
-		
+
 		for (let ie=0; ie<g_numberOfState; ie++) { // calc energy
 			const ib = g_psis[ie][0];
 			g_energy[ie] = kineticEnergy(g_psi[ib])+potentialEnergy(g_psi[ib],g_vv);
 		}
 		sortState(g_numberOfState);
-		
+
 		if (lossSW==1 || lossSW==2 || lossSW==3) {
 			setLoss(g_dampingFactor);
 			GramSchmidt(g_numberOfState);
@@ -322,54 +314,50 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 			}
 		}
 	}
-	
+
 	// --- evolve timeStep
-	
-	function evolveTimeStep(qmdSW,dt) {
-		
+
+	function evolveTimeStep( qmdSW, dt ) {
 		g_sysTime += 0.5*dt;
-		
+
 		for (let ib=0; ib<g_numberOfOrbit; ib++) {
 			kxStep(g_psi[ib],0.5*dt);
 		}
-		
+
 		setElectronDensity(g_numberOfState);
 		setEffectivePotential();
 		for (let ib=0; ib<g_numberOfOrbit; ib++) {
 			phaseStep(g_psi[ib],g_vv,dt);
 		}
-		
+
 		g_sysTime += 0.5*dt;
-		
+
 		for (let ib=0; ib<g_numberOfOrbit; ib++) {
 			kxStep(g_psi[ib],0.5*dt);
 		}
-		
+
 		if (qmdSW==1) moveNuc(dt);
 	}
-	
+
 	// --- kx step
-	
-	function kxStep(ph, deltat) { // ph[][]
+
+	function kxStep( ph, deltat ) { // ph[][]
 		const nnx=g_NNx;
-		
 		const a = 4.0*g_dx*g_dx/deltat;
 		const bbRe = 2.0;
 		const bbIm = a;
 		const aaRe = -2.0;
 		const aaIm = a;
 		const aaAb = aaRe*aaRe+aaIm*aaIm;
-		
 		for (let i=1; i<nnx-1; i++) {
 			g_bRe[i] = bbRe*ph[i][0]-bbIm*ph[i][1] - ph[i+1][0] - ph[i-1][0];
 			g_bIm[i] = bbRe*ph[i][1]+bbIm*ph[i][0] - ph[i+1][1] - ph[i-1][1];
 		}
-		
+
 		g_uRe[1] = aaRe/aaAb;
 		g_uIm[1] = -aaIm/aaAb;
 		ph[1][0] = g_bRe[1]*g_uRe[1] - g_bIm[1]*g_uIm[1];
 		ph[1][1] = g_bIm[1]*g_uRe[1] + g_bRe[1]*g_uIm[1];
-		
 		for (let i=2; i<nnx-1; i++) {
 			const auAb = (aaRe-g_uRe[i-1])*(aaRe-g_uRe[i-1])+(aaIm-g_uIm[i-1])*(aaIm-g_uIm[i-1]);
 			g_uRe[i] = (aaRe-g_uRe[i-1])/auAb;
@@ -377,18 +365,17 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 			ph[i][0] = (g_bRe[i]-ph[i-1][0])*g_uRe[i] - (g_bIm[i]-ph[i-1][1])*g_uIm[i];
 			ph[i][1] = (g_bRe[i]-ph[i-1][0])*g_uIm[i] + (g_bIm[i]-ph[i-1][1])*g_uRe[i];
 		}
-		
+
 		for (let i=nnx-3; i>=1; i--) {
 			ph[i][0] -= ph[i+1][0]*g_uRe[i] - ph[i+1][1]*g_uIm[i];
 			ph[i][1] -= ph[i+1][0]*g_uIm[i] + ph[i+1][1]*g_uRe[i];
 		}
 	}
-	
+
 	// --- phase step
 
-	function phaseStep(ph, vv, deltat) { // ph[][], vv[]
+	function phaseStep( ph, vv, deltat ) { // ph[][], vv[]
 		const nnx=g_NNx;
-		
 		for (let i=1; i<nnx-1; i++) {
 			const th = deltat*vv[i];
 			const cs = Math.cos(th), sn = Math.sin(th);
@@ -398,12 +385,11 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 			ph[i][1] = cs*phi-sn*phr;
 		}
 	}
-	
+
 	// --- set electron density
 
-	function setElectronDensity(istateMax) {
+	function setElectronDensity( istateMax ) {
 		const nnx=g_NNx;
-		
 		g_rho[0] = 0.0; g_rho[nnx-1] = 0.0;
 		for (let i=1; i<nnx-1; i++) {
 			g_rho[i] = 0.0;
@@ -414,39 +400,35 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 			}
 		}
 	}
-	
+
 	// --- set effective potential
-	
+
 	function setEffectivePotential() {
 		const nnx=g_NNx;
-		
 		poisson(100);
 		setVxc();
 		for (let i=0; i<nnx; i++) {
 			g_vv[i] = g_vvext[i]+g_vvh[i]+g_vvx[i]+g_vvc[i];
 		}
 	}
-	
-	function  poisson(iterMax) {
+
+	function  poisson( iterMax ) {
 		const nnx=g_NNx, h2=g_dx*g_dx, w=(1/2)*1.8; // 1.8 = SOR_omega
-		
 		for (let iter=1; iter<iterMax; iter++) {
 			for (let i=1; i<nnx-1; i++) {
 				g_vvh[i] = g_vvh[i]+w*(g_vvh[i+1]+g_vvh[i-1]-2.0*g_vvh[i]+h2*g_rho[i] );
 			}
 		}
 	}
-	
+
 	// LDA :  J. P. Perdew and A. Zunger; Phys. Rev., B23, 5048 (1981)
 	function setVxc() {
 		const nnx=g_NNx;
-		
 		const c1 = -0.984745022;
 		for (let i=1; i<nnx-1; i++) {
 			const rh = g_rho[i];
 			const rh3 = Math.pow(rh,0.33333333);
 			g_vvx[i] = c1*rh3;
-			
 			const rs = 0.6204/(rh3+1.0e-20);
 			if (rs>=1.0) {
 				const sqrtrs = Math.sqrt(rs);
@@ -458,7 +440,7 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 		}
 	}
 
-	function eeCorrelation(rh) {
+	function eeCorrelation( rh ) {
 		const r = 0.6204/(Math.pow(rh,0.33333333)+1.0e-20);
 		let ec;
 		if (r>=1.0) {
@@ -468,10 +450,10 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 		}
 		return ec;
 	}
-	
+
 	// --- sort state
-	
-	function sortState(maxState){
+
+	function sortState( maxState ){
 		let w,iw;
 		for (let ist=0; ist<maxState-1; ist++) {
 			if (g_energy[ist]>g_energy[ist+1]+0.0001) {
@@ -482,37 +464,34 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 			}
 		}
 	}
-	
+
 	// --- set loss
-	
-	function setLoss(damp) {
+
+	function setLoss( damp ) {
 		for (let ib=0; ib<g_numberOfOrbit; ib++) {
 			steepestDescent(g_psi[ib], g_vv, damp);
 		}
 	}
-	
-	function steepestDescent(ph, v, damp) { // ph[][], v[]
+
+	function steepestDescent( ph, v, damp ) { // ph[][], v[]
 		const nnx=g_NNx, h2=2.0*g_dx*g_dx;
 		const ee = kineticEnergy(ph) + potentialEnergy(ph,v);
-		
 		for (let i=1; i<nnx-1; i++) {
 			g_wrk[i][0] = (2.0*ph[i][0]-ph[i+1][0]-ph[i-1][0])/h2+(v[i]-ee)*ph[i][0];
 			g_wrk[i][1] = (2.0*ph[i][1]-ph[i+1][1]-ph[i-1][1])/h2+(v[i]-ee)*ph[i][0];
 		}
-
 		for (let i=1; i<nnx-1; i++) {
 			ph[i][0] -= damp*g_wrk[i][0];
 			ph[i][1] -= damp*g_wrk[i][1];
 		}
 	}
-	
+
 	// --- Gram-Schmidt
-	
-	function GramSchmidt(stateMax) {
+
+	function GramSchmidt( stateMax ) {
 		const nnx=g_NNx, dx=g_dx, psis=g_psis, psi=g_psi;
-		
 		normalize(psi[0]);
-		
+
 		for (let istate=1; istate<stateMax; istate++) {
 			const ibstate = psis[istate][0]; // spacial orbit of istate state
 			for (let ist=0; ist<istate; ist++) {
@@ -532,18 +511,17 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 			normalize(psi[ibstate]);
 		}
 	}
-	
+
 	// --- set occupation
-	
-	function setOcc(maxState, nElectron) {
-		
+
+	function setOcc( maxState, nElectron ) {
 		let eUpper = g_energy[maxState-1];
 		let eLower = g_energy[0];
 		for (let i=0; i<maxState; i++) {
 			if (g_energy[i]>eUpper) eUpper = g_energy[i];
 			if (g_energy[i]<eLower) eLower = g_energy[i];
 		}
-		
+
 		while (eUpper-eLower>1.0e-12) {
 			const eFermi = (eUpper+eLower)/2.0;
 			const ntrial = trialOcc(maxState, eFermi);
@@ -554,29 +532,28 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 			}
 		}
 		const eFermi = (eUpper+eLower)/2.0;
-		
+
 		for (let i=0; i<maxState; i++) {
 			g_occ[i] = 1.0*FermiDirac(g_energy[i], eFermi);
 			if (g_occ[i]<0.0001) g_occ[i] = 0.0;
 			if (1.0-g_occ[i]<0.0001) g_occ[i] = 1.0;
 		}
 	}
-	
-	function trialOcc(maxState, eFermi) {
+
+	function trialOcc( maxState, eFermi ) {
 		let s = 0.0;
 		for (let i=0; i<maxState; i++) {
 			s += 1.0*FermiDirac(g_energy[i], eFermi);
 		}
 		return s;
 	}
-	
-	function FermiDirac(ee, ef) {
+
+	function FermiDirac( ee, ef ) {
 		const et = 0.005;
 		return ( 1.0/(Math.exp((ee-ef)/et)+1.0) );
 	}
 
 	function levelWidth() { // no use
-		
 		let kT = broadening;
 		if (g_iterCount<30) {
 			kT=0.1;
@@ -586,11 +563,11 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 		}
 		return kT;
 	}
-	
-	
+
+
 	// --- utility
-	
-	function norm(ph) { // ph[][]
+
+	function norm( ph ) { // ph[][]
 		const nnx=g_NNx;
 		let s = 0.0;
 		for (let i=0; i<nnx; i++) {
@@ -599,19 +576,17 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 		return s*g_dx;
 	}
 
-	function normalize(ph) { // ph[][]
+	function normalize( ph ) { // ph[][]
 		const nnx=g_NNx;
 		const a = Math.sqrt(norm(ph));
-		
 		for (let i=1; i<nnx-1; i++) {
 			ph[i][0] = ph[i][0]/a;
 			ph[i][1] = ph[i][1]/a;
 		}
 	}
 
-	function kineticEnergy(ph) { // ph[][]
+	function kineticEnergy( ph ) { // ph[][]
 		const nnx=g_NNx, dx=g_dx;
-		
 		let s=0.0;
 		for (let i=1; i<nnx-1; i++) {
 			const hphRe = (2.0*ph[i][0]-ph[i+1][0]-ph[i-1][0])/(2.0*dx*dx);
@@ -621,9 +596,8 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 		return s;
 	}
 
-	function momentum(ph) { // ph[][]
+	function momentum( ph ) { // ph[][]
 		const nnx=g_NNx, dx=g_dx;
-		
 		let s=0.0;
 		for (let i=1; i<nnx-1; i++) {
 			const pphRe = (ph[i+1][1]-ph[i-1][1])/(2.0*dx);
@@ -632,10 +606,9 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 		}
 		return s;
 	}
-	
-	function potentialEnergy(ph, v) { // ph[][], v[]
+
+	function potentialEnergy( ph, v ) { // ph[][], v[]
 		const nnx=g_NNx, dx=g_dx;
-		
 		let s = 0.0;
 		for (let i=1; i<nnx-1; i++) {
 			s += v[i]*(ph[i][0]*ph[i][0] + ph[i][1]*ph[i][1])*dx;
@@ -643,9 +616,8 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 		return s;
 	}
 	
-	function innerProduct(f, g) { // f[][], g[][]
+	function innerProduct( f, g ) { // f[][], g[][]
 		const nnx=g_NNx, dx=g_dx;
-		
 		let pRe=0.0, pIm=0.0;
 		for (let i=1; i<nnx-1; i++) {
 			pRe += (f[i][0]*g[i][0] + f[i][1]*g[i][1])*dx;
@@ -653,18 +625,17 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 		}
 		return Math.sqrt(pRe*pRe+pIm*pIm);
 	}
-	
-	function meanPosX(ph) { // ph[][]
+
+	function meanPosX( ph ) { // ph[][]
 		const nnx=g_NNx,dx=g_dx;
-		
-		var s=0.0;
+		let s=0.0;
 		for (let i=1; i<nnx-1; i++) {
 			s += i*dx*(ph[i][0]*ph[i][0] + ph[i][1]*ph[i][1])*dx;
 		}
 		return (s - 8.0);
 	}
-	
-	
+
+
 	// ------------------------------------ move nuclei -----------
 	//
 	//  length : 1 au = 5.29177e-11 m
@@ -678,19 +649,18 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 	//  double g_nucvx[i] i-th nuclear velocity in SI(m/s)
 	//  double g_nucfx[i] i-th nuclear force in SI(N)
 	//
-	
-	function setInitNuc(iNuc, nuclearMass, nuclearCharge, nuclearxx, nuclearvx) {
+
+	function setInitNuc( iNuc, nuclearMass, nuclearCharge, nuclearxx, nuclearvx ) {
 		g_nucMass[iNuc] = nuclearMass*1.67e-27; // kg
 		g_nucCharge[iNuc] = nuclearCharge;
 		g_nucxx[iNuc] = nuclearxx;
 		g_nucvx[iNuc] = nuclearvx;
 		g_nucfx[iNuc] = 0.0;
 	}
-	
-	function moveNuc(deltat) {
+
+	function moveNuc( deltat ) {
 		const nNuc=g_nNuc;
 		const dtNuc = deltat*g_auTime; // au to SI unit
-		
 		for (let i=0; i<nNuc; i++) {
 			g_nucvx[i] += 0.5*dtNuc*g_nucfx[i]/g_nucMass[i]; // in SI
 			g_nucxx[i] += (g_nucvx[i]*dtNuc)/g_auLength; // in au
@@ -701,10 +671,9 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 		}
 		setNucleiPotential();
 	}
-	
+
 	function setNucForce() {
 		const nNuc=g_nucMax;
-		
 		for (let i=0; i<nNuc; i++) {
 			g_nucfx[i] = (4.38975e-18/5.29177e-11)*electronForceAtNuc(g_nucxx[i]);
 		}
@@ -716,10 +685,9 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 			}
 		}
 	}
-	
-	function electronForceAtNuc(xPos) {
+
+	function electronForceAtNuc( xPos ) {
 		const nnx=g_NNx, dx=g_dx
-		
 		let s=0.0;
 		for (let i=1; i<nnx-1; i++) {
 			const x = i*dx;
@@ -731,33 +699,30 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 		}
 		return s;
 	}
-	
-	function forceNN(i, j) {
+
+	function forceNN( i, j ) {
 		const x1 = g_nucxx[i], x2 = g_nucxx[j];
 		const r = Math.sqrt((x1-x2)*(x1-x2));
 		return ( (x1-x2)*g_nucCharge[i]*g_nucCharge[j]/(r*r*r) );
 	}
-	
+
 	function setNucleiPotential() {
 		const nnx=g_NNx, nNuc=g_nucMax;
-		
 		for (let i=0; i<nnx; i++) {
 			g_vvext[i] = 0.0;
 		}
-		
+
 		for (let iNuc=0; iNuc<nNuc; iNuc++) {
 			addNucPotential(iNuc);
 		}
 		addHillPotential();
 	}
-	
-	function addNucPotential(iNuc) {
+
+	function addNucPotential( iNuc ) {
 		const nnx=g_NNx, dx=g_dx;
-		
 		const a = g_jelliumRadius;
 		const qq = g_nucCharge[iNuc]; // charge
-		const xPos = g_nucxx[iNuc]; 
-		
+		const xPos = g_nucxx[iNuc];
 		for (let i=0; i<nnx; i++) {
 			const x = i*dx;
 			const r = Math.sqrt((x-xPos)*(x-xPos));
@@ -772,7 +737,6 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 	function addHillPotential() {
 		const nnx=g_NNx, dx=g_dx;
 		const hillLen = nnx*dx*0.2;
-		
 		for (let i=0; i<nnx; i++) {
 			const x = i*dx;
 			if (x<hillLen || x>NNx*dx-hillLen) {
@@ -780,64 +744,64 @@ const electronsTDKS1D = (function(){ // ====================  electronsTDKS1D Mo
 			}
 		}
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	// setInitialCondition( theme )
-		evolve:			timeEvolution,			// timeEvolution( nCalc, lossSW, qmdSW )
-		
-		getAUinSI:		function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
-		getSysParam:	function() { return [ g_NNx, g_dx, g_timeStep, g_numberOfState ]; },
-		getNow:			function() { return [ g_iterCount, g_sysTime ]; },
-		getOccupation:	function(ist) { return g_occ[ist]; },
-		getStEnergy:	function(ist) { return g_energy[ist]; },
-		getState:		function(ist) { return [ g_psis[ist][0], g_psis[ist][1] ]; }, // [ orbit, spin ]
-		getPsi:			function(orbit,i) { return g_psi[orbit][i]; }, // [ RePsi, ImPsi ]
-		getDensity:		function(i) { return g_rho[i]; },
-		getVext:		function(i) { return g_vvext[i]; },
-		getVeff:		function(i) { return g_vv[i]; },
-		getVh:			function(i) { return g_vvh[i]; },
-		getVx:			function(i) { return g_vvx[i]; },
-		getVc:			function(i) { return g_vvc[i]; },
+		init:   setInitialCondition, // setInitialCondition( theme )
+		evolve: timeEvolution, // timeEvolution( nCalc, lossSW, qmdSW )
+
+		getAUinSI:  function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:function() { return [ g_NNx, g_dx, g_timeStep, g_numberOfState ]; },
+		getNow:     function() { return [ g_iterCount, g_sysTime ]; },
+		getOccupation: function(ist) { return g_occ[ist]; },
+		getStEnergy:function(ist) { return g_energy[ist]; },
+		getState:   function(ist) { return [ g_psis[ist][0], g_psis[ist][1] ]; }, // [ orbit, spin ]
+		getPsi:     function(orbit,i) { return g_psi[orbit][i]; }, // [ RePsi, ImPsi ]
+		getDensity: function(i) { return g_rho[i]; },
+		getVext:    function(i) { return g_vvext[i]; },
+		getVeff:    function(i) { return g_vv[i]; },
+		getVh:      function(i) { return g_vvh[i]; },
+		getVx:      function(i) { return g_vvx[i]; },
+		getVc:      function(i) { return g_vvc[i]; },
 	};
-	
+
 })(); // ====================  electronsTDKS1D end  ====================
 
 
 const js098 = (function(){ // ====================  js Module  ====================
-	
+
 	const theModule = electronsTDKS1D;
 	const themeStr = [ 'Li', 'Na','K ', 'Rb','Cs' ];
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel
-	let canvas;					// canvas2d
+	const xCanvasSize = 480; // in pixel
+	const yCanvasSize = 480;
+	let canvas;
 	let ctx;
-	
-	let v_theme = 0;	// 0:(up,up) 1:(up,down) 2:(up,up,down) 3:(up,up,up,up)
-	let v_nCalc = 2;	// n-times evolve time step 
-	let v_lossSW = 0;	// 0-lossOFF 1-lossON 2-loss+trans 3-loss+trans,t-stop
-	let v_qmdSW = 0;	// QMD(nuclear motion) 0:off 1:on
-	
+
+	let v_theme = 0; // 0:(up,up) 1:(up,down) 2:(up,up,down) 3:(up,up,up,up)
+	let v_nCalc = 2; // n-times evolve time step 
+	let v_lossSW = 0; // 0-lossOFF 1-lossON 2-loss+trans 3-loss+trans,t-stop
+	let v_qmdSW = 0; // QMD(nuclear motion) 0:off 1:on
+
 	let p_NNx, p_dx, p_timeStep, p_numberOfState; // = theModule.getSysParam();
 	let p_NNy, p_NNz;
-	
+
 	let dispMode = 3;
 	let dispState = 0;
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
 	let inStepFlag = false;
-	
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
 		viewHome();
-		
+
 		animate();
-		
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -850,10 +814,9 @@ const js098 = (function(){ // ====================  js Module  =================
 			g3d.setMouseOnCanvas( canvas ); // 3D graphics
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_theme );
@@ -866,7 +829,7 @@ const js098 = (function(){ // ====================  js Module  =================
 			// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
 			g3d.init( p_NNx, p_NNy, p_NNz, p_dx, xCanvasSize, yCanvasSize, 300, 20 );
 		}
-		
+
 		if ( !pauseFlag ) {
 			theModule.evolve( v_nCalc, v_lossSW, v_qmdSW );
 		} else if ( pauseFlag && stepFlag ) {
@@ -874,36 +837,34 @@ const js098 = (function(){ // ====================  js Module  =================
 			theModule.evolve( v_nCalc, v_lossSW, v_qmdSW );
 			inStepFlag = true;
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	const gColor = { orb:"#dddd00", dens:"#dd88dd",
 					Vext:"#00dd00", Veff:"#0088ff", Vh:"#4444ff", Vxc:"#8800ff", Vx:"#aa00ff",Vc:"#8888ff" };
-	
+
 	function draw( ctx, dispMode ) {
-		
-		const xp = 30, yp = 20, xtabp = 320;
-		
+		const xp=30, yp=20, xtabp=320;
 		let auLength, auTime, auEnergy, au2eV, iterCount, sysTime;
 		[ auLength, auTime, auEnergy, au2eV ] = theModule.getAUinSI();
 		[ iterCount, sysTime ] = theModule.getNow();
-		
+
 		// clear
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
+
 		if (dispMode==0) {
 			dispText( "state table" );
 			drawStateTable( ctx );
 		} else if (dispMode==1) {
 			dispText( "density(x) + Vext(x)" );
 			drawLines3D( ctx, 0 );
-			
+
 		} else if (dispMode==2) {
 			dispText( "state(x) + Vext(x)" );
 			drawLines3D( ctx, 1 );
@@ -916,32 +877,31 @@ const js098 = (function(){ // ====================  js Module  =================
 			drawLines3D( ctx, 3 );
 
 		}
-		
+
 		// caption
 		ctx.fillStyle = "#888888";
 		ctx.fillText(`box = ${(p_NNx*p_dx)} (au)`, 20, yCanvasSize-30);
 		//ctx.fillText("Z ="+p_valenceZ+",  ne ="+(p_valenceZ+v_dzNu), 260, yCanvasSize-30);
 		ctx.fillText(`iteration = ${iterCount}`, 20, yCanvasSize-10);
 		ctx.fillText(`time = ${sysTime.toFixed(3)} (au)`, 260, yCanvasSize-10);
-		
+
 		function dispText( str ) {
 			ctx.fillStyle = "#888888";
 			ctx.fillText( str, 20, yCanvasSize-50 );
 		}
 	}
-	
-	
+
+
 	function drawLines3D( ctx, mode ) {
 		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
-		const nnx = g_NNx, nny = g_NNy;
-		const vmag = 5.0, dmag = 10000.0, pmag = 20.0;
-		
+		const nnx=g_NNx, nny=g_NNy;
+		const vmag=5.0, dmag=10000.0, pmag=20.0;
 		const densVextFunc = function(i) { return vmag*theModule.getVext(i) + dmag*theModule.getDensity(i); };
 		const vxcFunc = function(i) { return (theModule.getVx(i)+theModule.getVc(i)); };
-		
+
 		g3d.set3DRotateXY(0.0);
 		g3d.plotFarEdge(ctx, sc,xp,yp,"#444400"); // dark yellow
-		
+
 		if ( mode==0 ) {
 			yPlot( densVextFunc, 1.0, gColor.dens );
 			yPlot( theModule.getVext, vmag, gColor.Vext );
@@ -949,7 +909,7 @@ const js098 = (function(){ // ====================  js Module  =================
 			ctx.fillText(`density(x)`, 300, 20);
 			ctx.fillStyle = gColor.Vext;
 			ctx.fillText(`Vext(x)`, 400, 20);
-			
+
 		} else if ( mode==1 ) {
 			yPlot( theModule.getVext, vmag, gColor.Vext );
 			const state = dispState;
@@ -963,7 +923,7 @@ const js098 = (function(){ // ====================  js Module  =================
 			ctx.fillText(`|${state}>   energy:${energy.toFixed(6)},  occ:${occ.toFixed(4)},  spin:${spinStr}`, 20, 20);
 			ctx.fillStyle = gColor.Vext;
 			ctx.fillText(`Vext(x)`, 400, 20);
-			
+
 		}  else if ( mode==2 ) {
 			yPlot( theModule.getVext, vmag, gColor.Vext );
 			let ypp = 16;
@@ -988,7 +948,7 @@ const js098 = (function(){ // ====================  js Module  =================
 			}
 			ctx.fillStyle = gColor.Vext;
 			ctx.fillText(`Vext(x)`, 400, 20);
-			
+
 		} else if ( mode==3 ) {
 			yPlot( densVextFunc, 1.0, gColor.dens );
 			yPlot( theModule.getVext, vmag, gColor.Vext );
@@ -1006,7 +966,7 @@ const js098 = (function(){ // ====================  js Module  =================
 			ctx.fillStyle = gColor.Vxc;
 			ctx.fillText(`Vxc(x) x10`, 380, 20);
 		}
-		
+
 		g3d.plotNearEdge(ctx, sc,xp,yp,"#999900"); //yellow
 		/*
 		ctx.font = "12px 'sans-serif'";
@@ -1014,7 +974,7 @@ const js098 = (function(){ // ====================  js Module  =================
 		ctx.fillText(`Ax=${(g3d.Ax*180/Math.PI).toFixed(1)}, Ay=${(g3d.Ay*180/Math.PI).toFixed(1)}`, 10, 15);
 		ctx.font = "16px 'sans-serif'";
 		*/
-		
+
 		function yPlot( yFunc, mag, color ) {
 			let yi, yip;
 			for (let i=0; i<nnx-1; i++) {
@@ -1025,7 +985,7 @@ const js098 = (function(){ // ====================  js Module  =================
 				g3d.drawRotatedLine(ctx, x, y, z, x1, y1, z1, color, sc, xp, yp );
 			}
 		}
-		
+
 		function orbitPlot( orb, mag, yConst, occ, color ) {
 			const degree = 180.0/Math.PI, colorUdefined = ( color==undefined ) ? true : false;
 			let yi, zi, yip, zip;
@@ -1045,7 +1005,7 @@ const js098 = (function(){ // ====================  js Module  =================
 				const colr = (amp>0.5) ? col : '#444444';
 				g3d.drawRotatedLine(ctx, x, y, z, x1, y1, z1, colr, sc, xp, yp );
 			}
-			
+
 			function yzFunc( orb, i, mag ) {
 				let re, im;
 				[ re, im ] = theModule.getPsi(orb,i);
@@ -1054,11 +1014,11 @@ const js098 = (function(){ // ====================  js Module  =================
 		}
 		
 	};
-	
+
 	function drawStateTable( ctx ) {
 		const nst = p_numberOfState;
 		const px = 15, py = 20;
-		
+
 		// clear canvas
 		ctx.fillStyle = "#888888";
 		ctx.fillRect( 5, 5, xCanvasSize-10, yCanvasSize-80 );
@@ -1070,13 +1030,13 @@ const js098 = (function(){ // ====================  js Module  =================
 		ctx.fillText("occupation", px+190, py+60);
 		ctx.fillText("orbNo.", px+290, py+60);
 		ctx.fillText("spin", px+360, py+60);
-		
+
 		for (let ist=0; ist<nst; ist++) {
 			const energy = theModule.getStEnergy( ist );
 			const occ = theModule.getOccupation( ist );
 			let orb, spin;
 			[ orb, spin ] = theModule.getState( ist );
-			
+
 			const ppy = py+85+(nst-ist-1)*20;
 			ctx.fillStyle = `hsl(${240-occ*240},100%,50%)`;
 			ctx.fillText(`| ${ist} >`, px+30, ppy);
@@ -1086,38 +1046,37 @@ const js098 = (function(){ // ====================  js Module  =================
 			ctx.fillText(((spin==1) ? "up" : "down"), px+360, ppy);
 		}
 	}
-	
-	
+
+
 	// --------------------  graphics 3D (field) module  --------------------
 	//
 	// ver 0.0.1  2018.12.16  last updated on 2023.03.01
 	// ver 0.0.2  2023.03.03  last updated on 2023.06.01
-	
+
 	let g_NNx, g_NNy, g_NNz, g_dx, g_dy, g_dz, g_xCanvasSize, g_yCanvasSize, g_xBoxSize, g_yShift;
-	
-	const g3d = {};				// namespace of graphic 3D module
-	
-	g3d.mouseDownFlag = 0;		// 1:on mouse down, 0:else
-	g3d.x_mouse = 0;			// x-position of mouse
-	g3d.y_mouse = 0;			// y-position of mouse
-	g3d.x0_mouse = 0;			// drag-started x-position of mouse
-	g3d.y0_mouse = 0;			// drag-started y-position of mouse
+
+	const g3d = {};  // namespace of graphic 3D module
+	g3d.mouseDownFlag = 0; // 1:on mouse down, 0:else
+	g3d.x_mouse = 0; // x-position of mouse
+	g3d.y_mouse = 0; // y-position of mouse
+	g3d.x0_mouse = 0;// drag-started x-position of mouse
+	g3d.y0_mouse = 0;// drag-started y-position of mouse
 	g3d.zoom = 1.0;
-	
-	g3d.xMax = 0.0;				// x-length of box
-	g3d.yMax = 0.0;				// y-length of box
-	g3d.zMax = 0.0;				// z-length of box
-	g3d.cx0 = 0.0;				// x-component of rotate center
-	g3d.cy0 = 0.0;				// y-component of rotate center
-	g3d.cz0 = 0.0;				// z-component of rotate center
-	g3d.Ax = -Math.PI/15.0;		// rotate angle around x-axis
-	g3d.Ay = -Math.PI/15.0;		// rotate angle around y-axis
-	g3d.ddAy = 0.0;				// Ay change rate for auto-rotate: eg. dday=0.5*Math.PI/180
-	g3d.cosAx = 0.0;			// cosAx=Math.cos(Ax)
-	g3d.sinAx = 0.0;			// sinAx=Math.sin(Ax)
-	g3d.cosAy = 0.0;			// cosAy=Math.cos(Ay)
-	g3d.sinAy = 0.0;			// sinAy=Math.sin(Ay)
-	
+
+	g3d.xMax = 0.0;  // x-length of box
+	g3d.yMax = 0.0;  // y-length of box
+	g3d.zMax = 0.0;  // z-length of box
+	g3d.cx0 = 0.0;   // x-component of rotate center
+	g3d.cy0 = 0.0;   // y-component of rotate center
+	g3d.cz0 = 0.0;   // z-component of rotate center
+	g3d.Ax = -Math.PI/15.0;// rotate angle around x-axis
+	g3d.Ay = -Math.PI/15.0;// rotate angle around y-axis
+	g3d.ddAy = 0.0;  // Ay change rate for auto-rotate: eg. dday=0.5*Math.PI/180
+	g3d.cosAx = 0.0; // cosAx=Math.cos(Ax)
+	g3d.sinAx = 0.0; // sinAx=Math.sin(Ax)
+	g3d.cosAy = 0.0; // cosAy=Math.cos(Ay)
+	g3d.sinAy = 0.0; // sinAy=Math.sin(Ay)
+
 	g3d.xApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
 	g3d.yApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
 	g3d.zApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
@@ -1127,9 +1086,9 @@ const js098 = (function(){ // ====================  js Module  =================
 	g3d.boxApex = [[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1], [1,0,1], [0,1,1], [1,1,1] ];
 	g3d.boxEdge = [[0,1,9], [0,2,9], [0,4,9], [1,3,9], [1,5,9], [2,3,9], 
 					[2,6,9], [3,7,9], [4,5,9], [4,6,9], [5,7,9], [6,7,9] ];
-	
+
 	//--- set mouse on canvas
-	
+
 	// g3d.setMouseOnCanvas( canvas );
 	g3d.setMouseOnCanvas = function( canvas ) {
 		canvas.addEventListener('mousemove', g3d.mouse_move);
@@ -1137,10 +1096,9 @@ const js098 = (function(){ // ====================  js Module  =================
 		canvas.addEventListener('mouseup', g3d.mouse_up);
 		canvas.addEventListener("mousewheel", g3d.mouseWheel);
 	};
-	
-	g3d.mouse_move = function(e) {
-		const pi = Math.PI;
 
+	g3d.mouse_move = function(e) {
+		const pi=Math.PI;
 		if (g3d.mouseDownFlag==1) {
 			g3d.x_mouse = e.clientX;
 			g3d.y_mouse = e.clientY;
@@ -1155,7 +1113,7 @@ const js098 = (function(){ // ====================  js Module  =================
 			g3d.y0_mouse = g3d.y_mouse;
 		}
 	};
-	
+
 	g3d.mouse_down = function(e) {
 		if (g3d.mouseDownFlag==0) {
 			g3d.x0_mouse = e.clientX;
@@ -1165,13 +1123,13 @@ const js098 = (function(){ // ====================  js Module  =================
 			g3d.mouseDownFlag = 1;
 		}
 	};
-	
+
 	g3d.mouse_up = function(e) {
 		if (g3d.mouseDownFlag==1) {
 			g3d.mouseDownFlag = 0;
 		}
 	};
-	
+
 	g3d.mouseWheel = function(e) {
 		g3d.deltaY = e.deltaY;
 		if ( g3d.deltaY > 0 ) g3d.zoom *= 0.95;
@@ -1179,9 +1137,9 @@ const js098 = (function(){ // ====================  js Module  =================
 		if ( g3d.zoom<0.5 ) g3d.zoom = 0.5;
 		if ( g3d.zoom>2.0 ) g3d.zoom = 2.0;
 	};
-	
+
 	//--- 3D graphics aid
-	
+
 	// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
 	g3d.init = function( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift ) {
 		g_NNx = NNx; g_NNy = NNy; g_NNz = NNz;
@@ -1191,7 +1149,7 @@ const js098 = (function(){ // ====================  js Module  =================
 		g_yShift = (yShift==undefined) ? 20 : yShift;
 		g3d.setSize();
 	}
-	
+
 	g3d.setSize = function() {
 		g3d.xMax = g_NNx*g_dx;		// x-length of box
 		g3d.yMax = g_NNy*g_dy;		// y-length of box
@@ -1200,13 +1158,13 @@ const js098 = (function(){ // ====================  js Module  =================
 		g3d.cy0 = 0.5*g3d.yMax;		// y-component of rotate center
 		g3d.cz0 = 0.5*g3d.zMax;		// z-component of rotate center
 	};
-	
+
 	// g3d.setRotateAngle( AxInDegree, AyInDegree );
 	g3d.setRotateAngle = function( AxInDegree, AyInDegree ) {
 		g3d.Ax = AxInDegree*Math.PI/180.0;
 		g3d.Ay = AyInDegree*Math.PI/180.0;
 	};
-	
+
 	// g3d.scxpypFunc();
 	g3d.scxpypFunc = function() {
 		const xBoxSize = g_xBoxSize;
@@ -1215,7 +1173,7 @@ const js098 = (function(){ // ====================  js Module  =================
 		const sc = xBoxSize/(g_NNx*g_dx)*g3d.zoom;
 		return [ sc, xp, yp ];
 	}
-	
+
 	g3d.set3DRotateXY = function(rotateRateOfAyInDegree) {
 		g3d.ddAy = rotateRateOfAyInDegree*Math.PI/180.0;
 		g3d.Ay= g3d.Ay + g3d.ddAy; // auto-rotate : if (ddAy==0.0), stop
@@ -1226,7 +1184,7 @@ const js098 = (function(){ // ====================  js Module  =================
 		g3d.rotateApexXY();     // box Apex rotate--> pxApex[i],pyApex[i],pzApex[i]
 		g3d.markFarEdge();      // boxEdge[iEdge][2]=1:far side edge or 0:near side edge
 	};
-	
+
 	g3d.setBox = function() {
 		for (let i=0; i<8; i++) {
 			g3d.xApex[i] = g3d.boxApex[i][0]*g3d.xMax;
@@ -1234,7 +1192,7 @@ const js098 = (function(){ // ====================  js Module  =================
 			g3d.zApex[i] = g3d.boxApex[i][2]*g3d.zMax;
 		}
 	};
-	
+
 	g3d.setRotateXY = function(angleX,angleY) {
 		g3d.cosAx = Math.cos(angleX);
 		g3d.sinAx = Math.sin(angleX);
@@ -1244,17 +1202,16 @@ const js098 = (function(){ // ====================  js Module  =================
 		g3d.cy0 = 0.5*g3d.yMax;
 		g3d.cz0 = 0.5*g3d.zMax;
 	};
-	
+
 	g3d.rotateApexXY = function() { // rotate box apex
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		for (let i=0; i<8; i++) {
 			g3d.pxApex[i] = cosAy*(g3d.xApex[i]-cx0)+sinAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cx0;
 			g3d.pyApex[i] = cosAx*(g3d.yApex[i]-cy0)-sinAx*(g3d.zApex[i]-cz0) + cy0;
 			g3d.pzApex[i] =-sinAy*(g3d.xApex[i]-cx0)+cosAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cz0;
 		}
 	};
-	
+
 	g3d.markFarEdge = function() {
 		//seek far apex --> iMin
 		let zMin = g3d.pzApex[0];
@@ -1271,26 +1228,24 @@ const js098 = (function(){ // ====================  js Module  =================
 			if (g3d.boxEdge[iEdge][0]==iMin || g3d.boxEdge[iEdge][1]==iMin) g3d.boxEdge[iEdge][2] = 1;
 		}
 	};
-	
+
 	g3d.drawRotatedDisc = function(ctx, x,y,z,r,color,sc,xp,yp) {
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		const x1 = cosAy*(x-cx0)+sinAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cx0
 		const y1 = cosAx*(y-cy0)-sinAx*(z-cz0) + cy0
 		//z1 =-sinAy*(x-cx0)+cosAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cz0
 		g3d.drawDisc(ctx, x1*sc+xp,y1*sc+yp,r,color);
 	};
-	
+
 	g3d.drawRotatedLine = function(ctx, x1,y1,z1,x2,y2,z2,color,sc,xp,yp) {
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		const x1p = cosAy*(x1-cx0)+sinAy*(sinAx*(y1-cy0)+cosAx*(z1-cz0)) + cx0
 		const y1p = cosAx*(y1-cy0)-sinAx*(z1-cz0) + cy0
 		const x2p = cosAy*(x2-cx0)+sinAy*(sinAx*(y2-cy0)+cosAx*(z2-cz0)) + cx0
 		const y2p = cosAx*(y2-cy0)-sinAx*(z2-cz0) + cy0
 		g3d.drawLine(ctx, x1p*sc+xp,y1p*sc+yp,x2p*sc+xp,y2p*sc+yp,color);
 	};
-	
+
 	g3d.plotNearEdge = function(ctx, sc,xp,yp,color) {
 		for (let iEdge=0; iEdge<12; iEdge++) {
 			if (g3d.boxEdge[iEdge][2]==0) { //far edge mark = 1
@@ -1298,7 +1253,7 @@ const js098 = (function(){ // ====================  js Module  =================
 			}
 		}
 	};
-	
+
 	g3d.plotFarEdge = function(ctx, sc,xp,yp,color) {
 		for (let iEdge=0; iEdge<12; iEdge++) {
 			if (g3d.boxEdge[iEdge][2]==1) { //far edge mark = 1
@@ -1306,7 +1261,7 @@ const js098 = (function(){ // ====================  js Module  =================
 			}
 		}
 	};
-	
+
 	g3d.plotEdge = function(ctx, iEdge,sc,xp,yp,color) {
 		let iApex = g3d.boxEdge[iEdge][0];
 		const x1=g3d.pxApex[iApex]*sc+xp, y1=g3d.pyApex[iApex]*sc+yp;
@@ -1314,7 +1269,7 @@ const js098 = (function(){ // ====================  js Module  =================
 		const x2=g3d.pxApex[iApex]*sc+xp, y2=g3d.pyApex[iApex]*sc+yp;
 		g3d.drawLine(ctx, x1, y1, x2, y2, color);
 	};
-	
+
 	g3d.drawLine = function(ctx, x1, y1, x2, y2, color) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -1322,24 +1277,24 @@ const js098 = (function(){ // ====================  js Module  =================
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	};
-	
+
 	g3d.drawDisc = function(ctx, x, y, r, color) {
 		ctx.fillStyle = color;
 		ctx.beginPath();
 		ctx.arc(x, y, r, 0, 2*Math.PI, false);
 		ctx.fill();
 	};
-	
+
 	// --------------------  end of graphics 3D (field) module  --------------------
-	
-	
+
+
 	// --------------------  control  --------------------
-	
+
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 		document.getElementById("slct_orbit").disabled = true;
 	}
-	
+
 	function changeStateSelectorOptions( nSelect ) {
 		const element = document.getElementById( "slct_orbit" );
 		element.length = 0; // delete all options
@@ -1349,9 +1304,9 @@ const js098 = (function(){ // ====================  js Module  =================
  			element.appendChild(option);
 		}
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
 
@@ -1364,18 +1319,18 @@ const js098 = (function(){ // ====================  js Module  =================
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setTheme() {  // select theme
 		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = 1;
 	}
-	
+
 	function setLossSW() {  // select lossSW
 		v_lossSW = 0 + document.getElementById("slct_loss").selectedIndex;
 	}
-	
+
 	function setDispMode() {  // select dispMode
 		const dom = document.getElementById("slct_orbit");
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
@@ -1385,30 +1340,30 @@ const js098 = (function(){ // ====================  js Module  =================
 	function setOrbit() {  // select dispOrbit
 		dispState = 0 + document.getElementById("slct_orbit").selectedIndex;
 	}
-	
+
 	function viewHome() {
 		g3d.setRotateAngle(-10,-10);	
 		g3d.zoom = 1.0;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:				main,				// main()
-		
-		reset:				reset,				// reset()
-		pause:				pause,				// pause()
-		step:				step,				// step()
-		
-		setTheme:			setTheme,			// setTheme()
-		setLossSW:			setLossSW,			// setLossSW()
-		
-		setDispMode:		setDispMode,		// setDispMode()
-		setOrbit:			setOrbit,			// setOrbit()
-		viewHome:			viewHome,			// viewHome()
+		main:  main,  // main()
+
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step,  // step()
+
+		setTheme: setTheme, // setTheme()
+		setLossSW:setLossSW, // setLossSW()
+
+		setDispMode: setDispMode, // setDispMode()
+		setOrbit: setOrbit, // setOrbit()
+		viewHome: viewHome, // viewHome()
 	};
-	
+
 })(); // ====================  js098 end  ====================
 
 // event
@@ -1472,7 +1427,7 @@ in parabolic Vext(x) = k x^2
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
 
 </body>
