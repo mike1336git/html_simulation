@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js101_astroObjectsD2D
-//    Copyright(C) 2018-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2018-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT )
 //
 //    ver 0.0.0  2018.05.05 created, last updated on 2018.12.07
 //    ver 0.0.1  2019.01.27 v1, last updated on 2021.09.23
 //    ver 0.0.2  2021.11.07 v2, last updated on 2021.11.07
-//    ver 0.0.3  2023.05.12 v3, last updated on 2023.09.10
+//    ver 0.0.3  2023.05.12 v3, last updated on 2024.05.10
 //
 // --------------------  gravity  - classical dynamics 2D
 //
@@ -40,54 +40,53 @@
 */
 
 const astroObjectsD2D = (function(){ // ====================  astroObjectsD2D Module  ====================
-	
-	const g_gg = 6.67408e-11;			// (m^3 kg^-1 s^-2) gravitational constant
-	const g_AA = 1.0e5;					// (m) length unit g_AA = 100 (km)
-	const g_nMax = 1000;				// array max
-	
-	let g_Nmt = 1000;					// number of ao
-	let g_sysTime = 0.0;				// (s) system time
-	let g_timeStep = 10.0;				// (s) time step dt
-	let g_potentialEnergy = 0.0;		// (J) total potential energy
-	let g_kineticEnergy = 0.0;			// (J) total kinrtic energy 
-	
-	const g_xx = dim1( g_nMax );		// (m) position x-component
-	const g_yy = dim1( g_nMax );		// (m) position y-component
-	const g_vx = dim1( g_nMax );		// (m/s) velocity x-component
-	const g_vy = dim1( g_nMax );		// (m/s) velocity y-component
-	const g_ffx = dim1( g_nMax );		// (N) x-component of total force
-	const g_ffy = dim1( g_nMax );		// (N) y-component of total force
-	const g_mas = dim1( g_nMax );		// (kg) mass of astro object
-	const g_rc =  dim1( g_nMax );		// (m) radius of astro object
-	const g_damp = dim1( g_nMax );		// daming force between i-th and j*th object
-										// = -0.5*(g_damp[i]+g_damp[j])*vij^2
-	
+
+	const g_gg = 6.67408e-11; // (m^3 kg^-1 s^-2) gravitational constant
+	const g_AA = 1.0e5;    // (m) length unit g_AA = 100 (km)
+	const g_nMax = 1000;   // array max
+
+	let g_Nmt = 1000;      // number of ao
+	let g_sysTime = 0.0;   // (s) system time
+	let g_timeStep = 10.0; // (s) time step dt
+	let g_potentialEnergy = 0.0; // (J) total potential energy
+	let g_kineticEnergy = 0.0; // (J) total kinrtic energy 
+
+	const g_xx = dim1( g_nMax );  // (m) position x-component
+	const g_yy = dim1( g_nMax );  // (m) position y-component
+	const g_vx = dim1( g_nMax );  // (m/s) velocity x-component
+	const g_vy = dim1( g_nMax );  // (m/s) velocity y-component
+	const g_ffx = dim1( g_nMax ); // (N) x-component of total force
+	const g_ffy = dim1( g_nMax ); // (N) y-component of total force
+	const g_mas = dim1( g_nMax ); // (kg) mass of astro object
+	const g_rc =  dim1( g_nMax ); // (m) radius of astro object
+	const g_damp = dim1( g_nMax );// daming force between i-th and j*th object
+								  // = -0.5*(g_damp[i]+g_damp[j])*vij^2
+
 	function dim1( n ) {
 		return new Float64Array( n );
 	}
-	
-	
+
+
 	// --------------------  astro objects data  --------------------
-	
+
 	const aObject = [
 		// 0:mas(kg) 1:rc(m) 2:damp 3:hue color
 		[  1.0e18, 0.8*g_AA, 1.0e8, 0.85 ],
 		[  1.0e18, 0.8*g_AA, 5.0e8, 0.01 ],
 		[  5.0e18, 0.8*g_AA, 2.0e8, 0.10 ],
 		[ 10.0e18, 0.8*g_AA, 5.0e8, 0.20 ] ];
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( theme ) {
 		g_sysTime = 0.0;
 		setAOs( theme );
 	}
-	
+
 	function setAOs(theme) {
 		const knd = 1;
 		const rcOfKind = aObject[knd][1];
-		
 		if (theme==0) { // 2-body
 			let i = 0;
 			//setAOdisc(ii, knd, aa, x0, y0, r0, th, vx0, vy0)
@@ -112,11 +111,11 @@ const astroObjectsD2D = (function(){ // ====================  astroObjectsD2D Mo
 			}
 
 		} 
-		
+
 		removeTranslationalMotion();
 	}
-	
-	function setAOdisc(ii, knd, aa, x0, y0, r0, th, vx0, vy0) {
+
+	function setAOdisc( ii, knd, aa, x0, y0, r0, th, vx0, vy0 ) {
 		let ip = ii;
 		const a = aa;
 		const b = (Math.sqrt(3.0)/2.0)*a;
@@ -124,7 +123,6 @@ const astroObjectsD2D = (function(){ // ====================  astroObjectsD2D Mo
 		const ny = Math.floor(2.0*r0/a) + 1;
 		const sth = Math.sin(th);
 		const cth = Math.cos(th);
-		
 		for (let i=0; i<nx; i++) {
 			const x = b*i;
 			for (let j=0; j<ny; j++) {
@@ -146,10 +144,9 @@ const astroObjectsD2D = (function(){ // ====================  astroObjectsD2D Mo
 		}
 		return ip;
 	}
-	
+
 	function removeTranslationalMotion() {
 		const nmt=g_Nmt;
-		
 		let m=0.0, mvx=0.0, mvy=0.0;
 		for (let i=0; i<nmt; i++) {
 			m += g_mas[i];
@@ -162,21 +159,19 @@ const astroObjectsD2D = (function(){ // ====================  astroObjectsD2D Mo
 			g_vy[i] -= vty;
 		}
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
+
 	function timeEvolution( nCalc ) {
-		
 		for (let i=0; i<nCalc; i++) {
 			g_sysTime += g_timeStep;
 			moveAOs(g_timeStep);
 		}
 	}
-	
-	function moveAOs(dt) {
+
+	function moveAOs( dt ) {
 		const nmt=g_Nmt;
-		
 		for (let i=0; i<nmt; i++) {
 			const a = 0.5*dt/g_mas[i];
 			g_vx[i] += a*g_ffx[i];
@@ -192,16 +187,14 @@ const astroObjectsD2D = (function(){ // ====================  astroObjectsD2D Mo
 		}
 		g_kineticEnergy = totalKineticEnergy();
 	}
-	
+
 	function calcForce() {
 		const nmt=g_Nmt;
-		
 		for (let i=0; i<nmt; i++) {
 			g_ffx[i] = 0.0;
 			g_ffy[i] = 0.0;
 		}
 		g_potentialEnergy = 0.0;
-
 		for (let i=0; i<nmt; i++) {
 			for (let j=i+1; j<nmt; j++) {
 				const xij = g_xx[i]-g_xx[j], yij = g_yy[i]-g_yy[j];
@@ -216,75 +209,72 @@ const astroObjectsD2D = (function(){ // ====================  astroObjectsD2D Mo
 			}
 		}
 	}
-	
-	function force(r, i, j) {
+
+	function force( r, i, j ) {
 		const r0 = 0.5*(g_rc[i]+g_rc[j]);
 		const gmm = g_gg*g_mas[i]*g_mas[j];
-		
 		let f;
 		if (r>r0) {
 			f = -gmm/(r*r);
 		} else {
 			f = -20.0*gmm*(r-0.95*r0)/(r0*r0*r0);
-			f += -0.5*(g_damp[i]+g_damp[j])*((g_xx[i]-g_xx[j])*(g_vx[i]-g_vx[j])
-							+(g_yy[i]-g_yy[j])*(g_vy[i]-g_vy[j]));
+			f += -0.5*(g_damp[i]+g_damp[j])*((g_xx[i]-g_xx[j])*(g_vx[i]-g_vx[j])+(g_yy[i]-g_yy[j])*(g_vy[i]-g_vy[j]));
 		}
 		return f;
 	}
-	
-	
+
+
 	// --- utility
-	
+
 	function totalKineticEnergy() {
 		const nmt=g_Nmt;
-		
 		let s=0.0;
 		for (let i=0; i<nmt; i++) {
 			s += 0.5*g_mas[i]*(g_vx[i]*g_vx[i]+g_vy[i]*g_vy[i]);
 		}
 		return s;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	// setInitialCondition( theme )
-		evolve:			timeEvolution,			// timeEvolution( nCalc )
-		
-		getSysParam:	function() { return [ g_Nmt, 100.0*g_AA, g_timeStep ]; },
-		getSysTime:		function() { return g_sysTime; },
-		getRc:			function(i) { return g_rc[i]; },
-		getPosition:	function(i) { return [ g_xx[i], g_yy[i] ]; },
-		getVelocity:	function(i) { return [ g_vx[i], g_vy[i] ]; },
+		init:   setInitialCondition, // setInitialCondition( theme )
+		evolve: timeEvolution, // timeEvolution( nCalc )
+
+		getSysParam: function() { return [ g_Nmt, 100.0*g_AA, g_timeStep ]; },
+		getSysTime:	 function() { return g_sysTime; },
+		getRc:       function(i) { return g_rc[i]; },
+		getPosition: function(i) { return [ g_xx[i], g_yy[i] ]; },
+		getVelocity: function(i) { return [ g_vx[i], g_vy[i] ]; },
 	};
-	
+
 })(); // ====================  astroObjectsD2D end  ====================
 
 
 const js101 = (function(){ // ====================  js Module  ====================
 
 	const theModule = astroObjectsD2D;
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel
+	const xCanvasSize = 480; // in pixel
+	const yCanvasSize = 480;
 	let canvas;
 	let ctx;
-	
-	let v_theme = 0;		// 0:2-body  1:3-body  2:disk
+
+	let v_theme = 0; // 0:2-body  1:3-body  2:disk
 	let v_nCalc = 20;
-	
+
 	let p_Nmt, p_xLen, p_timeStep;	// <-- theModule.getSysParam();
-	
+
 	let dispMode = 0;
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
-	
-	
+
+
 	// mouse wheel for zoom in/out
 	const g2d = {};
 	g2d.zoom = 1.0;
-	
+
 	g2d.mouseWheel = function(e) {
 		g2d.deltaY = e.deltaY;
 		if ( g2d.deltaY > 0 ) g2d.zoom *= 0.95;
@@ -298,9 +288,9 @@ const js101 = (function(){ // ====================  js Module  =================
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
-		
+
 		animate();
-	
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -310,66 +300,62 @@ const js101 = (function(){ // ====================  js Module  =================
 			ctx.textBaseline = "bottom";
 			ctx.textAlign = "left";
 			ctx.lineWidth = 1;
-			
+
 			canvas.addEventListener("mousewheel", g2d.mouseWheel);
 		}
 	}
 
 
 	function animate() {
-		
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_theme );
 			[ p_Nmt, p_xLen, p_timeStep ] = theModule.getSysParam();
 		}
-		
+
 		if ( !pauseFlag ) {
 			theModule.evolve( v_nCalc );
 		} else if ( pauseFlag && stepFlag ) {
 			stepFlag = false;
 			theModule.evolve( v_nCalc );
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	function draw( ctx, dispMode ) {
 		const boxSize = 400;
 		const cx0 = xCanvasSize/2, cy0 = yCanvasSize/2-20, sc = boxSize/p_xLen*g2d.zoom;
-		
-		
+
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
+
 		// draw box
 		const bSize = boxSize*g2d.zoom;
 		ctx.strokeStyle = "#444444";
 		ctx.strokeRect( cx0-bSize/2, cy0-bSize/2, bSize, bSize );
-		
+
 		if ( dispMode==0 ) {
 			drawAOs( ctx, 0, cx0, cy0, sc );
 		} else if ( dispMode==1 ) {
 			drawAOs( ctx, 1, cx0, cy0, sc );
 		}
-		
+
 		// caption
 		const time = theModule.getSysTime();
 		ctx.fillStyle = "#888888";
 		ctx.fillText( `box = 10000 x 10000 (km)`, 20, yCanvasSize-30 );
-		ctx.fillText( `N = "${p_Nmt}`, 20, yCanvasSize-10 );
+		ctx.fillText( `N = ${p_Nmt}`, 20, yCanvasSize-10 );
 		ctx.fillText( `time = ${time.toFixed(1)} (s) = ${(time/3600/24).toFixed(3)}(days)`, 100, yCanvasSize-10 );
 		//document.getElementById("text_caption").innerHTML = "minimum molecular dynamics code"
-		
 	}
-	
+
 	function drawAOs( ctx, drawMode, cx0, cy0, sc ) {
-		const nn = p_Nmt, twoPi = 2.0*Math.PI, ts = 2000*p_timeStep;
-		
+		const nn=p_Nmt, twoPi=2.0*Math.PI, ts=2000*p_timeStep;
 		ctx.fillStyle = "rgb(180, 80, 0)";
 		for (let i=0; i<nn; i++) {
 			let x, y; 
@@ -388,7 +374,7 @@ const js101 = (function(){ // ====================  js Module  =================
 			}
 		}
 	}
-	
+
 	function drawLine(ctx, x1, y1, x2, y2, color) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -396,61 +382,58 @@ const js101 = (function(){ // ====================  js Module  =================
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	}
-	
-	
+
+
 	// --------------------  control  --------------------
 
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
-		
 		if ( pauseFlag==true ) {
 			document.getElementById("step_button").style.visibility = "visible";
 		} else {
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setTheme() {
 		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = true;
 	}
-	
+
 	function setDispMode() {
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
 	}
-	
+
 	function viewHome() {
 		g2d.zoom = 1.0;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:			main,			// main()
-		
-		// dom control
-		reset:			reset,			// reset()
-		pause:			pause,			// pause()
-		step:			step,			// step()
-		
-		setTheme:		setTheme,		// setTheme()
-		
-		setDispMode:	setDispMode,	// setDispMode()
-		viewHome:		viewHome,		// viewHome()
+		main:  main,  // main()
+
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step,  // step()
+
+		setTheme: setTheme, // setTheme()
+
+		setDispMode: setDispMode, // setDispMode()
+		viewHome: viewHome, // viewHome()
 	};
-	
+
 })(); // ====================  js101 module end  ====================
 
 
@@ -499,7 +482,7 @@ mouse-wheel to zoom in/out
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
 
 </body>
