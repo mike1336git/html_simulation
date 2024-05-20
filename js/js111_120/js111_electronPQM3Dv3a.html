@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js111_electronPQM3D
-//    Copyright(C) 2019-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2019-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2019.03.22 created, last updated on 2020.12.15
 //    ver 0.0.1  2021.10.13 v1, last updated on 2021.10.15
 //    ver 0.0.2  2021.11.08 v2, last updated on 2021.11.08
-//    ver 0.0.3  2023.05.18 v3, last updated on 2023.09.12
+//    ver 0.0.3  2023.05.18 v3, last updated on 2024.05.20
 //
 // -------------------- PQM3D: Periodic Quantum Mechanics 3D (explecit method)
 //
@@ -41,29 +41,29 @@
 const electronPQM3D = (function(){ // ====================  electronPQM3D Module  ====================
 
 	// atomic unit (au: atomic unit hBar=1,e=1,me=1,a0=1)
-	const g_auLength = 5.29177211e-11;				// (m) 1(au) = g_auLength (m)
-	const g_auTime = 2.418884326e-17;				// (s) 1(au) = g_auTime (s)
-	const g_auEnergy = 4.35974465e-18;				// (J) 1(au) = g_auEnergy (J)
-	const g_au2eV = 27.211386;						// (eV) 1(au) = 27.211386 (eV)
-	const g_nxMax = 64;								// g_NNx max
-	const g_nyMax = 64;								// g_NNy max
-	const g_nzMax = 64;								// g_NNz max
-	const g_nMax = 64;								// = Math.max(g_nxMax,g_nyMax,g_nzMax);
+	const g_auLength = 5.29177211e-11; // (m) 1(au) = g_auLength (m)
+	const g_auTime = 2.418884326e-17;  // (s) 1(au) = g_auTime (s)
+	const g_auEnergy = 4.35974465e-18; // (J) 1(au) = g_auEnergy (J)
+	const g_au2eV = 27.211386; // (eV) 1(au) = 27.211386 (eV)
+	const g_nxMax = 64; // g_NNx max
+	const g_nyMax = 64; // g_NNy max
+	const g_nzMax = 64; // g_NNz max
+	const g_nMax = 64;  // = Math.max(g_nxMax,g_nyMax,g_nzMax);
 
-	let g_NNx = 32;									// g_NNx*g_dx == x-boxsize
-	let g_NNy = 32;									// g_NNy*g_dy == y-boxsize
-	let g_NNz = 32;									// g_NNz*g_dz == xz-boxsize
-	let g_sysTime = 0.0;							// (au) system time
-	let g_dx = 1.0/2.0;								// (au) x-division
-	let g_dy = g_dx;								// (au) y-division
-	let g_dz = g_dx;								// (au) z-division
-	let g_timeStep = 0.1*(g_dx*g_dx);				// (au) time step dt
-	let g_dampingFactor = 0.2*g_dx*g_dx;			// steepest descent loss process
+	let g_NNx = 32; // g_NNx*g_dx == x-boxsize
+	let g_NNy = 32; // g_NNy*g_dy == y-boxsize
+	let g_NNz = 32; // g_NNz*g_dz == xz-boxsize
+	let g_sysTime = 0.0; // (au) system time
+	let g_dx = 1.0/2.0; // (au) x-division
+	let g_dy = g_dx;// (au) y-division
+	let g_dz = g_dx;// (au) z-division
+	let g_timeStep = 0.1*(g_dx*g_dx); // (au) time step dt
+	let g_dampingFactor = 0.2*g_dx*g_dx; // steepest descent loss process
 
-	const g_psi = dim4( g_nxMax, g_nyMax, g_nzMax, 2 );	// Re(g_psi)=g_psi[][][][0],Im(g_psi)=g_psi[][][][1]
-	const g_vv = dim3( g_nxMax, g_nyMax, g_nzMax );		// external potential g_vv[i][j][k]
-	const g_wrk = dim4( g_nxMax, g_nyMax, g_nzMax, 2 );	// work wave in steepestDescent()
-	
+	const g_psi = dim4( g_nxMax, g_nyMax, g_nzMax, 2 ); // Re(g_psi)=g_psi[][][][0],Im(g_psi)=g_psi[][][][1]
+	const g_vv = dim3( g_nxMax, g_nyMax, g_nzMax );     // external potential g_vv[i][j][k]
+	const g_wrk = dim4( g_nxMax, g_nyMax, g_nzMax, 2 ); // work wave in steepestDescent()
+
 	function dim3( ni, nj, nk ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -74,7 +74,7 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		}
 		return a;
 	}
-	
+
 	function dim4( ni, nj, nk, nl ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {
@@ -88,8 +88,8 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		}
 		return a;
 	}
-	
-	
+
+
 	//--------------------  set theme param.  --------------------
 
 	let g_drawWallFlag = 0;         // draw wall flag
@@ -121,19 +121,16 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 	}
 
 
-
 	//--------------------  set initial condition  --------------------
 
 	function setInitialCondition( theme ) {
-
 		setPotentialAndWave(theme);
 		setThemeParam(theme);
 		g_sysTime = 0.0;
 	}
 
-	function setPotentialAndWave(theme) {
+	function setPotentialAndWave( theme ) {
 		const x0=g_NNx*g_dx/2.0, y0=g_NNy*g_dy/2.0, z0=g_NNz*g_dz/2.0;
-
 		const themePotential = g_themeInfo[theme][1]; // 0:free 1:harmonic 2:H like
 		if (themePotential==0) { // 0:free V = 0 elsewhere
 			setBoxPotential();
@@ -159,7 +156,6 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 			const xPos = x0+3.0, yPos = y0-3.0, zPos = z0;
 			setProtonPotential(xPos,yPos,zPos);
 		}
-		
 
 		const themeWaveType = g_themeInfo[theme][2][0]; // 0:gaussian 1:H-state
 		if (themeWaveType==0) { // 0:gaussian
@@ -187,7 +183,6 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 
 	function setBoxPotential() { // type 0
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
-
 		for (let i=0; i<nnx; i++) {
 			for (let j=0; j<nny; j++) {
 				for (let k=0; k<nnz; k++) {
@@ -197,9 +192,8 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		}
 	}
 
-	function setHarmonicPotential(k0) { // type 1
+	function setHarmonicPotential( k0 ) { // type 1
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, dx=g_dx, dy=g_dy, dz=g_dz;
-
 		const aa = k0/(nnx*dx*nnx*dx/4);
 		const x0 = nnx*dx/2.0, y0 = nny*dy/2.0, z0 = nnz*dz/2.0;
 		for (let i=0; i<nnx; i++) {
@@ -212,9 +206,8 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		}
 	}
 
-	function setWellPotential(r0, v0) { // type 2
+	function setWellPotential( r0, v0 ) { // type 2
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, dx=g_dx, dy=g_dy, dz=g_dz;
-  
 		const x0 = Math.floor(nnx*dx/2.0+0.1), y0 = Math.floor(nny*dy/2.0+0.1), z0 = Math.floor(nnz*dz/2.0+0.1);
 		for (let i=0; i<nnx; i++) {
 			for (let j=0; j<nny; j++) {
@@ -227,9 +220,8 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		}
 	}
 
-	function setProtonPotential(xPos,yPos,zPos) { // type 3
+	function setProtonPotential( xPos, yPos, zPos ) { // type 3
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, dx=g_dx, dy=g_dy, dz=g_dz;
-
 		for (let i=0; i<nnx; i++) {
 			for (let j=0; j<nny; j++) {
 				for (let k=0; k<nnz; k++) {
@@ -242,9 +234,8 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		}
 	}
 
-	function setWallPotential(xPos, vThick, vHeight) { // type 4
+	function setWallPotential( xPos, vThick, vHeight ) { // type 4
 		const nnx=g_NNx,nny=g_NNy,nnz=g_NNz, dx=g_dx, dy=g_dy, dz=g_dz;
-
 		for (let i=0; i<nnx; i++) {
 			for (let j=0; j<nny; j++) {
 				for (let k=0; k<nnz; k++) {
@@ -255,10 +246,9 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		}
 	}
 
-	function setSlitPotential(wallPos, wallThick, wallHeight, slitWidth, slitSpan) { // type 5
+	function setSlitPotential( wallPos, wallThick, wallHeight, slitWidth, slitSpan ) { // type 5
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, dx=g_dx, dy=g_dy, dz=g_dz;
 		const ym = nny*dy/2.0, w = slitWidth/2.0, d = slitSpan/2.0;
-		
 		for (let i=0; i<nnx; i++) {
 			for (let j=0; j<nny; j++) {
 				for (let k=0; k<nnz; k++) {
@@ -274,9 +264,8 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		}
 	}
 
-	function setSpherePotential(xPos, yPos, zPos, r0, vHeight) { // type 6
+	function setSpherePotential( xPos, yPos, zPos, r0, vHeight ) { // type 6
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, dx=g_dx, dy=g_dy, dz=g_dz, sr2=r0*r0;
-		
 		for (let i=0; i<nnx; i++) {
 			for (let j=0; j<nny; j++) {
 				for (let k=0; k<nnz; k++) {
@@ -290,9 +279,8 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 
 	// --- wave
 
-	function setGaussianWave(xPos, yPos, zPos, wWidth, kx, ky, kz) { // wave type 0
+	function setGaussianWave( xPos, yPos, zPos, wWidth, kx, ky, kz ) { // wave type 0
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, dx=g_dx, dy=g_dy, dz=g_dz;
-		
 		for (let i=1; i<nnx-1; i++) {
 			for (let j=1; j<nny-1; j++) {
 				for (let k=1; k<nnz-1; k++) {
@@ -308,9 +296,8 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		normalize(g_psi);
 	}
 
-	function setHOrbitalWave(xPos, yPos, zPos, state) { // wave type 1
+	function setHOrbitalWave( xPos, yPos, zPos, state ) { // wave type 1
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, dx=g_dx, dy=g_dy, dz=g_dz;
-		
 		for (let i=1; i<nnx-1; i++) {
 			for (let j=1; j<nny-1; j++) {
 				for (let k=1; k<nnz-1; k++) {
@@ -346,7 +333,6 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 					} else if (state==13) { // 3drrz
 						phAb = ((x-xPos)*(x-xPos)-(y-yPos)*(y-yPos))*Math.exp( -r/3.0 );
 					}
-
 					const phPh = 0.0;
 					g_psi[i][j][k][0] = phAb*Math.cos(phPh);
 					g_psi[i][j][k][1] = phAb*Math.sin(phPh);
@@ -357,9 +343,8 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		normalize(g_psi);
 	}
 
-	function setWaveBoundary(ph) { // ph[][][][]
+	function setWaveBoundary( ph ) { // ph[][][][]
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
-
 		for (let i=0; i<nnx; i++) {
 			for (let j=0; j<nny; j++) {
 				ph[i][j][0][0] = 0.0;
@@ -389,8 +374,7 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 
 	//--------------------  time evolution  -------------------- 
 
-	function timeEvolution(lossSW) {
-
+	function timeEvolution( lossSW ) {
 		for (let i=0; i<4; i++) {
 			g_sysTime += g_timeStep;
 			phaseStep(g_psi,g_vv,0.5*g_timeStep);
@@ -399,18 +383,16 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 			kzStep(g_psi,g_timeStep);
 			phaseStep(g_psi,g_vv,0.5*g_timeStep);
 		}
-
 		if ( lossSW==1 ) steepestDescent(g_psi,g_vv,g_dampingFactor);
 	}
 
-	function kxStep(ph, deltat) { // ph[][][][]
+	function kxStep( ph, deltat ) { // ph[][][][]
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
 		const epsilonX = deltat/(g_dx*g_dx);
 		const alphaXRe = 0.5 * (1.0+Math.cos(epsilonX/2.0));
 		const alphaXIm = -0.5 * Math.sin(epsilonX/2.0);
 		const betaXRe = Math.sin(epsilonX/4.0)*Math.sin(epsilonX/4.0);
 		const betaXIm = 0.5 * Math.sin(epsilonX/2.0);
-
 		for (let j=0; j<nny; j++) {
 			for (let k=0; k<nnz; k++) {
 				for (let i=0; i<nnx-1; i+=2) {
@@ -431,8 +413,7 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 			}
 		}
 
-		function substepX(ph, i, i2, j, k) {
-
+		function substepX( ph, i, i2, j, k ) {
 			const xRe = ph[i][j][k][0], xIm = ph[i][j][k][1];
 			const yRe = ph[i2][j][k][0], yIm = ph[i2][j][k][1];
 			ph[i][j][k][0] = (alphaXRe*xRe-alphaXIm*xIm) + (betaXRe*yRe-betaXIm*yIm);
@@ -442,14 +423,13 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		}
 	}
 
-	function kyStep(ph, deltat) { // ph[][][][]
+	function kyStep( ph, deltat ) { // ph[][][][]
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
 		const epsilonY = deltat/(g_dy*g_dy);
 		const alphaYRe = 0.5 * (1.0+Math.cos(epsilonY/2.0));
 		const alphaYIm = -0.5 * Math.sin(epsilonY/2.0);
 		const betaYRe = Math.sin(epsilonY/4.0)*Math.sin(epsilonY/4.0);
 		const betaYIm = 0.5 * Math.sin(epsilonY/2.0);
-
 		for (let i=0; i<nnx; i++) {
 			for (let k=0; k<nnz; k++) {
 				for (let j=0; j<nny-1; j+=2) {
@@ -470,7 +450,7 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 			}
 		}
 
-		function substepY(ph, i, j, j2, k) {
+		function substepY( ph, i, j, j2, k ) {
 			const xRe = ph[i][j][k][0], xIm = ph[i][j][k][1];
 			const yRe = ph[i][j2][k][0], yIm = ph[i][j2][k][1];
 			ph[i][j][k][0] = (alphaYRe*xRe-alphaYIm*xIm) + (betaYRe*yRe-betaYIm*yIm);
@@ -480,14 +460,13 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		}
 	} 
 
-	function kzStep(ph, deltat) { // ph[][][][]
+	function kzStep( ph, deltat ) { // ph[][][][]
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
 		const epsilonZ = deltat/(g_dz*g_dz);
 		const alphaZRe = 0.5 * (1.0+Math.cos(epsilonZ/2.0));
 		const alphaZIm = -0.5 * Math.sin(epsilonZ/2.0);
 		const betaZRe = Math.sin(epsilonZ/4.0)*Math.sin(epsilonZ/4.0);
 		const betaZIm = 0.5 * Math.sin(epsilonZ/2.0);
-
 		for (let i=0; i<nnx; i++) {
 			for (let j=0; j<nny; j++) {
 				for (let k=0; k<nnz-1; k+=2) {
@@ -519,9 +498,8 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 	} 
 
 
-	function phaseStep(ph, vv, deltat) { // ph[][][][], vv[][][]
+	function phaseStep( ph, vv, deltat ) { // ph[][][][], vv[][][]
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
-		
 		for (let i=0; i<nnx; i++) {
 			for (let j=0; j<nny; j++) {
 				for (let k=0; k<nnz; k++) {
@@ -538,9 +516,8 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 
 	//--- set loss
 
-	function steepestDescent(ph, vv, damp) { // ph[][][][], vv[][][]
+	function steepestDescent( ph, vv, damp ) { // ph[][][][], vv[][][]
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, h2=2.0*g_dx*g_dx, wrk=g_wrk;
-
 		const ee = meanKinetic(ph) + meanPotential(ph,vv);
 		for (let i=0; i<nnx; i++) {
 			const ipp = (i+1)%nnx, imm = (i-1+nnx)%nnx;
@@ -569,7 +546,7 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 
 	//--- utility
 
-	function norm(ph) { // ph[][][][]
+	function norm( ph ) { // ph[][][][]
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
 		let p=0.0;
 		for (let i=0; i<nnx; i++) {
@@ -582,10 +559,9 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		return p*g_dx*g_dy*g_dz;
 	}
 
-	function normalize(ph) { // ph[][][][]
+	function normalize( ph ) { // ph[][][][]
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
 		const a = 1.0/Math.sqrt(norm(ph));
-
 		for (let i=0; i<nnx; i++) {
 			for (let j=0; j<nny; j++) {
 				for (let k=0; k<nnz; k++) {
@@ -596,7 +572,7 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		}
 	}
 
-	function meanPotential(ph, vv) { // ph[][][][], vv[][][]
+	function meanPotential( ph, vv ) { // ph[][][][], vv[][][]
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
 		let p=0.0;
 		for (let i=0; i<nnx; i++) {
@@ -609,7 +585,7 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		return p*g_dx*g_dy*g_dz;
 	}
 
-	function meanKinetic(ph) { // ph[][][][]
+	function meanKinetic( ph ) { // ph[][][][]
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, h2 =g_dx*g_dx;
 		let p=0.0;
 		for (let i=0; i<nnx; i++) {
@@ -629,7 +605,7 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		return -0.5*p*g_dx*g_dy*g_dz;
 	}
 
-	function probabilityRegion(ph, xBegin, xEnd) { // ph[][][][]
+	function probabilityRegion( ph, xBegin, xEnd ) { // ph[][][][]
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
 		let p=0.0;
 		for (let i=0; i<nnx; i++) {
@@ -645,44 +621,44 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 		return p*g_dx*g_dy*g_dz;
 	}
 
-	function psiDensity(i,j,k) {
+	function psiDensity( i, j, k ) {
 		return (g_psi[i][j][k][0]*g_psi[i][j][k][0]+g_psi[i][j][k][1]*g_psi[i][j][k][1]);
 	}
 
-	function psiPhase(i,j,k) { // 0...2PI
+	function psiPhase( i, j, k ) { // 0...2PI
 		return (Math.PI + Math.atan2(g_psi[i][j][k][1],g_psi[i][j][k][0])); // atan2(y,x)
 	}
 
-	function psiXCurrent(i,j,k) {
+	function psiXCurrent( i, j, k ) {
 		const ip = (i+1)%g_NNx, im = (i-1+g_NNx)%g_NNx;
 		const pRe = (g_psi[ip][j][k][1]-g_psi[im][j][k][1])/(2*g_dx);
 		const pIm = (-g_psi[ip][j][k][0]+g_psi[im][j][k][0])/(2*g_dx);
 		return (g_psi[i][j][k][0]*pRe + g_psi[i][j][k][1]*pIm)*g_dx*g_dy*g_dz;
 	}
 
-	function psiYCurrent(i,j,k) {
+	function psiYCurrent( i, j, k ) {
 		const jp = (j+1)%g_NNy, jm = (j-1+g_NNy)%g_NNy;
 		const pRe = (g_psi[i][jp][k][1]-g_psi[i][jm][k][1])/(2*g_dy);
 		const pIm = (-g_psi[i][jp][k][0]+g_psi[i][jm][k][0])/(2*g_dy);
 		return (g_psi[i][j][k][0]*pRe + g_psi[i][j][k][1]*pIm)*g_dx*g_dy*g_dz;
 	}
 
-	function psiZCurrent(i,j,k) {
+	function psiZCurrent( i, j, k ) {
 		const kp = (k+1)%g_NNz, km = (k-1+g_NNz)%g_NNz;
 		const pRe = (g_psi[i][j][kp][1]-g_psi[i][j][km][1])/(2*g_dz);
 		const pIm = (-g_psi[i][j][kp][0]+g_psi[i][j][km][0])/(2*g_dz);
 		return (g_psi[i][j][k][0]*pRe + g_psi[i][j][k][1]*pIm)*g_dx*g_dy*g_dz;
 	}
 
-	function psiRe(i,j,k) {
+	function psiRe( i, j, k ) {
 		return g_psi[i][j][k][0];
 	}
 
-	function psiIm(i,j,k) {
+	function psiIm( i, j, k ) {
 		return g_psi[i][j][k][1];
 	}
 
-	function Vext(i,j,k) {
+	function Vext( i, j, k ) {
 		return g_vv[i][j][k];
 	}
 
@@ -694,7 +670,6 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 
 	function setCloud() {
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz;
-
 		set_srnd();
 		for (let i=1; i<nnx-1; i++) {
 			for (let j=1; j<nny-1; j++) {
@@ -731,54 +706,54 @@ const electronPQM3D = (function(){ // ====================  electronPQM3D Module
 	//--------------------  public  --------------------
 
 	return {
-		init:			setInitialCondition,	// setInitialCondition( theme )
-		evolve:			timeEvolution,			// timeEvolution( lossSW )
-		
-		setCloud:		setCloud,				// setCloud()
-		
-		getAUinSI:		function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
-		getSysParam:	function() { return [ g_NNx, g_NNy, g_NNz, g_dx, g_timeStep ]; },
-		getDrawParam:	function(theme) { return g_themeInfo[theme][3]; }, // [ densMag, currMag, wallSW ]
-		getNow:			function() { return [ g_sysTime, norm(g_psi), meanKinetic(g_psi), meanPotential(g_psi,g_vv) ]; },
-		getPsiDensity:	psiDensity,				// psiDensity(i,j,k)			
-		getPsiPhase:	psiPhase,				// psiPhase(i,j,k)
-		getPsiCurrent:	function(i,j,k) { return [ psiXCurrent(i,j,k), psiYCurrent(i,j,k), psiZCurrent(i,j,k) ]; },	
-		getPsi:			function(i,j,k) { return [ g_psi[i][j][k][0], g_psi[i][j][k][1] ]; },
-		getVext:		function(i,j,k) { return g_vv[i][j][k]; },
-		getCloud:		function(i,j,k) { return g_cloud[i][j][k]; },
+		init:   setInitialCondition, // setInitialCondition( theme )
+		evolve: timeEvolution, // timeEvolution( lossSW )
+
+		setCloud: setCloud, // setCloud()
+
+		getAUinSI:  function() { return [ g_auLength, g_auTime, g_auEnergy, g_au2eV ]; },
+		getSysParam:function() { return [ g_NNx, g_NNy, g_NNz, g_dx, g_timeStep ]; },
+		getDrawParam: function(theme) { return g_themeInfo[theme][3]; }, // [ densMag, currMag, wallSW ]
+		getNow:     function() { return [ g_sysTime, norm(g_psi), meanKinetic(g_psi), meanPotential(g_psi,g_vv) ]; },
+		getPsiDensity: psiDensity, // psiDensity(i,j,k)			
+		getPsiPhase: psiPhase, // psiPhase(i,j,k)
+		getPsiCurrent: function(i,j,k) { return [ psiXCurrent(i,j,k), psiYCurrent(i,j,k), psiZCurrent(i,j,k) ]; },	
+		getPsi:     function(i,j,k) { return [ g_psi[i][j][k][0], g_psi[i][j][k][1] ]; },
+		getVext:    function(i,j,k) { return g_vv[i][j][k]; },
+		getCloud:   function(i,j,k) { return g_cloud[i][j][k]; },
 	}
 
 })(); // ====================  electronPQM3D end  ====================
 
 
 const js111 = (function(){ // ====================  js Module  ====================
-	
+
 	const theModule = electronPQM3D;
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel
-	let canvas;					// canvas2d
+	const xCanvasSize = 480; // in pixel
+	const yCanvasSize = 480;
+	let canvas;
 	let ctx;
-	
-	let v_theme = 1;			// 0:free space, 1:parabolic potential, 2:tunnel effect 3:step hill 4:step higher hill
-	let v_lossSW = 0;			// if lossSW==1, call lossEnergy()
-	
+
+	let v_theme = 1; // 0:free space, 1:parabolic potential, 2:tunnel effect 3:step hill 4:step higher hill
+	let v_lossSW = 0; // if lossSW==1, call lossEnergy()
+
 	let p_NNx, p_NNy, p_NNz, p_dx, p_timeStep; // = theModule.getSysParam();
-	
+
 	let dispMode = 1;
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
 	let inStepFlag = false;
-	
-	
+
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
 		viewHome();
-		
+
 		animate();
-		
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -791,10 +766,9 @@ const js111 = (function(){ // ====================  js Module  =================
 			g3d.setMouseOnCanvas( canvas ); // 3D graphics
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
 		if ( resetFlag ) {
 			resetFlag = false;
 			theModule.init( v_theme );
@@ -804,7 +778,7 @@ const js111 = (function(){ // ====================  js Module  =================
 			// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
 			g3d.init( p_NNx, p_NNy, p_NNz, p_dx, xCanvasSize, yCanvasSize, 300, 20 );
 		}
-		
+
 		if ( !pauseFlag ) {
 			theModule.evolve( v_lossSW );
 		} else if ( pauseFlag && stepFlag ) {
@@ -812,46 +786,43 @@ const js111 = (function(){ // ====================  js Module  =================
 			theModule.evolve( v_lossSW );
 			inStepFlag = true;
 		}
-		
+
 		draw( ctx, dispMode );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	// --------------------  draw  --------------------
-	
+
 	const gColor = { orb:"#dddd00", dens:"#dd88dd",
 					Vext:"#00dd00", Veff:"#0088ff", Vh:"#4444ff", Vxc:"#8800ff", Vx:"#aa00ff",Vc:"#8888ff" };
-	
+
 	function draw( ctx, dispMode ) {
 		const kc = p_NNz/2;
-		
 		let auLength, auTime, auEnergy, au2eV, sysTime, norm, kineticEnergy, potentialEnergy;
 		[ auLength, auTime, auEnergy, au2eV ] = theModule.getAUinSI();
 		[ sysTime, norm, kineticEnergy, potentialEnergy ] = theModule.getNow();
 		let densMag, currMag, wallSW;
 		[ densMag, currMag, wallSW ] = theModule.getDrawParam(v_theme);
-		
 		const densFunc = function(i,j,k) { return densMag*theModule.getPsiDensity(i,j,k); };
-		
+
 		// clear
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
-		
+
 		if (dispMode==0) {
 			dispText( "3D psi density |psi(x,y,z)|^2" );
 			// drawField3D(ctx, rotAngle, fieldFunc, drawMode, wall );
 			// drawMode:  0:density, 1:current, 2:phase
 			// wall: 0:not draw wall, 1:draw wall 
 			drawField3D( ctx, 0.0, densFunc, 0, wallSW );
-			
+
 		} else if (dispMode==1) {
 			dispText( "3D phase(x,y,z) (angle:Im(psi)/Re(psi))" );
 			const phaseFunc = function(i,j,k) { return theModule.getPsiPhase(i,j,k)*radian; };
 			// drawField3D(ctx, rotAngle, fieldFunc, drawMode, wall );
 			drawField3D( ctx, 0.0, densFunc, 2, wallSW );
-			
+
 		} else if (dispMode==2) {
 			dispText( "3D probability current(x,y,z)" );
 			// drawField3D(ctx, rotAngle, fieldFunc, drawMode, wall, scale, xPos, yPos );
@@ -864,19 +835,19 @@ const js111 = (function(){ // ====================  js Module  =================
 			const cloudFunc = function(i,j,k) { return 2.0*theModule.getCloud(i,j,k); };
 			// drawField3D(ctx, rotAngle, fieldFunc, drawMode, wall );
 			drawField3D( ctx, 0.0, cloudFunc, 0, wallSW );
-			
+
 		} else if (dispMode==4) {
 			dispText( "grid2d Re[psi(x,y,0)]" );
 			const densXYFunc = function(i,j) { return 20.0*theModule.getPsi(i,j,kc)[0]; };
 			// drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
 			drawGrid2D( ctx, 0.0, densXYFunc, 0.5, 1 );
-			
+
 		} else if (dispMode==5) {
 			dispText( "grid2d density(x,y,0)" );
 			const zFunc = function(i,j) { return 50.0*theModule.getPsiDensity(i,j,kc) };
 			// drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
 			drawGrid2D( ctx, 0.0, zFunc, 0.5, 1 );
-			
+
 		} else if (dispMode==6) {
 			dispText( "grid2d (phase+Vext)(x,y,0)" );
 			const zFunc = function(i,j) { return 50.0*theModule.getPsiDensity(i,j,kc) + 0.5*theModule.getVext(i,j,kc) };
@@ -887,27 +858,27 @@ const js111 = (function(){ // ====================  js Module  =================
 			}
 			// drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc, scale, xPos, yPos [, showBox] )
 			drawGrid2D( ctx, 0.0, zFunc, colorFunc, 1 );
-			
+
 		} else if (dispMode==7) { // 3D view - Vext(x,y)
 			dispText( "grid2d external potential: Vext(x,y,0)" );
 			const zFunc = function(i,j) { return 0.5*theModule.getVext(i,j,kc); }; 
 			// drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
 			drawGrid2D( ctx, 0.0, zFunc, gColor.Vext, 1 );
 		}
-		
+
 		ctx.fillStyle = "#888888";
 		ctx.fillText(`box = ${p_NNx*p_dx} x ${p_NNy*p_dx} x ${p_NNz*p_dx} (au)`, 20, yCanvasSize-30);
 		ctx.fillText(`norm = ${norm.toFixed(16)}`, 240, yCanvasSize-30);
 		ctx.fillText(`time = ${sysTime.toFixed(2)}`, 20, yCanvasSize-10);
 		ctx.fillText(`Energy = ${(kineticEnergy+potentialEnergy).toFixed(4)}`, 240, yCanvasSize-10);
-		
+
 		function dispText( str ) {
 			ctx.fillStyle = "#888888";
 			ctx.fillText( str, 20, yCanvasSize-50 );
 		}
 	}
-	
-	
+
+
 	// function drawField3D(ctx, rotAngle, fieldFunc, drawMode, wall );
 	// drawMode:  0:density, 1:current, 2:phase
 	// wall: 0:not draw wall, 1:draw wall 
@@ -916,7 +887,7 @@ const js111 = (function(){ // ====================  js Module  =================
 		const nnx=g_NNx, nny=g_NNy, nnz=g_NNz, dx=g_dx, boxSize=300.0, hh=boxSize/g_NNx,zoom=g3d.zoom;
 		const cmag = drawField3D.currentMag, radian = 180.0/Math.PI;
 		const threshold = drawField3D.threshold;
-	
+
 		g3d.set3DRotateXY(rotAngle);
 		g3d.plotFarEdge(ctx, sc,xp,yp,"#444400"); // dark yellow
 		for (let ii=0; ii<nnx; ii++) {
@@ -925,7 +896,7 @@ const js111 = (function(){ // ====================  js Module  =================
 				let j=jj; if (g3d.pzApex[2]-g3d.pzApex[0]<0) j=nny-jj-1;
 				for (let kk=0; kk<nnz; kk++) {
 					let k=kk; if (g3d.pzApex[4]-g3d.pzApex[0]<0) k=nnz-kk-1;
-					
+
 					if ( wall==1 ) {
 						const vv = theModule.getVext(i,nny-j-1,k);
 						if ( Math.abs(vv)>1.0 ) {
@@ -934,7 +905,7 @@ const js111 = (function(){ // ====================  js Module  =================
 							g3d.drawRotatedDisc( ctx, i*dx, j*dx, k*dx, r*zoom, color, sc, xp, yp );
 						}
 					}
-					
+
 					const f = fieldFunc(i,nny-j-1,k);
 					const r = Math.min(Math.pow(Math.abs(f),0.333),0.9*hh);
 					if (r>=threshold) {
@@ -956,9 +927,7 @@ const js111 = (function(){ // ====================  js Module  =================
 							const lineColor = (cx>0) ? "#0066ff" : "#ff2222";
 							g3d.drawRotatedLine(ctx, x, y, z, x+cx*cmag, y-cy*cmag, z+cz*cmag, lineColor, sc, xp, yp );
 						}
-						
 					}
-					
 				}
 			}
 		}
@@ -970,13 +939,13 @@ const js111 = (function(){ // ====================  js Module  =================
 	}
 	drawField3D.threshold = 0.7;
 	drawField3D.currentMag = 1000.0;
-	
-	
+
+
 	// drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc [, showBox] )
 	function drawGrid2D( ctx, rotAngle, zFunc, colorFactor, inc, showBox ) {
 		let sc, xp, yp; [ sc, xp, yp ] = g3d.scxpypFunc();
 		const nnx = g_NNx, nny = g_NNy, threshold = drawGrid2D.threshold;
-		
+
 		g3d.set3DRotateXY(rotAngle);
 		if ( showBox || showBox==undefined ) g3d.plotFarEdge(ctx, sc,xp,yp,"rgb(60,60,0)"); // dark yellow
 		for (let jj=0; jj<nny; jj+=inc) {
@@ -1024,45 +993,45 @@ const js111 = (function(){ // ====================  js Module  =================
 			}
 		}
 		if ( showBox || showBox==undefined ) g3d.plotNearEdge(ctx, sc,xp,yp,"rgb(160,160,0)"); //yellow
-		
+
 		ctx.font = "12px 'sans-serif'";
 		ctx.fillStyle = "rgb(80,80,80)";
 		ctx.fillText("Ax="+(g3d.Ax*180/Math.PI).toFixed(1)+", Ay="+(g3d.Ay*180/Math.PI).toFixed(1), 10, 15);
 		ctx.font = "16px 'sans-serif'";
 	};
 	drawGrid2D.threshold = 0.005
-	
-	
+
+
 	// --------------------  graphics 3D (field) module  --------------------
 	//
 	// ver 0.0.1  2018.12.16  last updated on 2023.03.01
 	// ver 0.0.2  2023.03.03  last updated on 2023.06.01
-	
+
 	let g_NNx, g_NNy, g_NNz, g_dx, g_dy, g_dz, g_xCanvasSize, g_yCanvasSize, g_xBoxSize, g_yShift;
-	
-	const g3d = {};				// namespace of graphic 3D module
-	
-	g3d.mouseDownFlag = 0;		// 1:on mouse down, 0:else
-	g3d.x_mouse = 0;			// x-position of mouse
-	g3d.y_mouse = 0;			// y-position of mouse
-	g3d.x0_mouse = 0;			// drag-started x-position of mouse
-	g3d.y0_mouse = 0;			// drag-started y-position of mouse
+
+	const g3d = {};  // namespace of graphic 3D module
+
+	g3d.mouseDownFlag = 0; // 1:on mouse down, 0:else
+	g3d.x_mouse = 0; // x-position of mouse
+	g3d.y_mouse = 0; // y-position of mouse
+	g3d.x0_mouse = 0;// drag-started x-position of mouse
+	g3d.y0_mouse = 0;// drag-started y-position of mouse
 	g3d.zoom = 1.0;
-	
-	g3d.xMax = 0.0;				// x-length of box
-	g3d.yMax = 0.0;				// y-length of box
-	g3d.zMax = 0.0;				// z-length of box
-	g3d.cx0 = 0.0;				// x-component of rotate center
-	g3d.cy0 = 0.0;				// y-component of rotate center
-	g3d.cz0 = 0.0;				// z-component of rotate center
-	g3d.Ax = -Math.PI/15.0;		// rotate angle around x-axis
-	g3d.Ay = -Math.PI/15.0;		// rotate angle around y-axis
-	g3d.ddAy = 0.0;				// Ay change rate for auto-rotate: eg. dday=0.5*Math.PI/180
-	g3d.cosAx = 0.0;			// cosAx=Math.cos(Ax)
-	g3d.sinAx = 0.0;			// sinAx=Math.sin(Ax)
-	g3d.cosAy = 0.0;			// cosAy=Math.cos(Ay)
-	g3d.sinAy = 0.0;			// sinAy=Math.sin(Ay)
-	
+
+	g3d.xMax = 0.0;  // x-length of box
+	g3d.yMax = 0.0;  // y-length of box
+	g3d.zMax = 0.0;  // z-length of box
+	g3d.cx0 = 0.0;   // x-component of rotate center
+	g3d.cy0 = 0.0;   // y-component of rotate center
+	g3d.cz0 = 0.0;   // z-component of rotate center
+	g3d.Ax = -Math.PI/15.0; // rotate angle around x-axis
+	g3d.Ay = -Math.PI/15.0; // rotate angle around y-axis
+	g3d.ddAy = 0.0;  // Ay change rate for auto-rotate: eg. dday=0.5*Math.PI/180
+	g3d.cosAx = 0.0; // cosAx=Math.cos(Ax)
+	g3d.sinAx = 0.0; // sinAx=Math.sin(Ax)
+	g3d.cosAy = 0.0; // cosAy=Math.cos(Ay)
+	g3d.sinAy = 0.0; // sinAy=Math.sin(Ay)
+
 	g3d.xApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
 	g3d.yApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
 	g3d.zApex = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0];
@@ -1072,9 +1041,9 @@ const js111 = (function(){ // ====================  js Module  =================
 	g3d.boxApex = [[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1], [1,0,1], [0,1,1], [1,1,1] ];
 	g3d.boxEdge = [[0,1,9], [0,2,9], [0,4,9], [1,3,9], [1,5,9], [2,3,9], 
 					[2,6,9], [3,7,9], [4,5,9], [4,6,9], [5,7,9], [6,7,9] ];
-	
+
 	//--- set mouse on canvas
-	
+
 	// g3d.setMouseOnCanvas( canvas );
 	g3d.setMouseOnCanvas = function( canvas ) {
 		canvas.addEventListener('mousemove', g3d.mouse_move);
@@ -1082,10 +1051,9 @@ const js111 = (function(){ // ====================  js Module  =================
 		canvas.addEventListener('mouseup', g3d.mouse_up);
 		canvas.addEventListener("mousewheel", g3d.mouseWheel);
 	};
-	
-	g3d.mouse_move = function(e) {
-		const pi = Math.PI;
 
+	g3d.mouse_move = function(e) {
+		const pi=Math.PI;
 		if (g3d.mouseDownFlag==1) {
 			g3d.x_mouse = e.clientX;
 			g3d.y_mouse = e.clientY;
@@ -1100,7 +1068,7 @@ const js111 = (function(){ // ====================  js Module  =================
 			g3d.y0_mouse = g3d.y_mouse;
 		}
 	};
-	
+
 	g3d.mouse_down = function(e) {
 		if (g3d.mouseDownFlag==0) {
 			g3d.x0_mouse = e.clientX;
@@ -1110,13 +1078,13 @@ const js111 = (function(){ // ====================  js Module  =================
 			g3d.mouseDownFlag = 1;
 		}
 	};
-	
+
 	g3d.mouse_up = function(e) {
 		if (g3d.mouseDownFlag==1) {
 			g3d.mouseDownFlag = 0;
 		}
 	};
-	
+
 	g3d.mouseWheel = function(e) {
 		g3d.deltaY = e.deltaY;
 		if ( g3d.deltaY > 0 ) g3d.zoom *= 0.95;
@@ -1124,9 +1092,9 @@ const js111 = (function(){ // ====================  js Module  =================
 		if ( g3d.zoom<0.5 ) g3d.zoom = 0.5;
 		if ( g3d.zoom>2.0 ) g3d.zoom = 2.0;
 	};
-	
+
 	//--- 3D graphics aid
-	
+
 	// g3d.init( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift );
 	g3d.init = function( NNx, NNy, NNz, dx, xCanvasSize, yCanvasSize, xBoxSize, yShift ) {
 		g_NNx = NNx; g_NNy = NNy; g_NNz = NNz;
@@ -1136,7 +1104,7 @@ const js111 = (function(){ // ====================  js Module  =================
 		g_yShift = (yShift==undefined) ? 20 : yShift;
 		g3d.setSize();
 	}
-	
+
 	g3d.setSize = function() {
 		g3d.xMax = g_NNx*g_dx;		// x-length of box
 		g3d.yMax = g_NNy*g_dy;		// y-length of box
@@ -1145,13 +1113,13 @@ const js111 = (function(){ // ====================  js Module  =================
 		g3d.cy0 = 0.5*g3d.yMax;		// y-component of rotate center
 		g3d.cz0 = 0.5*g3d.zMax;		// z-component of rotate center
 	};
-	
+
 	// g3d.setRotateAngle( AxInDegree, AyInDegree );
 	g3d.setRotateAngle = function( AxInDegree, AyInDegree ) {
 		g3d.Ax = AxInDegree*Math.PI/180.0;
 		g3d.Ay = AyInDegree*Math.PI/180.0;
 	};
-	
+
 	// g3d.scxpypFunc();
 	g3d.scxpypFunc = function() {
 		const xBoxSize = g_xBoxSize;
@@ -1160,7 +1128,7 @@ const js111 = (function(){ // ====================  js Module  =================
 		const sc = xBoxSize/(g_NNx*g_dx)*g3d.zoom;
 		return [ sc, xp, yp ];
 	}
-	
+
 	g3d.set3DRotateXY = function(rotateRateOfAyInDegree) {
 		g3d.ddAy = rotateRateOfAyInDegree*Math.PI/180.0;
 		g3d.Ay= g3d.Ay + g3d.ddAy; // auto-rotate : if (ddAy==0.0), stop
@@ -1171,7 +1139,7 @@ const js111 = (function(){ // ====================  js Module  =================
 		g3d.rotateApexXY();     // box Apex rotate--> pxApex[i],pyApex[i],pzApex[i]
 		g3d.markFarEdge();      // boxEdge[iEdge][2]=1:far side edge or 0:near side edge
 	};
-	
+
 	g3d.setBox = function() {
 		for (let i=0; i<8; i++) {
 			g3d.xApex[i] = g3d.boxApex[i][0]*g3d.xMax;
@@ -1179,7 +1147,7 @@ const js111 = (function(){ // ====================  js Module  =================
 			g3d.zApex[i] = g3d.boxApex[i][2]*g3d.zMax;
 		}
 	};
-	
+
 	g3d.setRotateXY = function(angleX,angleY) {
 		g3d.cosAx = Math.cos(angleX);
 		g3d.sinAx = Math.sin(angleX);
@@ -1189,17 +1157,16 @@ const js111 = (function(){ // ====================  js Module  =================
 		g3d.cy0 = 0.5*g3d.yMax;
 		g3d.cz0 = 0.5*g3d.zMax;
 	};
-	
+
 	g3d.rotateApexXY = function() { // rotate box apex
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		for (let i=0; i<8; i++) {
 			g3d.pxApex[i] = cosAy*(g3d.xApex[i]-cx0)+sinAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cx0;
 			g3d.pyApex[i] = cosAx*(g3d.yApex[i]-cy0)-sinAx*(g3d.zApex[i]-cz0) + cy0;
 			g3d.pzApex[i] =-sinAy*(g3d.xApex[i]-cx0)+cosAy*(sinAx*(g3d.yApex[i]-cy0)+cosAx*(g3d.zApex[i]-cz0))+cz0;
 		}
 	};
-	
+
 	g3d.markFarEdge = function() {
 		//seek far apex --> iMin
 		let zMin = g3d.pzApex[0];
@@ -1216,26 +1183,24 @@ const js111 = (function(){ // ====================  js Module  =================
 			if (g3d.boxEdge[iEdge][0]==iMin || g3d.boxEdge[iEdge][1]==iMin) g3d.boxEdge[iEdge][2] = 1;
 		}
 	};
-	
+
 	g3d.drawRotatedDisc = function(ctx, x,y,z,r,color,sc,xp,yp) {
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		const x1 = cosAy*(x-cx0)+sinAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cx0
 		const y1 = cosAx*(y-cy0)-sinAx*(z-cz0) + cy0
 		//z1 =-sinAy*(x-cx0)+cosAy*(sinAx*(y-cy0)+cosAx*(z-cz0)) + cz0
 		g3d.drawDisc(ctx, x1*sc+xp,y1*sc+yp,r,color);
 	};
-	
+
 	g3d.drawRotatedLine = function(ctx, x1,y1,z1,x2,y2,z2,color,sc,xp,yp) {
-		const cosAx=g3d.cosAx,sinAx=g3d.sinAx,cosAy=g3d.cosAy,sinAy=g3d.sinAy,cx0=g3d.cx0,cy0=g3d.cy0,cz0=g3d.cz0;
-		
+		const cosAx=g3d.cosAx, sinAx=g3d.sinAx, cosAy=g3d.cosAy, sinAy=g3d.sinAy, cx0=g3d.cx0, cy0=g3d.cy0, cz0=g3d.cz0;
 		const x1p = cosAy*(x1-cx0)+sinAy*(sinAx*(y1-cy0)+cosAx*(z1-cz0)) + cx0
 		const y1p = cosAx*(y1-cy0)-sinAx*(z1-cz0) + cy0
 		const x2p = cosAy*(x2-cx0)+sinAy*(sinAx*(y2-cy0)+cosAx*(z2-cz0)) + cx0
 		const y2p = cosAx*(y2-cy0)-sinAx*(z2-cz0) + cy0
 		g3d.drawLine(ctx, x1p*sc+xp,y1p*sc+yp,x2p*sc+xp,y2p*sc+yp,color);
 	};
-	
+
 	g3d.plotNearEdge = function(ctx, sc,xp,yp,color) {
 		for (let iEdge=0; iEdge<12; iEdge++) {
 			if (g3d.boxEdge[iEdge][2]==0) { //far edge mark = 1
@@ -1243,7 +1208,7 @@ const js111 = (function(){ // ====================  js Module  =================
 			}
 		}
 	};
-	
+
 	g3d.plotFarEdge = function(ctx, sc,xp,yp,color) {
 		for (let iEdge=0; iEdge<12; iEdge++) {
 			if (g3d.boxEdge[iEdge][2]==1) { //far edge mark = 1
@@ -1251,7 +1216,7 @@ const js111 = (function(){ // ====================  js Module  =================
 			}
 		}
 	};
-	
+
 	g3d.plotEdge = function(ctx, iEdge,sc,xp,yp,color) {
 		let iApex = g3d.boxEdge[iEdge][0];
 		const x1=g3d.pxApex[iApex]*sc+xp, y1=g3d.pyApex[iApex]*sc+yp;
@@ -1259,7 +1224,7 @@ const js111 = (function(){ // ====================  js Module  =================
 		const x2=g3d.pxApex[iApex]*sc+xp, y2=g3d.pyApex[iApex]*sc+yp;
 		g3d.drawLine(ctx, x1, y1, x2, y2, color);
 	};
-	
+
 	g3d.drawLine = function(ctx, x1, y1, x2, y2, color) {
 		ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -1267,74 +1232,72 @@ const js111 = (function(){ // ====================  js Module  =================
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	};
-	
+
 	g3d.drawDisc = function(ctx, x, y, r, color) {
 		ctx.fillStyle = color;
 		ctx.beginPath();
 		ctx.arc(x, y, r, 0, 2*Math.PI, false);
 		ctx.fill();
 	};
-	
+
 	// --------------------  end of graphics 3D (field) module  --------------------
-	
-	
+
+
 	// --------------------  control  --------------------
-	
+
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
-		
 		if ( pauseFlag==true ) {
 			document.getElementById("step_button").style.visibility = "visible";
 		} else {
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setTheme() {  // select theme
 		v_theme = 0 + document.getElementById("slct_theme").selectedIndex;
 		resetFlag = true;
 	}
-	
+
 	function setLossSW() {  // select lossSW
 		v_lossSW = 0 + document.getElementById("slct_lossSW").selectedIndex;
 	}
-	
+
 	function setDispMode() {  // select dispMode
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
 	}
-	
+
 	function viewHome() {
 		g3d.setRotateAngle(10,-15);
 		g3d.zoom = 1.0;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:				main,				// main()
-		
-		reset:				reset,				// reset()
-		pause:				pause,				// pause()
-		step:				step,				// step()
-		
-		setTheme:			setTheme,			// setTheme()
-		setLossSW:			setLossSW,			// setLossSW()
-		setDispMode:		setDispMode,		// setDispMode()
-		viewHome:			viewHome,			// viewHome()
+		main:  main,  // main()
+
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step,  // step()
+
+		setTheme: setTheme, // setTheme()
+		setLossSW:setLossSW, // setLossSW()
+		setDispMode: setDispMode, // setDispMode()
+		viewHome: viewHome, // viewHome()
 	};
-	
+
 })(); // ====================  js111 end  ====================
 
 // event
@@ -1396,7 +1359,7 @@ window.addEventListener('load', js.main );
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
 
 </body>
