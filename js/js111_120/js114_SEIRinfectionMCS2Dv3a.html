@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js114_SEIRinfectionMCS2D
-//    Copyright(C) 2020-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2020-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2020.12.26 created, last updated on 2021.02.18
 //    ver 0.0.1  2020.10.18 v1, last updated on 2021.10.19
 //    ver 0.0.2  2021.11.08 v2, last updated on 2021.11.08
-//    ver 0.0.3  2023.05.19 v3, last updated on 2023.09.13
+//    ver 0.0.3  2023.05.19 v3, last updated on 2024.05.23
 //
 // -------------------- SEIR infection model - monte-Cerlo simulation
 //
@@ -127,51 +127,51 @@
 */
 
 const SEIRinfectionMCS2D = (function(){ // ====================  SEIRinfectionMCS2D Module  ====================
-	
-	const g_nMax = 100000;					// walker array max
-	const g_ntMax = 21600;					// max times of data record array (step dt)
-	const g_dayvdt = 20;					// 1(day) = g_dayvdt*dt
-	
-	let g_NNp = 40000;						// number of walker
-	let g_NNx = 360;						// x-division of the field
-	let g_NNy = 360;						// y-division of the field
-	
-	let g_sysTime = 0.0;					// (day) system time
-	let g_dt = 1.0/g_dayvdt;				// (day) time step dt
-	let g_incubationPeriod = 5.0;			// (day) mean incubation period
-	let g_infectedPeriod = 10.0;			// (day) mean infected period
-	let g_infectiusProb = 0.04;				// infectius probability per one contact 
-	let g_sigma = 1.0/g_incubationPeriod;	// (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
-	let g_gamma = 1.0/g_infectedPeriod;		// (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
-	
-	let g_nPop = g_NNp;						// nPop = S+E+I+R number of walker
-	let g_susceptible = g_nPop-30;			// number of susceptible walker
-	let g_exposed = 30;						// number of exposed walker
-	let g_infectius = 0;					// number of infectius walker
-	let g_removed = 0;						// number of removed walker
-	let g_onsetPerson = 0;					// number of onset walker
-	let g_nContact = 0;						// total number of contact per dt ( nContact ~ NNp*(NNp/(NNx*NNy)) )
+
+	const g_nMax = 100000; // walker array max
+	const g_ntMax = 21600; // max times of data record array (step dt)
+	const g_dayvdt = 20; // 1(day) = g_dayvdt*dt
+
+	let g_NNp = 40000; // number of walker
+	let g_NNx = 360; // x-division of the field
+	let g_NNy = 360; // y-division of the field
+
+	let g_sysTime = 0.0; // (day) system time
+	let g_dt = 1.0/g_dayvdt; // (day) time step dt
+	let g_incubationPeriod = 5.0; // (day) mean incubation period
+	let g_infectedPeriod = 10.0; // (day) mean infected period
+	let g_infectiusProb = 0.04; // infectius probability per one contact 
+	let g_sigma = 1.0/g_incubationPeriod; // (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
+	let g_gamma = 1.0/g_infectedPeriod; // (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
+
+	let g_nPop = g_NNp; // nPop = S+E+I+R number of walker
+	let g_susceptible = g_nPop-30; // number of susceptible walker
+	let g_exposed = 30; // number of exposed walker
+	let g_infectius = 0; // number of infectius walker
+	let g_removed = 0; // number of removed walker
+	let g_onsetPerson = 0; // number of onset walker
+	let g_nContact = 0; // total number of contact per dt ( nContact ~ NNp*(NNp/(NNx*NNy)) )
 	let g_removedRatio = 0.0;
 	let g_ss0 = g_susceptible;
-	
-	const g_field = dimInt2( g_NNx, g_NNy );	// g_field[i][j]  1...NNp:walker number,  0:free space, -1:wall
-	const g_status = dimInt1( g_nMax );			// g_status[i] 0:susceptible, 1:exposed, 2:infectius, 3:removed
-	const g_ix = dimInt1( g_nMax );				// g_ix[i] x-position of i-th walker
-	const g_iy = dimInt1( g_nMax );				// g_iy[i] y-position of i-th walker
-	
-	const g_pS = dimInt1( g_ntMax );			// (person) susceptible
-	const g_pE = dimInt1( g_ntMax );			// (person) exposed
-	const g_pI = dimInt1( g_ntMax );			// (person) infectius
-	const g_pR = dimInt1( g_ntMax );			// (person) removed
-	const g_pN = dimInt1( g_ntMax );			// (person) total = S+E+I+R
-	const g_onsetvdt = dimInt1( g_ntMax );		// (person) onset person per dt
-	const g_onsetvday = dimInt1( g_ntMax );		// (person) onset person per day
-	const g_nContactvdt = dimInt1( g_ntMax );	// number of contact per dt
-	
+
+	const g_field = dimInt2( g_NNx, g_NNy ); // g_field[i][j]  1...NNp:walker number,  0:free space, -1:wall
+	const g_status = dimInt1( g_nMax ); // g_status[i] 0:susceptible, 1:exposed, 2:infectius, 3:removed
+	const g_ix = dimInt1( g_nMax ); // g_ix[i] x-position of i-th walker
+	const g_iy = dimInt1( g_nMax ); // g_iy[i] y-position of i-th walker
+
+	const g_pS = dimInt1( g_ntMax ); // (person) susceptible
+	const g_pE = dimInt1( g_ntMax ); // (person) exposed
+	const g_pI = dimInt1( g_ntMax ); // (person) infectius
+	const g_pR = dimInt1( g_ntMax ); // (person) removed
+	const g_pN = dimInt1( g_ntMax ); // (person) total = S+E+I+R
+	const g_onsetvdt = dimInt1( g_ntMax ); // (person) onset person per dt
+	const g_onsetvday = dimInt1( g_ntMax ); // (person) onset person per day
+	const g_nContactvdt = dimInt1( g_ntMax ); // number of contact per dt
+
 	function dimInt1( n ) {
 		return new Int32Array( n );
 	}
-	
+
 	function dimInt2( ni, nj ) {
 		let a = [] ;
 		for (let i=0; i<ni; i++) {  
@@ -179,16 +179,15 @@ const SEIRinfectionMCS2D = (function(){ // ====================  SEIRinfectionMC
 		}
 		return a;
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
 	
 	function setInitialCondition( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio ) {
-		
 		setParam( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio );
-		
+
 		g_sysTime = 0;						// (day) system time
-		
+
 		g_nPop = g_NNp;						// nPop = S + E + I + R
 		g_removed = Math.floor(g_nPop*g_removedRatio);	// number of removed walkers
 		g_exposed = 30;						// number of exposed walkers
@@ -197,12 +196,12 @@ const SEIRinfectionMCS2D = (function(){ // ====================  SEIRinfectionMC
 		g_onsetPerson = 0;					// number of onset walker
 		g_nContact = 0;						// number of contact per dt
 		g_ss0 = g_susceptible;				// S(0): initial number of susceptible walkers
-		
+
 		clearField();
 		clearPop();
 		setWalkers(g_nPop,g_exposed,g_removedRatio);
 	}
-	
+
 	function setParam( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio ) {
 		g_infectiusProb = v_infectiusProb;	// infectius probability per one contact
 		g_sigma = v_sigma;					// (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
@@ -210,7 +209,7 @@ const SEIRinfectionMCS2D = (function(){ // ====================  SEIRinfectionMC
 		g_NNp = v_popDens;					// nPop = S+E+I+R number of walkers
 		g_removedRatio = v_removedRatio;	// initial removed ratio: removed(t==0) = removedRatio*N
 	}
-	
+
 	function clearField() {
 		const nnx=g_NNx, nny=g_NNy;
 		for (let i=0; i<nnx; i++) {
@@ -219,7 +218,7 @@ const SEIRinfectionMCS2D = (function(){ // ====================  SEIRinfectionMC
 			}
 		}
 	}
-	
+
 	function clearPop() {
 		const nt=g_ntMax;
 		for (let i=0; i<nt; i++) {
@@ -233,8 +232,8 @@ const SEIRinfectionMCS2D = (function(){ // ====================  SEIRinfectionMC
 			g_nContactvdt[i] = 0;
 		}
 	}
-	
-	function setWalkers(nn, initExposedNum,removedRatio) {
+
+	function setWalkers( nn, initExposedNum, removedRatio ) {
 		const rr0 = nn*removedRatio;
 		// set susceptible nn walkers
 		for (let i=1; i<=nn; i++) {
@@ -262,20 +261,19 @@ const SEIRinfectionMCS2D = (function(){ // ====================  SEIRinfectionMC
 			g_status[ipp] = 1; // 1:exposed
 		}
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
+
 	function timeEvolution(nCalc) {
 		for (let i=0; i<nCalc; i++) {
 			const it = Math.floor(g_sysTime/g_dt);
 			memoSEIRN(it); // set g_pS[it],g_pE[it],g_pI[it],g_pR[it],g_pN[it]
-
 			g_sysTime += g_dt;
 			g_onsetPerson = timeStep();
 		}
 	}
-	
+
 	function timeStep() {
 		const nnp=g_NNp;
 		let onset = 0;
@@ -296,8 +294,8 @@ const SEIRinfectionMCS2D = (function(){ // ====================  SEIRinfectionMC
 		}
 		return onset;
 	}
-	
-	function moveWalker(ipp) {
+
+	function moveWalker( ipp ) {
 		const dir = Math.floor(Math.random()*4);
 		let ixx, iyy;
 		if (dir==0) { // east
@@ -332,10 +330,9 @@ const SEIRinfectionMCS2D = (function(){ // ====================  SEIRinfectionMC
 			; // ipp-walker not move
 		}
 	}
-	
-	function memoSEIRN(i) {
+
+	function memoSEIRN( i ) {
 		const nt=g_ntMax, nnp=g_NNp;
-		
 		let ss = 0, ee = 0, ii = 0, rr = 0, nn = 0;
 		for (let ipp=1; ipp<=nnp; ipp++) {
 			const st = g_status[ipp];
@@ -354,9 +351,8 @@ const SEIRinfectionMCS2D = (function(){ // ====================  SEIRinfectionMC
 		g_infectius = ii;
 		g_removed = rr;
 		g_nPop = ss + ee + ii + rr;
-		
 		if (i>=nt) return;
-		
+
 		g_pS[i] = g_susceptible;
 		g_pE[i] = g_exposed;
 		g_pI[i] = g_infectius;
@@ -366,8 +362,8 @@ const SEIRinfectionMCS2D = (function(){ // ====================  SEIRinfectionMC
 		setPoday(i);
 		g_nContactvdt[i] = g_nContact;
 	}
-	
-	function setPoday(it) {
+
+	function setPoday( it ) {
 		let s = 0;
 		for (let i=-19; i<=0; i++) {
 			const ii = it + i;
@@ -377,68 +373,67 @@ const SEIRinfectionMCS2D = (function(){ // ====================  SEIRinfectionMC
 		}
 		g_onsetvday[it] = s;
 	}
-	
+
 	function iNow() { return Math.floor(g_sysTime/g_dt); }
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,
-						// setInitialCondition( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio )
-		setParam:		setParam,			// setParam( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio)
-		evolve:			timeEvolution,		// timeEvolution( v_nCalc )
-		
-		getSysParam:	function() { return [ g_NNx, g_NNy, g_dt, g_NNp, g_ss0 ]; },
-		getNow:			function() { return [ g_sysTime, iNow(), g_nContact, g_susceptible ]; },
-		getNowSEIRN:	function() { return [ g_susceptible, g_exposed, g_infectius, g_removed, g_nPop ]; },
-		getSEIRN:		function(i) { return [ g_pS[i], g_pE[i], g_pI[i], g_pR[i], g_pN[i], g_onsetvday[i] ]; },
-		getS:			function(i) { return g_pS[i]; },
-		getE:			function(i) { return g_pE[i]; },
-		getI:			function(i) { return g_pI[i]; },
-		getR:			function(i) { return g_pR[i]; },
-		getN:			function(i) { return g_pN[i]; },
-		getNewCase:		function(i) { return g_onsetvday[i]; },
-		getWalker:		function(i) { return [ g_status[i], g_ix[i], g_iy[i] ]; },
+		init: setInitialCondition, // setInitialCondition(v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio)
+		setParam: setParam, // setParam( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio)
+		evolve: timeEvolution, // timeEvolution( v_nCalc )
+
+		getSysParam:function() { return [ g_NNx, g_NNy, g_dt, g_NNp, g_ss0 ]; },
+		getNow:     function() { return [ g_sysTime, iNow(), g_nContact, g_susceptible ]; },
+		getNowSEIRN:function() { return [ g_susceptible, g_exposed, g_infectius, g_removed, g_nPop ]; },
+		getSEIRN:   function(i) { return [ g_pS[i], g_pE[i], g_pI[i], g_pR[i], g_pN[i], g_onsetvday[i] ]; },
+		getS:       function(i) { return g_pS[i]; },
+		getE:       function(i) { return g_pE[i]; },
+		getI:       function(i) { return g_pI[i]; },
+		getR:       function(i) { return g_pR[i]; },
+		getN:       function(i) { return g_pN[i]; },
+		getNewCase: function(i) { return g_onsetvday[i]; },
+		getWalker:  function(i) { return [ g_status[i], g_ix[i], g_iy[i] ]; },
 	};
-	
+
 })(); // ====================  SEIRinfectionMCS2D end  ====================
 
 
 const js114 = (function(){ // ====================  js Module  ====================
-	
+
 	const theModule = SEIRinfectionMCS2D;
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel
-	let canvas;					// canvas2d
-	let ctx;					// = canvas.getContext('2d');
-	
-	let v_infectiusProb = 0.04;	// infectius probability per one contact ;
-	let v_sigma = 0.2;			// (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
-	let v_gamma = 0.1;			// (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
-	let v_popDens = 40000;		// = S+E+I+R number of walkers
-	let v_removedRatio = 0.0;	// for vaccinated ratio: inirial R(0) = removedRatio*nPop 
+	const xCanvasSize = 480; // in pixel
+	const yCanvasSize = 480;
+	let canvas;
+	let ctx;
+
+	let v_infectiusProb = 0.04; // infectius probability per one contact ;
+	let v_sigma = 0.2; // (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
+	let v_gamma = 0.1; // (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
+	let v_popDens = 40000; // = S+E+I+R number of walkers
+	let v_removedRatio = 0.0; // for vaccinated ratio: inirial R(0) = removedRatio*nPop 
 	let v_nCalc = 1;
-	
+
 	let p_NNx, p_NNy, p_dt, p_NNp, p_S0; // <-- theModule.getSysParam()
-	
+
 	let dispMode = 0;
 	let timeRange = 360; // (day)
-	
+
 	let paramChanged = false;
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
 	//let inStepFlag = false;
 	let outputFlag = false;
-	
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
-		
+
 		animate();
-		
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -451,10 +446,9 @@ const js114 = (function(){ // ====================  js Module  =================
 			g2d.init( canvas, xCanvasSize, yCanvasSize );
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
 		if ( resetFlag ) {
 			resetFlag = false;
 			outputFlag = false;
@@ -462,12 +456,12 @@ const js114 = (function(){ // ====================  js Module  =================
 			[ p_NNx, p_NNy, p_dt, p_NNp, p_S0 ] = theModule.getSysParam();
 
 		}
-		
+
 		if ( paramChanged ) {
 			paramChanged = false;
 			theModule.setParam( v_infectiusProb, v_sigma, v_gamma, v_popDens, v_removedRatio );
 		}
-		
+
 		if ( !pauseFlag ) {
 			theModule.evolve( v_nCalc );
 		} else if ( pauseFlag && stepFlag ) {
@@ -475,25 +469,24 @@ const js114 = (function(){ // ====================  js Module  =================
 			theModule.evolve( v_nCalc );
 			//inStepFlag = true;
 		}
-		
+
 		draw( ctx, dispMode, timeRange, outputFlag );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	//--------------------  draw  --------------------
-	
+
 	const gColor = { 
 		S:"#0088ff", Ex:"#ffff00", I:"#ff0000", R:"#00ff00", N:"#ff00ff", NewCase:"#ff8800",
 		text:"#888888", grid:"#666666"
 	};
-	
+
 	function draw( ctx, dispMode, timeRange, outputFlag ) {
 		const xBoxSize = 400, yBoxSize = 400, xp=60, yp=60;
-		
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
-		
+
 		if (dispMode==0) {
 			plotSEIR(ctx, xp,yp,timeRange);
 		} else if (dispMode==1) {
@@ -501,38 +494,38 @@ const js114 = (function(){ // ====================  js Module  =================
 		} else if (dispMode==2) {
 			drawField( ctx );
 		}
-		
+
 		let sysTime, iNow, nContact, pS;
 		[ sysTime, iNow, nContact, pS ] = theModule.getNow();
 		const R0 = p_S0/(p_NNx*p_NNy)/p_dt*v_infectiusProb/v_gamma; //R0= ((SS0/(NNx*NNy))/dt)*infectiusProb/gamma
 		ctx.fillStyle = "#888888";
 		ctx.fillText(`time =${sysTime.toFixed(2)},  nContact =${nContact},  R0 =${R0.toFixed(2)}`, 10, yCanvasSize-25);
 		ctx.fillText(`field = ${p_NNx} x ${p_NNy},  walker =${v_popDens} `, 10, yCanvasSize-5);
-		
+
 		if ( outputFlag ) outputTextArea(1,timeRange);
 	}
-	
-	
+
+
 	function drawField( ctx ) {
 		const cx0 = xCanvasSize/2+g2d.xShift, cy0 = yCanvasSize/2-30+g2d.yShift, xBoxSize = 360, yBoxSize = 360;
 		const scale = 1.0*g2d.zoom;
 		const xSize = xBoxSize*scale, ySize = yBoxSize*scale;
 		const xp = cx0 - xSize/2, yp = cy0-ySize/2;
-		
+
 		const nnx=p_NNx, nny=p_NNy, nn=p_NNp, ypMax = yp+p_NNy;
 		const wColor = [ gColor.S, gColor.Ex, gColor.I, gColor.R  ];
-		
+
 		// box
 		ctx.strokeStyle = "#888888";
 		ctx.strokeRect( xp-1*scale, yp-1*scale, (nnx+2)*scale, (nny+2)*scale );
-		
+
 		for (let i=0; i<nn; i++) {
 			let st, ix, iy; // st:  0:susceptible, 1:exposed, 2:infectius, 3:removed
 			[ st, ix, iy ] = theModule.getWalker(i);
 			ctx.fillStyle = wColor[st];
 			ctx.fillRect( xp+ix*scale, yp+(nny-iy-1)*scale, 1.0*scale, 1.0*scale );
 		}
-		
+
 		let pS, pE, pI, pR, pN;
 		[ pS, pE, pI, pR, pN ] = theModule.getNowSEIRN();
 		ctx.fillStyle = gColor.S;  ctx.fillText( `S: ${pS}`,  20, 25 );
@@ -541,14 +534,13 @@ const js114 = (function(){ // ====================  js Module  =================
 		ctx.fillStyle = gColor.R;  ctx.fillText( `R: ${pR}`, 260, 25 );
 		ctx.fillStyle = gColor.N;  ctx.fillText( `total: ${pN}`, 340, 25 );
 	}
-	
-	
-	function plotSEIR(ctx, xp,yp,timeRange) {
+
+
+	function plotSEIR( ctx, xp, yp, timeRange ) {
 		const mag = 300.0/p_NNp, m=Math.floor(timeRange/360/p_dt);
-		
 		//drawGrid(xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color)
 		drawGrid(ctx, xp,yp,360,300,30,30,"0",timeRange+"(day)","0",`${p_NNp}`, gColor.grid );
-		
+
 		drawText(ctx, "Susceptible", xp+20, yp-5, gColor.S );
 		drawText(ctx, "Exposed", xp+70, yp-25, gColor.Ex );
 		drawText(ctx, "Infectious", xp+120, yp-5, gColor.I );
@@ -556,7 +548,7 @@ const js114 = (function(){ // ====================  js Module  =================
 		drawText(ctx, "Population", xp+160, yp-25, gColor.N );
 		drawText(ctx, "new cases/day x 50", xp+260, yp-25, gColor.NewCase );
 		drawText(ctx, "plot SEIR", xp+100, yp+360, gColor.text );
-		
+
 		plotFunc( ctx, xp, yp, m, theModule.getS, mag, gColor.S );
 		plotFunc( ctx, xp, yp, m, theModule.getE, mag, gColor.Ex );
 		plotFunc( ctx, xp, yp, m, theModule.getI, mag, gColor.I );
@@ -564,8 +556,8 @@ const js114 = (function(){ // ====================  js Module  =================
 		plotFunc( ctx, xp, yp, m, theModule.getNewCase, mag*50, gColor.NewCase );
 		plotFunc( ctx, xp, yp, m, theModule.getN, mag, gColor.N );
 	}
-	
-	function plotFunc(ctx, xp,yp,m,pFunc,mag,colr) {
+
+	function plotFunc( ctx, xp, yp, m, pFunc, mag, colr ) {
 		ctx.strokeStyle = colr;
 		ctx.beginPath();
 		for (let i=0; i<360; i++) {
@@ -573,13 +565,12 @@ const js114 = (function(){ // ====================  js Module  =================
 		}
 		ctx.stroke();
 	}
-	
-	function logPlotSEIR(ctx, xp,yp,timeRange) {
+
+	function logPlotSEIR( ctx, xp, yp, timeRange ) {
 		const m=Math.floor(timeRange/360/p_dt);
-		
 		//drawGrid(xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color)
 		drawGrid(ctx, xp,yp,360,300,30,60,"0",timeRange+"(day)","10^0","10^5", gColor.grid );
-		
+
 		drawText(ctx, "Susceptible", xp+20, yp-5, gColor.S );
 		drawText(ctx, "Exposed", xp+70, yp-25, gColor.Ex );
 		drawText(ctx, "Infectious", xp+120, yp-5, gColor.I );
@@ -587,7 +578,7 @@ const js114 = (function(){ // ====================  js Module  =================
 		drawText(ctx, "Population", xp+160, yp-25, gColor.N );
 		drawText(ctx, "new cases/day", xp+260, yp-25, gColor.NewCase );
 		drawText(ctx, "log plot SEIR", xp+100, yp+360, gColor.text );
-		
+
 		plotLog10Func(ctx, xp,yp,m,theModule.getS, gColor.S );
 		plotLog10Func(ctx, xp,yp,m,theModule.getE, gColor.Ex );
 		plotLog10Func(ctx, xp,yp,m,theModule.getI, gColor.I );
@@ -595,8 +586,8 @@ const js114 = (function(){ // ====================  js Module  =================
 		plotLog10Func(ctx, xp,yp,m,theModule.getNewCase, gColor.NewCase );
 		plotLog10Func(ctx, xp,yp,m,theModule.getN, gColor.N );
 	}
-	
-	function plotLog10Func(ctx, xp,yp,m,pFunc,colr) {
+
+	function plotLog10Func( ctx, xp, yp, m, pFunc, colr ) {
 		ctx.strokeStyle = colr;
 		ctx.beginPath();
 		for (let i=0; i<360; i++) {
@@ -607,12 +598,12 @@ const js114 = (function(){ // ====================  js Module  =================
 		}
 		ctx.stroke();
 	}
-	
-	function drawGrid(ctx, xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color) {
+
+	function drawGrid( ctx, xp, yp, xLen, yLen, xDiv, yDiv, x0Str, xMaxStr, y0Str, yMaxStr, color ) {
 		ctx.strokeStyle = color;
 		ctx.fillStyle = color;
 		ctx.strokeRect(xp,yp,xLen,yLen);
-		
+
 		for (let i=0; i<xLen; i+=xDiv) {
 			drawLine(ctx, xp+i,yp, xp+i, yp+yLen,color);
 		}
@@ -624,56 +615,55 @@ const js114 = (function(){ // ====================  js Module  =================
 		ctx.fillText(y0Str, xp-y0Str.length*8-12, yp+yLen+5);
 		ctx.fillText(yMaxStr, xp-yMaxStr.length*8-12, yp+5);
 	}
-	
-	 function drawLine( ctx, x1, y1, x2, y2, color ) {
+
+	function drawLine( ctx, x1, y1, x2, y2, color ) {
 	 	ctx.strokeStyle = color;
 		ctx.beginPath();
 		ctx.moveTo(x1, y1);
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	}
-	
+
 	function drawText( ctx, txt, x, y, color ) {
 		ctx.fillStyle = color;
 		ctx.fillText(txt, x, y);
 	}
-	
+
 	
 	// --- mouse event  --- mouse drug to shift and mouse wheel to zoom in/out 
 	// ver 0.0.0  2023.05.16  last updated  2023.05.17
 	//
 	// extenal xCanvasSize, yCanvasSize
-	
+
 	const g2d = {};
-	g2d.mouseDownFlag = 0;			// 1:on mouse down, 0:else
-	g2d.x_mouse = 0;				// x-position of mouse
-	g2d.y_mouse = 0;				// y-position of mouse
-	g2d.x0_mouse = 0;				// drag-started x-position of mouse
-	g2d.y0_mouse = 0;				// drag-started y-position of mouse
-	g2d.xLimit = xCanvasSize*1.5;	// -xLimit <= xShift <= xLimit
-	g2d.yLimit = yCanvasSize*1.5;	// -yLimit <= yShift <= yLimit
-	
+	g2d.mouseDownFlag = 0; // 1:on mouse down, 0:else
+	g2d.x_mouse = 0; // x-position of mouse
+	g2d.y_mouse = 0; // y-position of mouse
+	g2d.x0_mouse = 0; // drag-started x-position of mouse
+	g2d.y0_mouse = 0; // drag-started y-position of mouse
+	g2d.xLimit = xCanvasSize*1.5; // -xLimit <= xShift <= xLimit
+	g2d.yLimit = yCanvasSize*1.5; // -yLimit <= yShift <= yLimit
+
 	// public
 	g2d.zoom = 1.0;
 	g2d.xShift = 0.0;
 	g2d.yShift = 0.0;
-	
+
 	g2d.init = function( canvas, xSize, ySize ) {
 		g2d.setMouseOnCanvas( canvas );
 		g2d.xLimit = xSize*1.5;
 		g2d.yLimit = ySize*1.5;
 	};
-	
+
 	g2d.setMouseOnCanvas = function( canvas ) {
 		canvas.addEventListener('mousemove', g2d.mouse_move);
 		canvas.addEventListener('mousedown', g2d.mouse_down);
 		canvas.addEventListener('mouseup', g2d.mouse_up);
 		canvas.addEventListener("mousewheel", g2d.mouseWheel);
 	};
-	
-	g2d.mouse_move = function(e) {
-		var pi = Math.PI;
 
+	g2d.mouse_move = function(e) {
+		const pi = Math.PI;
 		if (g2d.mouseDownFlag==1) {
 			g2d.x_mouse = e.clientX;
 			g2d.y_mouse = e.clientY;
@@ -687,7 +677,7 @@ const js114 = (function(){ // ====================  js Module  =================
 			g2d.y0_mouse = g2d.y_mouse;
 		}
 	};
-	
+
 	g2d.mouse_down = function(e) {
 		if (g2d.mouseDownFlag==0) {
 			g2d.x0_mouse = e.clientX;
@@ -697,13 +687,13 @@ const js114 = (function(){ // ====================  js Module  =================
 			g2d.mouseDownFlag = 1;
 		}
 	};
-	
+
 	g2d.mouse_up = function(e) {
 		if (g2d.mouseDownFlag==1) {
 			g2d.mouseDownFlag = 0;
 		}
 	};
-	
+
 	g2d.mouseWheel = function(e) {
 		g2d.deltaY = e.deltaY;
 		if ( g2d.deltaY > 0 ) g2d.zoom *= 0.95;
@@ -711,21 +701,20 @@ const js114 = (function(){ // ====================  js Module  =================
 		if ( g2d.zoom<0.25 ) g2d.zoom = 0.25;
 		if ( g2d.zoom>4.0 ) g2d.zoom = 4.0;
 	};
-	
+
 	// --- mouse event end
-	
-	
+
+
 	// --------------------  data output  --------------------
-	
+
 	function outputTextArea(outputSW,timeRange) {
 		// outputSW:  0:textarea clear,  1:output text data
 		outputFlag = false;
-		
+
 		let str;
-		
 		if (outputSW==0) {
 			str = "";
-			
+
 		} else if (outputSW==1) {
 			const R0 = p_S0/(p_NNx*p_NNy)/p_dt*v_infectiusProb/v_gamma; //R0= ((SS0/(NNx*NNy))/dt)*infectiusProb/gamma
 			let pS, pE, pI, pR, pN, newCase;
@@ -734,7 +723,7 @@ const js114 = (function(){ // ====================  js Module  =================
 				+ `gamma = ${v_gamma.toFixed(2)},  R0 = ${R0.toFixed(2)} \n`
 				+ `S(0) = ${pS.toFixed(1)},  E(0) = ${pE.toFixed(1)},  I(0) = ${pI.toFixed(1)}`
 				+ `,  R(0) = ${pR.toFixed(1)} \n \n`;
-				
+
 			str += ` day,  S(t),  E(t),  I(t),  R(t), S+E+I+R, newCase \n`;
 			for (let i=0; i<timeRange; i++) {
 				const j = i*20;
@@ -745,52 +734,50 @@ const js114 = (function(){ // ====================  js Module  =================
 		}
 		document.getElementById("outputText").innerHTML = str;
 	}
-	
-	
+
+
 	// --------------------  dom control  --------------------
-	
+
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 		document.getElementById("home_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
-		
 		if ( pauseFlag==true ) {
 			document.getElementById("step_button").style.visibility = "visible";
 		} else {
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setpN0() {
 		const n = 1 + document.getElementById("slct_pN0").selectedIndex;
 		v_popDens = n*10000;
 		resetFlag = true;
 	}
-	
+
 	function setRemovedRatio() {
 		const r = 0 + document.getElementById("range_removedRatio").value;
 		v_removedRatio = 0.01*r;
 		document.getElementById("text_removedRatio").innerHTML = " " + v_removedRatio.toFixed(2);
 		resetFlag = true;
 	}
-	
+
 	function setInfectProb() {
 		const p = 0 + document.getElementById("range_infectiusProb").value;
 		v_infectiusProb = 0.001*p;
 		document.getElementById("text_infectiusProb").innerHTML = " " + v_infectiusProb.toFixed(3);
 		paramChanged = true;
 	}
-	
+
 	function setSigma() {
 		const s = 0 + document.getElementById("range_sigma").value;
 		v_sigma = 0.005*s;
@@ -798,7 +785,7 @@ const js114 = (function(){ // ====================  js Module  =================
 			" " + v_sigma.toFixed(2) + " (1/ " + (1.0/v_sigma).toFixed(1) + " day)";
 		paramChanged = true;
 	}
-	
+
 	function setGamma() {
 		const g = 0 + document.getElementById("range_gamma").value;
 		v_gamma = 0.005*g;
@@ -806,10 +793,9 @@ const js114 = (function(){ // ====================  js Module  =================
 			" " + v_gamma.toFixed(2) + " (1/ " + (1.0/v_gamma).toFixed(1) + " day)";
 		paramChanged = true;
 	}
-	
+
 	function setDispMode() {
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
-		
 		if ( dispMode==2 ) {
 			document.getElementById("home_button").style.visibility = "visible";
 			document.getElementById('home_caption').innerHTML =
@@ -819,50 +805,48 @@ const js114 = (function(){ // ====================  js Module  =================
 			document.getElementById('home_caption').innerHTML ="";
 		}
 	}
-	
+
 	function setSpeed() {
 		v_nCalc = 1 + document.getElementById("slct_speed").selectedIndex;
 	}
-	
+
 	function setTimeRange() {
 		timeRange = setTimeRange.range[ 0 + document.getElementById("slct_timeRange").selectedIndex ];
 	}
 	setTimeRange.range = [180,360,720,1080];
-	
+
 	function viewHome() {
 		g2d.zoom = 1.0;
 		g2d.xShift = 0.0;
 		g2d.yShift = 0.0;
-	
 	}
-	
+
 	function getData() {
 		outputFlag = true; 
 	}
-	
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:				main,				// main()
-		
-		// dom control
-		reset:				reset,				// reset()
-		pause:				pause,				// pause()
-		step:				step,				// step()
-		
-		setpN0:				setpN0,				// setpN0()
-		setRemovedRatio:	setRemovedRatio,	// setRemovedRatio()
-		setInfectProb:		setInfectProb,		// setInfectProb()
-		setSigma:			setSigma,			// setSigma()
-		setGamma:			setGamma,			// setGamma()
-		
-		setDispMode:		setDispMode,		// setDispMode()
-		setSpeed:			setSpeed,			// setSpeed()
-		setTimeRange:		setTimeRange,		// setTimeRange()
-		viewHome:			viewHome,			// viewHome()
-		getData:			getData,			// getData()
+		main:  main,  // main()
+
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step,  // step()
+
+		setpN0:     setpN0, // setpN0()
+		setRemovedRatio: setRemovedRatio, // setRemovedRatio()
+		setInfectProb: setInfectProb, // setInfectProb()
+		setSigma:   setSigma, // setSigma()
+		setGamma:   setGamma, // setGamma()
+
+		setDispMode:setDispMode, // setDispMode()
+		setSpeed:   setSpeed, // setSpeed()
+		setTimeRange: setTimeRange, // setTimeRange()
+		viewHome:   viewHome, // viewHome()
+		getData:    getData, // getData()
 	};
-	
+
 })(); // ====================  js114 module end  ====================
 
 
@@ -957,7 +941,7 @@ style="width:200px" oninput="js.setGamma()">
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
 
 </body>
