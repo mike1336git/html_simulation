@@ -12,13 +12,13 @@
 /* --------------------
 //
 //  js118_gotoTravelMCS2D
-//    Copyright(C) 2021-2023 Mitsuru Ikeuchi
+//    Copyright(C) 2021-2024 Mitsuru Ikeuchi
 //    Released under the MIT license ( https://opensource.org/licenses/MIT ) 
 //
 //    ver 0.0.0  2021.01.23 created, last updated on 2021.02.18
 //    ver 0.0.1  2021.10.25 v1, last updated on 2021.10.26
 //    ver 0.0.2  2021.11.08 v2, last updated on 2021.11.08
-//    ver 0.0.3  2023.05.23 v3, last updated on 2023.09.14
+//    ver 0.0.3  2023.05.23 v3, last updated on 2024.05.27
 //
 // -------------------- SEIR infection model - goto travel model  --- monte-Cerlo simulation
 //
@@ -169,40 +169,40 @@
 */
 
 const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Module  ====================
-	
-	const g_walkerMax = 100000;			// walker array max
-	const g_ntMax = 21600;				// max times of data record array (step dt) = 1080day x g_dayvdt
-	const g_dayvdt = 20;				// 1(day) = g_dayvdt*dt
-	const g_nAreaMax = 20;				// max numbers of area
-	
-	let g_nWalkers = 60000;				// total number of walkers (walker number  1 ... nWalkers)
-	let g_sysCount = 0;					// system time count
-	let g_dt = 1.0/g_dayvdt;			// (day) time step dt
-	let g_sysTime = g_sysCount*g_dt;	// (day) system time
-	
-	let g_infectiusProb = 0.04;			// infectius probability per one contact 
-	let g_sigma = 1.0/5.0;				// (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
-	let g_gamma = 1.0/10.0;				// (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
-	let g_gotoTravelRate = 0.01;		// (1/day) goto travel rate ~ (number of travel days per year)/365
+
+	const g_walkerMax = 100000; // walker array max
+	const g_ntMax = 21600; // max times of data record array (step dt) = 1080day x g_dayvdt
+	const g_dayvdt = 20; // 1(day) = g_dayvdt*dt
+	const g_nAreaMax = 20; // max numbers of area
+
+	let g_nWalkers = 60000; // total number of walkers (walker number  1 ... nWalkers)
+	let g_sysCount = 0; // system time count
+	let g_dt = 1.0/g_dayvdt; // (day) time step dt
+	let g_sysTime = g_sysCount*g_dt; // (day) system time
+
+	let g_infectiusProb = 0.04; // infectius probability per one contact 
+	let g_sigma = 1.0/5.0; // (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
+	let g_gamma = 1.0/10.0; // (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
+	let g_gotoTravelRate = 0.01; // (1/day) goto travel rate ~ (number of travel days per year)/365
 	let g_returnRate = 1.0/(365.0*g_gotoTravelRate);
-	let g_removedRatio = 0.0;			// S0 = N*removedRatio
-	
-	let g_nPop = g_nWalkers;			// nPop = S+E+I+R number of walker
-	let g_susceptible = g_nPop-10;		// number of susceptible walker
-	let g_exposed = 10;					// number of exposed walker
-	let g_infectius = 0;				// number of infectius walker
-	let g_removed = 0;					// number of removed walker
-	let g_onsetPerson = 0;				// number of onset walker
-	let g_nContact = 0;					// total number of contact per dt ( nContact ~ NNp*(NNp/(NNx*NNy)) )
-	let g_ss0 = g_susceptible;			// S0: initial number of susceptible walker
-	
+	let g_removedRatio = 0.0; // S0 = N*removedRatio
+
+	let g_nPop = g_nWalkers; // nPop = S+E+I+R number of walker
+	let g_susceptible = g_nPop-10; // number of susceptible walker
+	let g_exposed = 10; // number of exposed walker
+	let g_infectius = 0; // number of infectius walker
+	let g_removed = 0; // number of removed walker
+	let g_onsetPerson = 0; // number of onset walker
+	let g_nContact = 0; // total number of contact per dt ( nContact ~ NNp*(NNp/(NNx*NNy)) )
+	let g_ss0 = g_susceptible; // S0: initial number of susceptible walker
+
 	// walker
-	const g_walkerStatus = dimInt1( g_walkerMax);	// 0:S  1:E  2:I  3:R  4:D
-	const g_walkerAddress = dimInt1( g_walkerMax);	// home address area number 
-	const g_walkerInArea = dimInt1( g_walkerMax);	// present address area number
-	const g_walkerXPos = dimInt1( g_walkerMax);		// 0 ... NNx-1
-	const g_walkerYPos = dimInt1( g_walkerMax);		// 0 ... NNy-1
-	
+	const g_walkerStatus = dimInt1( g_walkerMax); // 0:S  1:E  2:I  3:R  4:D
+	const g_walkerAddress = dimInt1( g_walkerMax); // home address area number 
+	const g_walkerInArea = dimInt1( g_walkerMax); // present address area number
+	const g_walkerXPos = dimInt1( g_walkerMax); // 0 ... NNx-1
+	const g_walkerYPos = dimInt1( g_walkerMax); // 0 ... NNy-1
+
 	// field
 	const g_field = dimInt3( g_nAreaMax, 200, 200 ); // g_field[area][ix][iy] 1...NNp:walker number,  0:free space, -1:wall
 	const g_gotoSelectTable = dimInt1( 1000 );
@@ -254,25 +254,25 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 		[  1000,   0,   0,   0,   0,   0  ], // 19
 		[ 59990,  10,   0,   0,   0,   0  ]  // total
 	];
-	
+
 	const g_nContactvdtNow = dimInt1( g_nAreaMax+1);
 	const g_onsetvdtNow = dimInt1( g_nAreaMax+1);
-	
+
 	// memo data
-	const g_pS = dimInt2(g_nAreaMax+1,g_ntMax);			// (person) memo of susceptible
-	const g_pE = dimInt2(g_nAreaMax+1,g_ntMax);			// (person) memo of exposed
-	const g_pI = dimInt2(g_nAreaMax+1,g_ntMax);			// (person) memo of infectius
-	const g_pR = dimInt2( g_nAreaMax+1,g_ntMax);			// (person) memo of removed
-	const g_pN = dimInt2( g_nAreaMax+1,g_ntMax);			// (person) memo of total = S+E+I+R
-	const g_onsetvdt = dimInt2( g_nAreaMax+1,g_ntMax);		// (person) memo of onset person per dt
-	const g_onsetvday = dimInt2( g_nAreaMax+1,g_ntMax);	// (person) memo of onset person per day
-	const g_nContactvdt = dimInt2( g_nAreaMax+1,g_ntMax);	// memo of number of contact per dt
-	
-	
+	const g_pS = dimInt2(g_nAreaMax+1,g_ntMax); // (person) memo of susceptible
+	const g_pE = dimInt2(g_nAreaMax+1,g_ntMax); // (person) memo of exposed
+	const g_pI = dimInt2(g_nAreaMax+1,g_ntMax); // (person) memo of infectius
+	const g_pR = dimInt2( g_nAreaMax+1,g_ntMax); // (person) memo of removed
+	const g_pN = dimInt2( g_nAreaMax+1,g_ntMax); // (person) memo of total = S+E+I+R
+	const g_onsetvdt = dimInt2( g_nAreaMax+1,g_ntMax); // (person) memo of onset person per dt
+	const g_onsetvday = dimInt2( g_nAreaMax+1,g_ntMax); // (person) memo of onset person per day
+	const g_nContactvdt = dimInt2( g_nAreaMax+1,g_ntMax); // memo of number of contact per dt
+
+
 	function dimInt1( n ) {
 		return new Int32Array( n );
 	}
-	
+
 	function dimInt2( ni, nj ) {
 		let a = [] ;
 		for (let i=0; i<ni; i++) {  
@@ -280,7 +280,7 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 		}
 		return a;
 	}
-	
+
 	function dimInt3( ni, nj, nk ) {
 		let a = [];
 		for (let i=0; i<ni; i++) {  
@@ -291,43 +291,42 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 		}
 		return a;
 	}
-	
-	
+
+
 	// --------------------  set initial condition  --------------------
-	
+
 	function setInitialCondition( v_infectiusProb, v_sigma, v_gamma, v_removedRatio, v_gotoTravelRate ) {
-		
 		setParam( v_infectiusProb, v_sigma, v_gamma, v_removedRatio, v_gotoTravelRate );
-		
-		g_nWalkers = 60000;					// total number of walkers (walker number  1 ... nWalkers)
-		g_sysCount = 0;						// system time count
-		g_dt = 1.0/g_dayvdt;				// (day) time step dt
-		g_sysTime = g_sysCount*g_dt;		// (day) system time
-		
-		g_nPop = g_nWalkers;				// nPop = S + E + I + R
-		g_removed = Math.floor(g_nPop*v_removedRatio);	// number of removed walkers
-		g_exposed = 10;						// number of exposed walkers
-		g_susceptible = g_nPop - g_removed - g_exposed;	// number of susceptible walkers
-		g_infectius = 0;					// number of infectius walkers
-		g_onsetPerson = 0;					// number of onset walker
-		g_nContact = 0;						// number of contact per dt
-		g_ss0 = g_susceptible;				// S(0): initial number of susceptible walkers
-		
+
+		g_nWalkers = 60000; // total number of walkers (walker number  1 ... nWalkers)
+		g_sysCount = 0; // system time count
+		g_dt = 1.0/g_dayvdt; // (day) time step dt
+		g_sysTime = g_sysCount*g_dt; // (day) system time
+
+		g_nPop = g_nWalkers; // nPop = S + E + I + R
+		g_removed = Math.floor(g_nPop*v_removedRatio); // number of removed walkers
+		g_exposed = 10; // number of exposed walkers
+		g_susceptible = g_nPop - g_removed - g_exposed; // number of susceptible walkers
+		g_infectius = 0; // number of infectius walkers
+		g_onsetPerson = 0; // number of onset walker
+		g_nContact = 0; // number of contact per dt
+		g_ss0 = g_susceptible; // S(0): initial number of susceptible walkers
+
 		clearField();
 		clearPop();
 		setGotoSelectTable();
 		setWalkers(v_removedRatio);
 	}
-	
-	function setParam(v_infectiusProb,v_sigma,v_gamma,v_removedRatio,v_gotoTravelRate) {
-		g_infectiusProb = v_infectiusProb;	// infectius probability per one contact
-		g_sigma = v_sigma;					// (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
-		g_gamma = v_gamma;					// (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
-		g_removedRatio = v_removedRatio;	// initial removed ratio: removed(t==0) = removedRatio*N
+
+	function setParam( v_infectiusProb, v_sigma, v_gamma, v_removedRatio, v_gotoTravelRate ) {
+		g_infectiusProb = v_infectiusProb; // infectius probability per one contact
+		g_sigma = v_sigma; // (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
+		g_gamma = v_gamma; // (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
+		g_removedRatio = v_removedRatio; // initial removed ratio: removed(t==0) = removedRatio*N
 		g_gotoTravelRate = v_gotoTravelRate; // (1/day) goto travel rate ~ (number of travel days per year)/365
 		g_returnRate = 1.0/(365.0*g_gotoTravelRate); //(1/day)  = 1/(number of travel days per year)
 	}
-	
+
 	function clearField() {
 		const nna=g_nAreaMax;
 		for (let ia=0; ia<nna; ia++) {
@@ -340,7 +339,7 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 			}
 		}
 	}
-	
+
 	function clearPop() {
 		const nnt=g_ntMax, nna=g_nAreaMax;
 		for (let ia=0; ia<nna+1; ia++) {
@@ -356,8 +355,8 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 			}
 		}
 	}
-	
-	function setWalkers(removedRatio) {
+
+	function setWalkers( removedRatio ) {
 		const nna=g_nAreaMax
 		let iwp=0;
 		for (let ia=0; ia<nna; ia++) {
@@ -365,15 +364,14 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 		}
 		return iwp;
 	}
-	
-	function setWalkersInAera(iwp,iarea,removedRatio) {
+
+	function setWalkersInAera( iwp, iarea, removedRatio ) {
 		const nnw = g_areaProperty[iarea][0];
 		const nnx = g_areaProperty[iarea][1];
 		const nny = g_areaProperty[iarea][2];
 		const attr = g_areaProperty[iarea][3];
 		const rr0 = nnw*removedRatio;
 		const ee0 = g_areaProperty[iarea][5]; // initial exposed
-		
 		let i;
 		for (i=iwp; i<iwp+nnw; i++) {
 			let x, y;
@@ -386,7 +384,6 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 			g_walkerYPos[i] = y;
 			g_walkerAddress[i] = iarea; // home address area number 
 			g_walkerInArea[i] = iarea;	// present address area number
-
 			if (i<iwp+rr0) {
 				g_walkerStatus[i] = 3; // 3:removed
 			} else if (i<iwp+rr0+ee0) {
@@ -397,7 +394,7 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 		}
 		return i;
 	}
-	
+
 	function setGotoSelectTable() {
 		const nna=g_nAreaMax;
 		let s = 0.0;
@@ -419,21 +416,19 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 			}
 		}
 	}
-	
+
 	function selectAera() {
 		const irnd = Math.floor((1000.0*Math.random()));
 		return g_gotoSelectTable[irnd];
 	}
-	
-	
+
+
 	// --------------------  time evolution  --------------------
-	
-	function timeEvolution(nCalc) {
-		
+
+	function timeEvolution( nCalc ) {
 		for (let i=0; i<nCalc; i++) {
 			const it = g_sysCount;
 			memoStat(it); // memo S[it],E[it],I[it],R[it]
-
 			g_sysCount++;
 			g_sysTime = g_sysCount*g_dt;
 			timeStep();
@@ -442,13 +437,12 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 
 	function timeStep() {
 		const nna=g_nAreaMax, nnw=g_nWalkers;
-		
 		// g_nContactvdtNow[] and g_onsetvdtNow[] init
 		for (let ia=0; ia<nna+1; ia++) {
 			g_nContactvdtNow[ia] = 0;
 			g_onsetvdtNow[ia] = 0;
 		}
-		
+
 		for (let iw=1; iw<=nnw; iw++) {
 			const ia = g_walkerInArea[iw];
 			// state transion
@@ -463,7 +457,7 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 					g_walkerStatus[iw] = 3; // 3:removed
 				}
 			}
-			
+
 			// goto travel or return travel
 			const aHome = g_walkerAddress[iw];
 			const aVisit = g_walkerInArea[iw];
@@ -476,11 +470,11 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 					returnTravel(iw);
 				}
 			}
-			
+
 			// move
 			moveWalker(iw);
 		}
-		
+
 		// calc total g_nContactvdtNow, g_onsetvdtNow
 		g_nContactvdtNow[nna] = 0;
 		g_onsetvdtNow[nna] = 0;
@@ -489,19 +483,18 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 			g_onsetvdtNow[nna] += g_onsetvdtNow[ia];
 		}
 	}
-	
-	function gotoTravel(iw) {
-		
+
+	function gotoTravel( iw ) {
 		const aHome = g_walkerAddress[iw];
 		const aVisit = selectAera();
 		if (aVisit==aHome) return;
-		
+
 		g_walkerInArea[iw] = aVisit;
-		
+
 		let x = g_walkerXPos[iw];
 		let y = g_walkerYPos[iw];
 		g_field[aHome][x][y] = 0; // free space
-		
+
 		// seek free space in aVisit
 		const nnx = g_areaProperty[aVisit][1];
 		const nny = g_areaProperty[aVisit][2];
@@ -509,22 +502,21 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 			x = Math.floor(nnx*Math.random());
 			y = Math.floor(nny*Math.random());
 		} while (g_field[aVisit][x][y]!=0); // g_field[][][]: free space: 0, walker:1...NNp-1
-		
+
 		g_walkerXPos[iw] = x;
 		g_walkerYPos[iw] = y;
 		g_field[aVisit][x][y] = iw;
 	}
-	
-	function returnTravel(iw) {
-		
+
+	function returnTravel( iw ) {
 		const aHome = g_walkerAddress[iw];
 		const aVisit = g_walkerInArea[iw];
 		g_walkerInArea[iw] = aHome;
-		
+
 		let x = g_walkerXPos[iw];
 		let y = g_walkerYPos[iw];
 		g_field[aVisit][x][y] = 0; // free space
-		
+
 		// seek free space in aHome
 		const nnx = g_areaProperty[aHome][1];
 		const nny = g_areaProperty[aHome][2];
@@ -532,20 +524,19 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 			x = Math.floor(nnx*Math.random());
 			y = Math.floor(nny*Math.random());
 		} while (g_field[aHome][x][y]!=0); // g_field[][]: free space: 0, walker:1...NNp-1
-		
+
 		g_walkerXPos[iw] = x;
 		g_walkerYPos[iw] = y;
 		g_field[aHome][x][y] = iw;
 	}
-	
-	function moveWalker(iw) {
-		
+
+	function moveWalker( iw ) {
 		const area = g_walkerInArea[iw];
 		const nnx = g_areaProperty[area][1];
 		const nny = g_areaProperty[area][2];
 		const x = g_walkerXPos[iw];
 		const y = g_walkerYPos[iw];
-		
+
 		const dir = Math.floor(Math.random()*4);
 		let ixx, iyy;
 		if (dir==0) { // east
@@ -580,12 +571,11 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 			; // ipp-walker not move
 		}
 	}
-	
-	function memoStat(it) {
+
+	function memoStat( it ) {
 		const nna=g_nAreaMax, nnw=g_nWalkers;
-		
 		if (it>g_ntMax-1) return;
-		
+
 		// clear g_areaStat[][]
 		for (let ia=0; ia<nna; ia++) {
 			for (let i=0; i<6; i++) { // 0:S, 1:E, 2:I, 3:R, 4:D, 5:N
@@ -598,17 +588,17 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 			const area = g_walkerInArea[iw];
 			g_areaStat[area][st]++;
 		}
-		
+
 		for (let ia=0; ia<nna; ia++) {
 			g_pS[ia][it] = g_areaStat[ia][0];
 			g_pE[ia][it] = g_areaStat[ia][1];
 			g_pI[ia][it] = g_areaStat[ia][2];
 			g_pR[ia][it] = g_areaStat[ia][3];
-			
+
 			g_areaStat[ia][5] = (g_areaStat[ia][0]+g_areaStat[ia][1]+g_areaStat[ia][2]+g_areaStat[ia][3]);
 			g_pN[ia][it] = g_areaStat[ia][5];
 		}
-		
+
 		// total area  S E I R N
 		g_pS[nna][it] = 0;
 		g_pE[nna][it] = 0;
@@ -627,15 +617,15 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 		g_areaStat[nna][2] = g_pI[nna][it];
 		g_areaStat[nna][3] = g_pR[nna][it];
 		g_areaStat[nna][5] = g_pN[nna][it];
-		
+
 		for (let ia=0; ia<nna+1; ia++) {
 			g_onsetvdt[ia][it] = g_onsetvdtNow[ia];
 			g_nContactvdt[ia][it] = g_nContactvdtNow[ia];
 			setPoday(ia,it);
 		}
 	}
-	
-	function setPoday(ia,it) {
+
+	function setPoday( ia, it ) {
 		let s = 0;
 		for (let i=-19; i<=0; i++) {
 			const ii = it + i;
@@ -645,58 +635,58 @@ const gotoTravelMCS2D = (function(){ // ====================  gotoTravelMCS2D Mo
 		}
 		g_onsetvday[ia][it] = s;
 	}
-	
-	
+
+
 	// --- utilities
-	
-	function basicReproductionNumberR0(ia) {
+
+	function basicReproductionNumberR0( ia ) {
 		const nnw = g_areaProperty[ia][0];
 		const nnx = g_areaProperty[ia][1];
 		const nny = g_areaProperty[ia][2];
 		return (nnw*(1.0-g_removedRatio)/(nnx*nny))/g_dt*g_infectiusProb/g_gamma;
 	}
-	
-	
+
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		init:			setInitialCondition,	
-						// setInitialCondition( v_infectiusProb, v_sigma, v_gamma, v_removedRatio, v_gotoTravelRate )
-		setParam:		setParam,				
-						// setParam( v_infectiusProb, v_sigma, v_gamma, v_removedRatio, v_gotoTravelRate)
-		evolve:			timeEvolution,		// timeEvolution( v_nCalc )
-		
-		getSysParam:	function() { return [ g_dt, g_nAreaMax, g_nWalkers, g_ss0 ]; },
-		getAreaParam:	function(ia) { return g_areaProperty[ia]; },// [ nnw, nx, ny, attr, S0, E0, I0, R0, D0 ]
-		getR0:			basicReproductionNumberR0,		// basicReproductionNumberR0(ia)
+		init: setInitialCondition,	
+				// setInitialCondition( v_infectiusProb, v_sigma, v_gamma, v_removedRatio, v_gotoTravelRate )
+		setParam: setParam,				
+				// setParam( v_infectiusProb, v_sigma, v_gamma, v_removedRatio, v_gotoTravelRate)
+		evolve: timeEvolution, // timeEvolution( v_nCalc )
+
+		getSysParam: function() { return [ g_dt, g_nAreaMax, g_nWalkers, g_ss0 ]; },
+		getAreaParam: function(ia) { return g_areaProperty[ia]; },// [ nnw, nx, ny, attr, S0, E0, I0, R0, D0 ]
+		getR0:  basicReproductionNumberR0,		// basicReproductionNumberR0(ia)
 		getnContactvdtNow: function(ia) { return  g_nContactvdtNow[ia]; },
-		getNow:			function() { return [ g_sysTime, g_nContactvdtNow[g_nAreaMax], g_susceptible ]; },
+		getNow: function() { return [ g_sysTime, g_nContactvdtNow[g_nAreaMax], g_susceptible ]; },
 		//getNowSEIRN:	function() { return [ g_susceptible, g_exposed, g_infectius, g_removed, g_nPop ]; },
-		getAreaNow:		function(ia) { return g_areaStat[ia]; }, // [ 0:S, 1:E,  2:I, 3:R, 4:D, 5:N ] 
-		
-		getS: 			function(ia,it) { return g_pS[ia][it]; },
-		getE: 			function(ia,it) { return g_pE[ia][it]; },
-		getI: 			function(ia,it) { return g_pI[ia][it]; },
-		getR: 			function(ia,it) { return g_pR[ia][it]; },
-		getN: 			function(ia,it) { return g_pN[ia][it]; },
-		getNewCase:		function(ia,it)	{ return g_onsetvday[ia][it]; },
-		
-		getWalkerStatus:function(iw) { return g_walkerStatus[iw]; },
-		getWalker:		function(iw) { return [ g_walkerStatus[iw], g_walkerXPos[iw], g_walkerYPos[iw] ]; },
-		getField:		function(ia,ix,iy) { return g_field[ia][ix][iy]; },
+		getAreaNow: function(ia) { return g_areaStat[ia]; }, // [ 0:S, 1:E,  2:I, 3:R, 4:D, 5:N ] 
+
+		getS:   function(ia,it) { return g_pS[ia][it]; },
+		getE:   function(ia,it) { return g_pE[ia][it]; },
+		getI:   function(ia,it) { return g_pI[ia][it]; },
+		getR:   function(ia,it) { return g_pR[ia][it]; },
+		getN:   function(ia,it) { return g_pN[ia][it]; },
+		getNewCase: function(ia,it)	{ return g_onsetvday[ia][it]; },
+
+		getWalkerStatus: function(iw) { return g_walkerStatus[iw]; },
+		getWalker: function(iw) { return [ g_walkerStatus[iw], g_walkerXPos[iw], g_walkerYPos[iw] ]; },
+		getField: function(ia,ix,iy) { return g_field[ia][ix][iy]; },
 	};
-	
+
 })(); // ====================  gotoTravelMCS2D end  ====================
 
 
 const js118 = (function(){ // ====================  js Module  ====================
-	
+
 	const theModule = gotoTravelMCS2D;
-	const xCanvasSize = 480;	// in pixel
-	const yCanvasSize = 480;	// in pixel
-	let canvas;					// canvas2d
-	let ctx;					// = canvas.getContext('2d');
-	
+	const xCanvasSize = 480; // in pixel
+	const yCanvasSize = 480;
+	let canvas;
+	let ctx;
+
 	const modelDiscription = 
 		"  model discription:\n"
 		+ "    This infection model is one of the multi-agent systems.\n"
@@ -713,36 +703,36 @@ const js118 = (function(){ // ====================  js Module  =================
 		+ "  result:\n"
 		+ "    ’goto travel’ affects the peak of infection,\n"
 		+ "    but does not seem to significantly affect the final prevalence.\n";
-	
-	let v_infectiusProb = 0.04;	// infectius probability per one contact ;
-	let v_sigma = 0.2;			// (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
-	let v_gamma = 0.1;			// (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
-	//let v_popDens = 40000;		// = S+E+I+R number of walkers
-	let v_removedRatio = 0.0;	// for vaccinated ratio: inirial R(0) = removedRatio*nPop 
-	let v_gotoTravelRate = 0.01;// (1/day) = (number of travel days per year)/365
+
+	let v_infectiusProb = 0.04; // infectius probability per one contact ;
+	let v_sigma = 0.2; // (1/day) incidence rate ~ 1/(mean incubation period) = 1/(5days)
+	let v_gamma = 0.1; // (1/day) recovery rate ~ 1/(mean infected period) = 1/(10days)
+	//let v_popDens = 40000; // = S+E+I+R number of walkers
+	let v_removedRatio = 0.0; // for vaccinated ratio: inirial R(0) = removedRatio*nPop 
+	let v_gotoTravelRate = 0.01; // (1/day) = (number of travel days per year)/365
 	let v_nCalc = 1;
-	
+
 	let p_dt, p_nArea, p_nWalkers, p_S0; // <-- theModule.getSysParam()
-	
+
 	let dispMode = 1;
 	let timeRange = 360; // (day)
 	let dispArea = 0;
-	
+
 	let paramChanged = false;
 	let resetFlag = true;
 	let pauseFlag = false;
 	let stepFlag = false;
 	//let inStepFlag = false;
 	let outputFlag = false;
-	
+
 	function main() {
 		resetFlag = true;
 		setCanvas( 'canvas_box', xCanvasSize, yCanvasSize );
 		initDom();
 		document.getElementById("outputText").innerHTML = modelDiscription;
-		
+
 		animate();
-		
+
 		function setCanvas( canvasID, width, height ) {
 			canvas = document.getElementById( canvasID );
 			canvas.width  = width;
@@ -756,23 +746,21 @@ const js118 = (function(){ // ====================  js Module  =================
 			g2d.init( canvas, xCanvasSize, yCanvasSize );
 		}
 	}
-	
-	
+
+
 	function animate() {
-		
 		if ( resetFlag ) {
 			resetFlag = false;
 			outputFlag = false;
 			theModule.init( v_infectiusProb, v_sigma, v_gamma, v_removedRatio, v_gotoTravelRate );
 			[ p_dt, p_nArea, p_nWalkers, p_S0 ] = theModule.getSysParam();
-
 		}
-		
+
 		if ( paramChanged ) {
 			paramChanged = false;
 			theModule.setParam( v_infectiusProb, v_sigma, v_gamma, v_removedRatio, v_gotoTravelRate );
 		}
-		
+
 		if ( !pauseFlag ) {
 			theModule.evolve( v_nCalc );
 		} else if ( pauseFlag && stepFlag ) {
@@ -780,37 +768,37 @@ const js118 = (function(){ // ====================  js Module  =================
 			theModule.evolve( v_nCalc );
 			//inStepFlag = true;
 		}
-		
+
 		draw( ctx, dispMode, timeRange, dispArea );
-		
+
 		requestAnimationFrame(animate);
 	}
-	
-	
+
+
 	//--------------------  draw  --------------------
-	
+
 	const gColor = { 
 		S:"#0088ff", Ex:"#ffff00", I:"#ff0000", R:"#00ff00", N:"#ff00ff", NewCase:"#ff8800",
 		text:"#888888", grid:"#666666"
 	};
-	
+
 	function draw( ctx, dispMode, timeRange, dispArea ) {
 		const xBoxSize = 400, yBoxSize = 400, xp=60, yp=60;
-		
+
 		ctx.clearRect(0, 0, xCanvasSize, yCanvasSize);
 		
 		if (dispMode==0) {
 			drawTable( ctx, 20, 40 );
-			
+
 		} else if (dispMode==1) {
 			drawChart( ctx, 20, 60 );
-			
+
 		}  else if (dispMode==2) {
 			plotSEIR( ctx, dispArea, timeRange, 60, 80 );
-			
+
 		} else if (dispMode==3) {
 			logPlotSEIR( ctx, dispArea, timeRange, 60, 80 );
-			
+
 		} else if (dispMode==4) {
 			if (dispArea<p_nArea) {
 				drawAreax3( ctx, dispArea );
@@ -818,7 +806,7 @@ const js118 = (function(){ // ====================  js Module  =================
 				drawText( ctx, `select area No.0 ... No.${p_nArea-1}`, 20, yCanvasSize-25, "#ff0000" );
 			}
 		}
-		
+
 		// caption
 		let sysTime, nContact, pS;
 		[ sysTime, nContact, pS ] = theModule.getNow();
@@ -827,11 +815,10 @@ const js118 = (function(){ // ====================  js Module  =================
 		ctx.fillStyle = "#888888";
 		ctx.fillText(`time = ${sysTime.toFixed(2)},  nContact =${nContact},  R0 =${R0.toFixed(2)}`, 10, yCanvasSize-5);
 
-		
 		if ( outputFlag ) outputTextArea( 1, dispArea, timeRange );
 	}
-	
-	
+
+
 	function drawHeadLine( ctx, area, yp ) { // area; 0...p_nArea-1, total:p_nArea
 		const ypp = (yp==undefined) ? 20 : yp;
 		let pS, pE, pI, pR, pD, pN;
@@ -843,11 +830,10 @@ const js118 = (function(){ // ====================  js Module  =================
 		ctx.fillStyle = gColor.N;  ctx.fillText( `total: ${pN}`, 340, ypp );
 	}
 
-	
+
 	// --- table
-	
+
 	function drawTable( ctx, xp, yp ) {
-		
 		ctx.font = "16px 'monospace'";
 		drawText(ctx, "area data table", xp+100, yp,  gColor.text );
 		let ypp = yp + 30;
@@ -866,7 +852,7 @@ const js118 = (function(){ // ====================  js Module  =================
 			[ pS, pE, pI, pR, pD, pN ] = theModule.getAreaNow( ia );
 			const rr0 = theModule.getR0( ia ); // basicReproductionNumber R0
 			const nContact = theModule.getnContactvdtNow( ia );
-			
+
 			ypp += 18;
 			if (ia<p_nArea) { // area
 				drawTextFixed(ctx, "   "+ia, xp+  0, ypp, gColor.text,5 );
@@ -884,25 +870,24 @@ const js118 = (function(){ // ====================  js Module  =================
 			}
 		}
 		ctx.font = "16px 'sans-serif'";
-		
+
 		function drawTextFixed(ctx, str,x,y,colr,spc) {
 			drawText(ctx, ("      "+str).slice(-spc), x, y, colr);
 		}
 	}
-	
-	
+
+
 	function drawDisc( ctx, x, y, r, color ) {
 		ctx.fillStyle = color;
 		ctx.beginPath();
 		ctx.arc(x, y, r, 0, 2*Math.PI, false);
 		ctx.fill();
 	}
-	
+
 	// --- chart
 
 	function drawChart( ctx, xp, yp ) {
 		const nn = p_nArea, span = 90;
-		
 		drawText( ctx, "area chart", xp+100, yp-10, gColor.text )
 		for (let ia=0; ia<nn; ia++) {
 			let pS, pE, pI, pR, pD, pN;
@@ -917,7 +902,7 @@ const js118 = (function(){ // ====================  js Module  =================
 			drawText( ctx, ""+ia, x, y+20, gColor.text );
 		}
 		drawHeadLine( ctx, p_nArea );
-		
+
 		function drawPartialDisc( ctx, x, y, r, th1, th2, color ) {
 			ctx.fillStyle = color;
 			ctx.beginPath();
@@ -927,18 +912,16 @@ const js118 = (function(){ // ====================  js Module  =================
 			ctx.fill();
 		}
 	}
-	
+
 	// --- draw area
-	
+
 	function drawAreax3( ctx, area ) {
 		const nnx = theModule.getAreaParam(area)[1], nny = theModule.getAreaParam(area)[2];
 		const stColor = [ gColor.S, gColor.Ex, gColor.I, gColor.R ];
-		
 		const cx0 = xCanvasSize/2+g2d.xShift, cy0 = yCanvasSize/2+g2d.yShift, xBoxSize = nnx, yBoxSize = nny;
 		const scale = 3.0*g2d.zoom;
 		const xSize = xBoxSize*scale, ySize = yBoxSize*scale;
 		const xp = cx0 - xSize/2, yp = cy0-ySize/2;
-
 		ctx.strokeStyle = "#666000";
 		ctx.strokeRect(xp-1,yp-1,nnx*scale+2,nny*scale+2);
 
@@ -955,18 +938,17 @@ const js118 = (function(){ // ====================  js Module  =================
 		drawHeadLine( ctx, area );
 		drawText( ctx, `area No.${area}`, 60, 40, gColor.text );
 	}
-	
+
 	// --- plot SEIR
-	
+
 	function plotSEIR( ctx, area, timeRange, xp, yp ) {
 		const nnw = theModule.getAreaParam(area)[0]; // nominal number of area population
 		const mag = 300.0/nnw, m=Math.floor(timeRange/360/p_dt);
 		const areaStr = (area<p_nArea) ? "area no."+area : "total area";
-		
-		
+
 		//drawGrid(xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color)
 		drawGrid(ctx, xp,yp,360,300,30,30,"0",timeRange+"(day)","0",`${nnw}`, gColor.grid );
-		
+
 		drawText(ctx, "Susceptible", xp+20, yp-5, gColor.S );
 		drawText(ctx, "Exposed", xp+70, yp-25, gColor.Ex );
 		drawText(ctx, "Infectious", xp+120, yp-5, gColor.I );
@@ -974,18 +956,18 @@ const js118 = (function(){ // ====================  js Module  =================
 		drawText(ctx, "Population", xp+160, yp-25, gColor.N );
 		drawText(ctx, "new cases/day x 50", xp+260, yp-25, gColor.NewCase );
 		drawText(ctx, `plot SEIR   ( ${areaStr} )`, xp+100, yp+360, gColor.text );
-		
+
 		plotFunc( ctx, area, xp, yp, m, theModule.getS, mag, gColor.S );
 		plotFunc( ctx, area, xp, yp, m, theModule.getE, mag, gColor.Ex );
 		plotFunc( ctx, area, xp, yp, m, theModule.getI, mag, gColor.I );
 		plotFunc( ctx, area, xp, yp, m, theModule.getR, mag, gColor.R );
 		plotFunc( ctx, area, xp, yp, m, theModule.getNewCase, mag*50, gColor.NewCase );
 		plotFunc( ctx, area, xp, yp, m, theModule.getN, mag, gColor.N );
-		
+
 		drawHeadLine( ctx, area );
 	}
-	
-	function plotFunc( ctx, area, xp, yp, m, pFunc, mag, colr) {
+
+	function plotFunc( ctx, area, xp, yp, m, pFunc, mag, colr ) {
 		ctx.strokeStyle = colr;
 		ctx.beginPath();
 		for (let i=0; i<360; i++) {
@@ -993,16 +975,16 @@ const js118 = (function(){ // ====================  js Module  =================
 		}
 		ctx.stroke();
 	}
-	
+
 	// --- log plot SEIR
-	
+
 	function logPlotSEIR(ctx, area, timeRange, xp,yp) {
 		const m=Math.floor(timeRange/360/p_dt);
 		const areaStr = (area<p_nArea) ? "area no."+area : "total area";
-		
+
 		//drawGrid(xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color)
 		drawGrid(ctx, xp,yp,360,300,30,60,"0",timeRange+"(day)","10^0","10^5", gColor.grid );
-		
+
 		drawText(ctx, "Susceptible", xp+20, yp-5, gColor.S );
 		drawText(ctx, "Exposed", xp+70, yp-25, gColor.Ex );
 		drawText(ctx, "Infectious", xp+120, yp-5, gColor.I );
@@ -1010,17 +992,17 @@ const js118 = (function(){ // ====================  js Module  =================
 		drawText(ctx, "Population", xp+160, yp-25, gColor.N );
 		drawText(ctx, "new cases/day", xp+260, yp-25, gColor.NewCase );
 		drawText(ctx, `log plot SEIR   ( ${area} )`, xp+100, yp+360, gColor.text );
-		
+
 		plotLog10Func( ctx, area, xp, yp, m, theModule.getS, gColor.S );
 		plotLog10Func( ctx, area, xp, yp, m, theModule.getE, gColor.Ex );
 		plotLog10Func( ctx, area, xp, yp, m, theModule.getI, gColor.I );
 		plotLog10Func( ctx, area, xp, yp, m, theModule.getR, gColor.R );
 		plotLog10Func( ctx, area, xp, yp, m, theModule.getNewCase, gColor.NewCase );
 		plotLog10Func( ctx, area, xp, yp, m, theModule.getN, gColor.N );
-		
+
 		drawHeadLine( ctx, area );
 	}
-	
+
 	function plotLog10Func( ctx, area, xp, yp, m, pFunc, colr ) {
 		ctx.strokeStyle = colr;
 		ctx.beginPath();
@@ -1032,12 +1014,12 @@ const js118 = (function(){ // ====================  js Module  =================
 		}
 		ctx.stroke();
 	}
-	
-	function drawGrid(ctx, xp,yp,xLen,yLen,xDiv,yDiv,x0Str,xMaxStr,y0Str,yMaxStr,color) {
+
+	function drawGrid( ctx, xp, yp, xLen, yLen, xDiv, yDiv, x0Str, xMaxStr, y0Str, yMaxStr, color ) {
 		ctx.strokeStyle = color;
 		ctx.fillStyle = color;
 		ctx.strokeRect(xp,yp,xLen,yLen);
-		
+
 		for (let i=0; i<xLen; i+=xDiv) {
 			drawLine(ctx, xp+i,yp, xp+i, yp+yLen,color);
 		}
@@ -1049,9 +1031,9 @@ const js118 = (function(){ // ====================  js Module  =================
 		ctx.fillText(y0Str, xp-y0Str.length*8-12, yp+yLen+5);
 		ctx.fillText(yMaxStr, xp-yMaxStr.length*8-12, yp+5);
 	}
-	
+
 	// --- disp utility
-	
+
 	function drawLine( ctx, x1, y1, x2, y2, color ) {
 	 	ctx.strokeStyle = color;
 		ctx.beginPath();
@@ -1059,55 +1041,54 @@ const js118 = (function(){ // ====================  js Module  =================
 		ctx.lineTo(x2, y2);
 		ctx.stroke();
 	}
-	
+
 	function drawDisc( ctx, x, y, r, color ) {
 		ctx.fillStyle = color;
 		ctx.beginPath();
 		ctx.arc(x, y, r, 0, 2*Math.PI, false);
 		ctx.fill();
 	}
-	
+
 	function drawText( ctx, txt, x, y, color ) {
 		ctx.fillStyle = color;
 		ctx.fillText(txt, x, y);
 	}
-	
-	
+
+
 	// --- mouse event  --- mouse drug to shift and mouse wheel to zoom in/out 
 	// ver 0.0.0  2023.05.16  last updated  2023.05.17
 	//
 	// extenal xCanvasSize, yCanvasSize
-	
+
 	const g2d = {};
-	g2d.mouseDownFlag = 0;			// 1:on mouse down, 0:else
-	g2d.x_mouse = 0;				// x-position of mouse
-	g2d.y_mouse = 0;				// y-position of mouse
-	g2d.x0_mouse = 0;				// drag-started x-position of mouse
-	g2d.y0_mouse = 0;				// drag-started y-position of mouse
-	g2d.xLimit = xCanvasSize*1.5;	// -xLimit <= xShift <= xLimit
-	g2d.yLimit = yCanvasSize*1.5;	// -yLimit <= yShift <= yLimit
-	
+	g2d.mouseDownFlag = 0; // 1:on mouse down, 0:else
+	g2d.x_mouse = 0; // x-position of mouse
+	g2d.y_mouse = 0; // y-position of mouse
+	g2d.x0_mouse = 0; // drag-started x-position of mouse
+	g2d.y0_mouse = 0; // drag-started y-position of mouse
+	g2d.xLimit = xCanvasSize*1.5; // -xLimit <= xShift <= xLimit
+	g2d.yLimit = yCanvasSize*1.5; // -yLimit <= yShift <= yLimit
+
 	// public
 	g2d.zoom = 1.0;
 	g2d.xShift = 0.0;
 	g2d.yShift = 0.0;
-	
+
 	g2d.init = function( canvas, xSize, ySize ) {
 		g2d.setMouseOnCanvas( canvas );
 		g2d.xLimit = xSize*1.5;
 		g2d.yLimit = ySize*1.5;
 	};
-	
+
 	g2d.setMouseOnCanvas = function( canvas ) {
 		canvas.addEventListener('mousemove', g2d.mouse_move);
 		canvas.addEventListener('mousedown', g2d.mouse_down);
 		canvas.addEventListener('mouseup', g2d.mouse_up);
 		canvas.addEventListener("mousewheel", g2d.mouseWheel);
 	};
-	
-	g2d.mouse_move = function(e) {
-		var pi = Math.PI;
 
+	g2d.mouse_move = function(e) {
+		const pi = Math.PI;
 		if (g2d.mouseDownFlag==1) {
 			g2d.x_mouse = e.clientX;
 			g2d.y_mouse = e.clientY;
@@ -1121,7 +1102,7 @@ const js118 = (function(){ // ====================  js Module  =================
 			g2d.y0_mouse = g2d.y_mouse;
 		}
 	};
-	
+
 	g2d.mouse_down = function(e) {
 		if (g2d.mouseDownFlag==0) {
 			g2d.x0_mouse = e.clientX;
@@ -1131,13 +1112,13 @@ const js118 = (function(){ // ====================  js Module  =================
 			g2d.mouseDownFlag = 1;
 		}
 	};
-	
+
 	g2d.mouse_up = function(e) {
 		if (g2d.mouseDownFlag==1) {
 			g2d.mouseDownFlag = 0;
 		}
 	};
-	
+
 	g2d.mouseWheel = function(e) {
 		g2d.deltaY = e.deltaY;
 		if ( g2d.deltaY > 0 ) g2d.zoom *= 0.95;
@@ -1145,18 +1126,17 @@ const js118 = (function(){ // ====================  js Module  =================
 		if ( g2d.zoom<0.25 ) g2d.zoom = 0.25;
 		if ( g2d.zoom>4.0 ) g2d.zoom = 4.0;
 	};
-	
+
 	// --- mouse event end
-	
-	
+
+
 	// --------------------  data output  --------------------
-	
+
 	function outputTextArea( outputSW, area, timeRange ) {
 		// outputSW:  0:textarea clear,  1:output text data
 		outputFlag = false;
-		
+
 		let str;
-		
 		if (outputSW==0) {
 			str = "";
 			
@@ -1169,16 +1149,16 @@ const js118 = (function(){ // ====================  js Module  =================
 				areaStr = `area total`;
 				R0 = p_S0/(p_nArea*120*120)/p_dt*v_infectiusProb/v_gamma;
 			}
-			
+
 			const pS0 = theModule.getS(area,0), pE0 = theModule.getE(area,0), pI0 = theModule.getI(area,0),
 				  pR0 = theModule.getR(area,0), pN0 = theModule.getN(area,0), newCase0 = theModule.getNewCase(area,0);
-			
+
 			str = areaStr + `,   infection prob. = ${v_infectiusProb.toFixed(5)},  sigma = ${v_sigma.toFixed(2)},`
 				+ `  gamma = ${v_gamma.toFixed(2)}\n`
 				+ `initial basic reproduction number  R0 = beta*S0/gamma = ${R0.toFixed(2)}\n\n`;
 				//+ `S(0) = ${pS0.toFixed(1)},  E(0) = ${pE0.toFixed(1)},  I(0) = ${pI0.toFixed(1)},`
 				//+ `  R(0) = ${pR0.toFixed(1)}\n\n`;
-				
+
 			str += ` day,  S(t),  E(t),  I(t),  R(t), S+E+I+R, newCase \n`;
 			for (let i=0; i<timeRange; i++) {
 				const j = i*20;
@@ -1190,52 +1170,50 @@ const js118 = (function(){ // ====================  js Module  =================
 		}
 		document.getElementById("outputText").innerHTML = str;
 	}
-	
-	
+
+
 	// --------------------  dom control  --------------------
-	
+
 	function initDom() {
 		document.getElementById("step_button").style.visibility = "hidden";
 		document.getElementById("home_button").style.visibility = "hidden";
 	}
-	
+
 	function reset() { resetFlag = true; }
-	
+
 	function pause() {
 		let btn = document.getElementById("pause_button");
-
 		pauseFlag = ( pauseFlag==false ); 
 		if ( pauseFlag==false ) btn.innerHTML = "pause"; else btn.innerHTML = "go";
-		
 		if ( pauseFlag==true ) {
 			document.getElementById("step_button").style.visibility = "visible";
 		} else {
 			document.getElementById("step_button").style.visibility = "hidden";
 		}
 	}
-	
+
 	function step() { stepFlag = true; }
-	
+
 	function setpN0() {
 		const n = 1 + document.getElementById("slct_pN0").selectedIndex;
 		v_popDens = n*10000;
 		resetFlag = true;
 	}
-	
+
 	function setRemovedRatio() {
 		const r = 0 + document.getElementById("range_removedRatio").value;
 		v_removedRatio = 0.01*r;
 		document.getElementById("text_removedRatio").innerHTML = " " + v_removedRatio.toFixed(2);
 		resetFlag = true;
 	}
-	
+
 	function setInfectProb() {
 		const p = 0 + document.getElementById("range_infectiusProb").value;
 		v_infectiusProb = 0.001*p;
 		document.getElementById("text_infectiusProb").innerHTML = " " + v_infectiusProb.toFixed(3);
 		paramChanged = true;
 	}
-	
+
 	function setSigma() {
 		const s = 0 + document.getElementById("range_sigma").value;
 		v_sigma = 0.005*s;
@@ -1243,7 +1221,7 @@ const js118 = (function(){ // ====================  js Module  =================
 			" " + v_sigma.toFixed(2) + " (1/ " + (1.0/v_sigma).toFixed(1) + " day)";
 		paramChanged = true;
 	}
-	
+
 	function setGamma() {
 		const g = 0 + document.getElementById("range_gamma").value;
 		v_gamma = 0.005*g;
@@ -1251,7 +1229,7 @@ const js118 = (function(){ // ====================  js Module  =================
 			" " + v_gamma.toFixed(2) + " (1/ " + (1.0/v_gamma).toFixed(1) + " day)";
 		paramChanged = true;
 	}
-	
+
 	function setGotoTravel() {
 		const gt = 0 + document.getElementById("range_gotoTravel").value;
 		v_gotoTravelRate = 0.001*gt;
@@ -1259,10 +1237,9 @@ const js118 = (function(){ // ====================  js Module  =================
 			" " + v_gotoTravelRate.toFixed(3) + " (1/day)";
 		paramChanged = true;
 	}
-	
+
 	function setDispMode() {
 		dispMode = 0 + document.getElementById("slct_dispMode").selectedIndex;
-		
 		if ( dispMode==4 ) {
 			document.getElementById("home_button").style.visibility = "visible";
 			document.getElementById('home_caption').innerHTML =
@@ -1272,56 +1249,54 @@ const js118 = (function(){ // ====================  js Module  =================
 			document.getElementById('home_caption').innerHTML ="";
 		}
 	}
-	
+
 	function setSpeed() {
 		v_nCalc = 1 + document.getElementById("slct_speed").selectedIndex;
 	}
-	
+
 	function setTimeRange() {
 		timeRange = setTimeRange.range[ 0 + document.getElementById("slct_timeRange").selectedIndex ];
 	}
 	setTimeRange.range = [180,360,720,1080];
-	
+
 	function setAreaNo() {
 		dispArea = 0 + document.getElementById("slct_areaNo").selectedIndex;
 	}
-	
+
 	function viewHome() {
 		g2d.zoom = 1.0;
 		g2d.xShift = 0.0;
 		g2d.yShift = 0.0;
-	
 	}
-	
+
 	function getData() {
 		outputFlag = true; 
 	}
-	
+
 	// --------------------  public  --------------------
-	
+
 	return {
-		main:				main,				// main()
-		
-		// dom control
-		reset:				reset,				// reset()
-		pause:				pause,				// pause()
-		step:				step,				// step()
-		
-		setpN0:				setpN0,				// setpN0()
-		setRemovedRatio:	setRemovedRatio,	// setRemovedRatio()
-		setInfectProb:		setInfectProb,		// setInfectProb()
-		setSigma:			setSigma,			// setSigma()
-		setGamma:			setGamma,			// setGamma()
-		setGotoTravel:		setGotoTravel,		// setGotoTravel()
-		
-		setDispMode:		setDispMode,		// setDispMode()
-		setSpeed:			setSpeed,			// setSpeed()
-		setTimeRange:		setTimeRange,		// setTimeRange()
-		setAreaNo:			setAreaNo,			// setAreaNo()
-		viewHome:			viewHome,			// viewHome()
-		getData:			getData,			// getData()
+		main:  main,  // main()
+
+		reset: reset, // reset()
+		pause: pause, // pause()
+		step:  step,  // step()
+
+		setpN0:     setpN0, // setpN0()
+		setRemovedRatio: setRemovedRatio, // setRemovedRatio()
+		setInfectProb: setInfectProb, // setInfectProb()
+		setSigma:   setSigma, // setSigma()
+		setGamma:   setGamma, // setGamma()
+		setGotoTravel: setGotoTravel, // setGotoTravel()
+
+		setDispMode: setDispMode, // setDispMode()
+		setSpeed:   setSpeed, // setSpeed()
+		setTimeRange: setTimeRange, // setTimeRange()
+		setAreaNo:  setAreaNo, // setAreaNo()
+		viewHome:   viewHome, // viewHome()
+		getData:    getData, // getData()
 	};
-	
+
 })(); // ====================  js118 module end  ====================
 
 
@@ -1428,7 +1403,7 @@ style="width:200px" oninput="js.setGotoTravel()">
 
 <p id="text_caption" ></p>
 <hr width="480" align="left" color="#a0a0a0">
-<a href="javascript:history.back()">back</a> | <a href="http://mike1336.web.fc2.com/index.html">top</a>
+<a href="javascript:history.back()">back</a> | <a href="https://mike1336.web.fc2.com/index.html">top</a>
 <br>
 
 </body>
